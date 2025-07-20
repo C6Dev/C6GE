@@ -1,0 +1,21 @@
+#include "Render.h"
+#include <glad/glad.h>
+#include "../Window/Window.h"
+
+namespace C6GE {
+	// Initialize OpenGL rendering context using glad
+	bool InitRender() {
+		return gladLoadGL() != 0; // Returns true if OpenGL is successfully initialized
+	}
+
+	// Clear the screen with a specified color
+	void Clear(float r, float g, float b, float a) {
+		glClearColor(r, g, b, a);
+		glClear(GL_COLOR_BUFFER_BIT);
+	}
+
+	// Present the rendered frame to the window
+	void Present() {
+		glfwSwapBuffers(glfwGetCurrentContext());
+	}
+}
