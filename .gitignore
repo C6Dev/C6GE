@@ -35,6 +35,10 @@
 *x64
 *v17
 *.vs
+*build
 
 # Visual Studio Files
 *.vcxproj.user
+
+# MacOS Files
+.DS_Store

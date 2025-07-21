@@ -1,5 +1,16 @@
 #include "Log.h"
 
+#if defined(_WIN32)
+#include <windows.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#elif defined(__linux__)
+#include <unistd.h>
+#include <limits.h>
+#endif
+#include <string>
+#include <cstring>
+
 // Define ANSI color codes for terminal output
 #define GREEN      "\033[32m"
 #define YELLOW     "\033[33m"
@@ -44,10 +55,47 @@ namespace C6GE {
         std::ostream& out = (level == LogLevel::error || level == LogLevel::critical) ? std::cerr : std::cout;
         out << colorStr[static_cast<int>(level)] << logLine << RESET << std::endl;
 
-        // File output
-        std::ofstream logFile("log.txt", std::ios::app);
-        if (logFile.is_open()) {
-            logFile << logLine << std::endl;
-        }
+        // Get executable directory
+std::string exeDir;
+#if defined(_WIN32)
+char buffer[MAX_PATH];
+if (GetModuleFileNameA(NULL, buffer, MAX_PATH)) {
+    std::string path(buffer);
+    size_t pos = path.find_last_of("\\");
+    if (pos != std::string::npos) {
+        exeDir = path.substr(0, pos);
+    }
+}
+#elif defined(__APPLE__)
+char buffer[1024];
+uint32_t size = sizeof(buffer);
+if (_NSGetExecutablePath(buffer, &size) == 0) {
+    std::string path(buffer);
+    size_t pos = path.find_last_of("/");
+    if (pos != std::string::npos) {
+        exeDir = path.substr(0, pos);
+    }
+}
+#elif defined(__linux__)
+char buffer[PATH_MAX];
+ssize_t len = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
+if (len != -1) {
+    buffer[len] = '\0';
+    std::string path(buffer);
+    size_t pos = path.find_last_of("/");
+    if (pos != std::string::npos) {
+        exeDir = path.substr(0, pos);
+    }
+}
+#endif
+std::string logPath = exeDir + "/log.txt";
+
+// File output
+std::ofstream logFile(logPath.c_str(), std::ios::app);
+if (logFile.is_open()) {
+    logFile << logLine << std::endl;
+} else {
+    std::cerr << RED << "[ERROR] Failed to open log file '" << logPath << "' for writing." << RESET << std::endl;
+}
     }
 }
