@@ -3,7 +3,6 @@
 #include "../Window/Window.h"
 
 namespace C6GE {
-	// Initialize OpenGL rendering context using glad
 	bool InitRender() {
 		return gladLoadGL() != 0; // Returns true if OpenGL is successfully initialized
 	}

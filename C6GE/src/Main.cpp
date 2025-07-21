@@ -1,11 +1,13 @@
 #include "Engine/Engine.h"
+#include "Logging/Log.h"
+
 
 int main() {
-	// Initialize the C6GE engine
-	if (!C6GE::Init()) return -1;
-
+	if (!C6GE::Init()) {
+		C6GE::Log(C6GE::LogLevel::critical, "Failed to initialize C6GE engine.");
+		return -1;
+	}
 	C6GE::Update();
-
 	C6GE::Shutdown();
 	return 0;
 }

@@ -4,8 +4,7 @@ GLFWwindow* window = nullptr;
 
 namespace C6GE {
 	bool CreateWindow(int width, int height, const char* title) {
-		// Check if GLFW is initialized
-		if (!glfwInit()) return false;
+		if (!glfwInit()) return false; // return false if GLFW initialization fails
 
 		// Set OpenGL version to 3.3
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -14,7 +13,6 @@ namespace C6GE {
 		// Set OpenGL profile to core
 		glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-		// Create a window
 		window = glfwCreateWindow(width, height, title, nullptr, nullptr);
 
 		// Check if window creation was successful
@@ -27,13 +25,11 @@ namespace C6GE {
 		return true;
 	}
 
-	// Update the window by polling events
 	void UpdateWindow() { glfwPollEvents(); }
 
 	// Check if the window is open and not closed
 	bool IsWindowOpen() { return window && !glfwWindowShouldClose(window); }
 
-	// Destroy the window and terminate GLFW
 	void DestroyWindow() {
 		if (window) glfwDestroyWindow(window);
 		glfwTerminate();
