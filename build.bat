@@ -7,7 +7,7 @@ if not exist build mkdir build
 cd build
 
 rem Generate CMake files
-cmake ..
+cmake .. -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
 rem Build the project
 cmake --build .
