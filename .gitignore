@@ -40,5 +40,8 @@
 # Visual Studio Files
 *.vcxproj.user
 
+# Visual Studio Code Files
+*.vscode
+
 # MacOS Files
 .DS_Store

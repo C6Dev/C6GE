@@ -1,5 +1,5 @@
-#include "Render.h"
 #include <glad/glad.h>
+#include "Render.h"
 #include "../Window/Window.h"
 
 namespace C6GE {
