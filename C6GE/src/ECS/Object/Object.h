@@ -2,12 +2,26 @@
 #include "../../Logging/Log.h"
 
 namespace C6GE {
+
+    // Global registry for all entities
     extern entt::registry registry;
+
+    // Maps object names to their corresponding entities
     extern std::unordered_map<std::string, entt::entity> nameToEntity;
+
+    // Creates a new object with the given name
     void CreateObject(const std::string& name);
+
+    // Registers an object by name
     void RegisterObject(std::string name);
+
+    // Retrieves the entity associated with the given name
     entt::entity GetObject(const std::string& name);
+
+    // Logs information about the specified entity
     void LogObjectInfo(entt::entity entity);
+
+    // Adds a component of type T to the entity with the given name
     template<typename T, typename... Args>
     T& AddComponent(const std::string& name, Args&&... args) {
         auto it = nameToEntity.find(name);
@@ -17,4 +31,16 @@ namespace C6GE {
             throw std::runtime_error("Entity with name '" + name + "' not found.");
         }
     }
+
+    // Gets a pointer to the component of type T from the entity with the given name
+    template<typename T>
+    T* GetComponent(const std::string& name) {
+        auto it = nameToEntity.find(name);
+        if (it != nameToEntity.end()) {
+            return registry.try_get<T>(it->second);
+        } else {
+            throw std::runtime_error("Entity with name '" + name + "' not found.");
+        }
+    }
+
 }
