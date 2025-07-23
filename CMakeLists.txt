@@ -16,6 +16,7 @@ set(SOURCES
     ${CMAKE_SOURCE_DIR}/C6GE/src/Render/Render.cpp
     ${CMAKE_SOURCE_DIR}/C6GE/src/Window/Window.cpp
     ${CMAKE_SOURCE_DIR}/C6GE/src/ECS/Object/Object.cpp
+    ${CMAKE_SOURCE_DIR}/C6GE/src/Render/Shader/Shader.cpp
 )
 
 # Headers (optional, for IDEs)
@@ -25,6 +26,7 @@ set(HEADERS
     ${CMAKE_SOURCE_DIR}/C6GE/src/Render/Render.h
     ${CMAKE_SOURCE_DIR}/C6GE/src/Window/Window.h
     ${CMAKE_SOURCE_DIR}/C6GE/src/ECS/Object/Object.h
+    ${CMAKE_SOURCE_DIR}/C6GE/src/Render/Shader/Shader.h
 )
 
 
@@ -71,3 +73,11 @@ target_include_directories(C6GE PRIVATE ${glad_SOURCE_DIR}/include)
 if(APPLE)
     target_link_libraries(C6GE PRIVATE "-framework Cocoa" "-framework IOKit" "-framework CoreFoundation")
 endif()
+
+# Copy shader files to build directory after build
+add_custom_command(TARGET C6GE POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:C6GE>/shader"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/C6GE/src/Render/shaderFiles"
+        "$<TARGET_FILE_DIR:C6GE>/shader"
+)

@@ -1,13 +1,9 @@
 #include "Engine.h"
+#include "../Components/ShaderComponent.h"
 
 
 using namespace C6GE;
 
-// Simple Transform component for testing (Object system)
-struct Transform {
-	float x, y, z;
-	Transform(float x, float y, float z) : x(x), y(y), z(z) {}
-};
 namespace C6GE {
 
 	bool Init() {
@@ -25,22 +21,29 @@ namespace C6GE {
 
 		// --- Object system test code (will be removed later) ---
 		// Create a test object and log its info
-		CreateObject("object");
-		LogObjectInfo(GetObject("object"));
+		CreateObject("triangle");
+		LogObjectInfo(GetObject("triangle"));
 
 
-		// Add Transform component to the test object
-		AddComponent<Transform>("object", 0.1f, 0.0f, 0.0f);
+		// Add shader components to the "triangle" object
+		// Load shaders from files and add them as components
+		// Note: This is a temporary test code, will be removed later
 
-		// Retrieve and log the Transform component
-		Transform* transform = GetComponent<Transform>("object");
-		if (transform) {
-			Log(LogLevel::info, "Transform - x: " + std::to_string(transform->x) +
-								", y: " + std::to_string(transform->y) +
-								", z: " + std::to_string(transform->z));
-		} else {
-			Log(LogLevel::warning, "Transform component not found on object.");
-		}
+		auto* VertexShader = LoadShader("shader/shader.vert");
+		AddComponent<VertexShaderComponent>("triangle", VertexShader);
+
+		auto* FragmentShader = LoadShader("shader/shader.frag");
+		AddComponent<FragmentShaderComponent>("triangle", FragmentShader);
+
+		// Retrieve and log the VertexShaderComponent
+		auto* vertexShaderComp = GetComponent<VertexShaderComponent>("triangle");
+		Log(LogLevel::info, "triangle: Vertex Shader: " + std::string(vertexShaderComp->shaderCode));
+
+
+		// Retrieve and log the FragmentShaderComponent
+		auto* fragmentShaderComp = GetComponent<FragmentShaderComponent>("triangle");
+		Log(LogLevel::info, "triangle: Fragment Shader: " + std::string(fragmentShaderComp->shaderCode));
+
 		// --- End of Object system test code ---
 
 		return true;
