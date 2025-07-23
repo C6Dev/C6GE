@@ -1,17 +1,44 @@
 #include "Shader.h"
+#include <cstring>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace C6GE {
 
     // Loads a shader file and returns its contents as a const char*
 
-    // Helper to get executable directory (macOS)
+    // Helper to get executable directory
     std::string GetExecutableDir() {
+#ifdef __APPLE__
         char path[1024];
         uint32_t size = sizeof(path);
         if (_NSGetExecutablePath(path, &size) == 0) {
             return std::string(dirname(path));
         }
         return "";
+#elif defined(__linux__)
+        char path[1024];
+        ssize_t len = readlink("/proc/self/exe", path, sizeof(path) - 1);
+        if (len != -1) {
+            path[len] = '\0';
+            return std::string(dirname(path));
+        }
+        return "";
+#elif defined(_WIN32)
+        char path[MAX_PATH];
+        GetModuleFileNameA(NULL, path, MAX_PATH);
+        
+        // Find the last backslash
+        char* lastSlash = std::strrchr(path, '\\');
+        if (lastSlash) {
+            *lastSlash = '\0'; // Truncate at the last backslash
+        }
+        
+        return std::string(path);
+#else
+        return ""; // Fallback for other platforms
+#endif
     }
 
     const char* LoadShader(const std::string& path) {
