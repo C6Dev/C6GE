@@ -15,7 +15,10 @@ namespace C6GE {
 
     // Retrieves the entity handle associated with the given name.
     // Returns entt::null if the name is not found.
-    entt::entity GetObject(const std::string& name) {
+    #ifdef _WIN32
+#undef GetObject
+#endif
+entt::entity GetObject(const std::string& name) {
         auto it = nameToEntity.find(name);
         if (it != nameToEntity.end()) {
             return it->second;

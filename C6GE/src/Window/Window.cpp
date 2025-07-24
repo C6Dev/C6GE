@@ -3,7 +3,10 @@
 GLFWwindow* window = nullptr;
 
 namespace C6GE {
-	bool CreateWindow(int width, int height, const char* title) {
+	#ifdef _WIN32
+#undef CreateWindow
+#endif
+bool CreateWindow(int width, int height, const char* title) {
 		if (!glfwInit()) return false; // return false if GLFW initialization fails
 
 		// Set OpenGL version to 3.3

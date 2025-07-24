@@ -16,7 +16,10 @@ namespace C6GE {
     void RegisterObject(std::string name);
 
     // Retrieves the entity associated with the given name
-    entt::entity GetObject(const std::string& name);
+    #ifdef _WIN32
+#undef GetObject
+#endif
+entt::entity GetObject(const std::string& name);
 
     // Logs information about the specified entity
     void LogObjectInfo(entt::entity entity);
