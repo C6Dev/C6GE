@@ -44,6 +44,14 @@ namespace C6GE {
 		auto* fragmentShaderComp = GetComponent<FragmentShaderComponent>("triangle");
 		Log(LogLevel::info, "triangle: Fragment Shader: " + std::string(fragmentShaderComp->shaderCode));
 
+		// Compile Shaders
+		auto CompiledVertexShader = CompileShader(vertexShaderComp->shaderCode, ShaderType::Vertex);
+		auto CompiledFragmentShader = CompileShader(fragmentShaderComp->shaderCode, ShaderType::Fragment);
+
+		// Add Compiled Shaders to Object
+		AddComponent<CompiledVertexShaderComponent>("triangle", CompiledVertexShader);
+		AddComponent<CompiledFragmentShaderComponent>("triangle", CompiledFragmentShader);
+
 		// --- End of Object system test code ---
 
 		return true;

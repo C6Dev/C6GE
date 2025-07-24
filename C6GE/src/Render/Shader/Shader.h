@@ -6,8 +6,14 @@
 #include "Logging/Log.h"
 
 
-namespace C6GE {
+enum ShaderType {
+    Vertex,
+    Fragment
+};
 
+namespace C6GE {
+    using GLuint = unsigned int;
     // Loads a shader file and returns its contents as a const char*
     const char* LoadShader(const std::string& path);
+    GLuint CompileShader(const char* Shader, ShaderType ShaderType);
 }

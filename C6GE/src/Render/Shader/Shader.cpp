@@ -1,5 +1,7 @@
 #include "Shader.h"
 
+#include <glad/glad.h>
+
 namespace C6GE {
 
     // Loads a shader file and returns its contents as a const char*
@@ -43,5 +45,41 @@ namespace C6GE {
         delete[] buffer;
         file.close();
         return nullptr;
+    }
+
+    GLuint CompileShader(const char* ShaderSource, ShaderType shaderType) {
+        GLuint shaderID = 0;
+
+        switch (shaderType) {
+            case ShaderType::Vertex:
+                shaderID = glCreateShader(GL_VERTEX_SHADER);
+                break;
+            case ShaderType::Fragment:
+                shaderID = glCreateShader(GL_FRAGMENT_SHADER);
+                break;
+            default:
+                Log(LogLevel::error, "Invalid shader type");
+                return 0;
+        }
+
+        if (shaderID == 0) {
+            Log(LogLevel::error, "Failed to create shader");
+            return 0;
+        }
+
+        glShaderSource(shaderID, 1, &ShaderSource, nullptr);
+        glCompileShader(shaderID);
+
+        GLint success;
+        glGetShaderiv(shaderID, GL_COMPILE_STATUS, &success);
+        if (!success) {
+            char infoLog[512];
+            glGetShaderInfoLog(shaderID, 512, nullptr, infoLog);
+            Log(LogLevel::error, std::string("Shader compilation failed: ") + infoLog);
+            glDeleteShader(shaderID);
+            return 0;
+        }
+
+        return shaderID;
     }
 }
