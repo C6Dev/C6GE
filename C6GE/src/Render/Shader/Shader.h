@@ -23,4 +23,5 @@ namespace C6GE {
     // Loads a shader file and returns its contents as a const char*
     const char* LoadShader(const std::string& path);
     GLuint CompileShader(const char* Shader, ShaderType ShaderType);
+    GLuint CreateProgram(GLuint VertexShader, GLuint FragmentShader);
 }

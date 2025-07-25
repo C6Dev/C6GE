@@ -109,4 +109,15 @@ namespace C6GE {
 
         return shaderID;
     }
+
+	GLuint CreateProgram(GLuint VertexShader, GLuint FragmentShader) {
+	GLuint Program = glCreateProgram();
+        glAttachShader(Program, VertexShader);
+        glAttachShader(Program, FragmentShader);
+        glLinkProgram(Program);
+        glDeleteShader(VertexShader);
+        glDeleteShader(FragmentShader);
+
+        return Program;
+	}
 }

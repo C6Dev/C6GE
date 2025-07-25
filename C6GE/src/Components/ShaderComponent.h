@@ -22,4 +22,9 @@ namespace C6GE {
 		CompiledFragmentShaderComponent(unsigned int id) : shaderID(id) {}
 	};
 
+	struct ShaderComponent {
+		unsigned int ShaderProgram;
+		ShaderComponent(unsigned int id) : ShaderProgram(id) {}
+	};
+
 }
