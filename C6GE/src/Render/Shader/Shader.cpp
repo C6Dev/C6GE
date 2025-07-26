@@ -120,4 +120,9 @@ namespace C6GE {
 
         return Program;
 	}
+
+    GLuint UseProgram(GLuint Program) {
+        glUseProgram(Program);
+        return Program;
+    }
 }

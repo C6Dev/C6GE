@@ -1,5 +1,8 @@
 #include <entt/entt.hpp>
 #include "../../Logging/Log.h"
+#include <string>
+#include <unordered_map>
+#include <stdexcept>
 
 namespace C6GE {
 

@@ -1,6 +1,7 @@
 #include <glad/glad.h>
 #include "Render.h"
 #include "../Window/Window.h"
+#include "../ECS/Object/Object.h"
 
 namespace C6GE {
 	bool InitRender() {
@@ -16,5 +17,17 @@ namespace C6GE {
 	// Present the rendered frame to the window
 	void Present() {
 		glfwSwapBuffers(glfwGetCurrentContext());
+	}
+
+	void RenderObject(const std::string& name) {
+		auto* shaderComp = GetComponent<ShaderComponent>(name);
+		auto* meshComp = GetComponent<MeshComponent>(name);
+
+		if (!shaderComp || !meshComp) return;
+
+		glUseProgram(shaderComp->ShaderProgram);
+		glBindVertexArray(meshComp->VAO);
+		glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(meshComp->vertexCount));
+		glBindVertexArray(0);
 	}
 }

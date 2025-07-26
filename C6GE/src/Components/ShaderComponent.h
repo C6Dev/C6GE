@@ -26,5 +26,4 @@ namespace C6GE {
 		unsigned int ShaderProgram;
 		ShaderComponent(unsigned int id) : ShaderProgram(id) {}
 	};
-
 }

@@ -17,6 +17,7 @@ set(SOURCES
     ${CMAKE_SOURCE_DIR}/C6GE/src/Window/Window.cpp
     ${CMAKE_SOURCE_DIR}/C6GE/src/ECS/Object/Object.cpp
     ${CMAKE_SOURCE_DIR}/C6GE/src/Render/Shader/Shader.cpp
+    ${CMAKE_SOURCE_DIR}/C6GE/src/Components/MeshComponent.cpp
 )
 
 # Headers (optional, for IDEs)
