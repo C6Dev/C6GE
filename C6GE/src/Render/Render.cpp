@@ -27,7 +27,7 @@ namespace C6GE {
 
 		glUseProgram(shaderComp->ShaderProgram);
 		glBindVertexArray(meshComp->VAO);
-		glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(meshComp->vertexCount));
+		glDrawElements(GL_TRIANGLES, meshComp->vertexCount, GL_UNSIGNED_INT, 0);
 		glBindVertexArray(0);
 	}
 }

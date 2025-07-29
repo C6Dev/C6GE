@@ -9,13 +9,6 @@ namespace C6GE {
 
 	bool Init() {
 
-	 // Setup triangle data
-    float vertices[] = {
-        -0.5f, -0.5f, 0.0f,
-         0.5f, -0.5f, 0.0f,
-         0.0f,  0.5f, 0.0f
-    };
-
 		// Create the main application window
 		if (!CreateWindow(800, 800, "C6GE Window")) {
 			Log(LogLevel::critical, "Failed to create window.");
@@ -45,7 +38,7 @@ namespace C6GE {
 
 		AddComponent<ShaderComponent>("triangle", triangleShader);
 
-        auto triangleMesh = CreateTriangleMesh();
+        auto triangleMesh = CreateTriangle();
         AddComponent<MeshComponent>("triangle", std::move(triangleMesh));
 
 		return true;

@@ -8,11 +8,11 @@ typedef unsigned int GLuint;
 namespace C6GE {
 
     struct MeshComponent {
-        GLuint VAO, VBO;
+        GLuint VAO, VBO, EBO;
         size_t vertexCount;
 
-        MeshComponent(GLuint vao, GLuint vbo, size_t count)
-            : VAO(vao), VBO(vbo), vertexCount(count) {}
+        MeshComponent(GLuint vao, GLuint vbo, GLuint ebo, size_t count)
+            : VAO(vao), VBO(vbo), EBO(ebo), vertexCount(count) {}
 
         // Automatically clean up GPU resources
         ~MeshComponent();
@@ -23,6 +23,7 @@ namespace C6GE {
         MeshComponent& operator=(MeshComponent&& other) noexcept;
     };
 
-    MeshComponent CreateTriangleMesh();
+    MeshComponent CreateTriangle();
+    MeshComponent CreateSquare();
 
 }
