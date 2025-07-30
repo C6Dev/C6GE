@@ -1,5 +1,5 @@
-#include "../Components/MeshComponent.h"
 #include <glad/glad.h>
+#include "../Components/MeshComponent.h"
 
 namespace C6GE {
 
@@ -39,21 +39,7 @@ namespace C6GE {
         return *this;
     }
 
-    MeshComponent CreateTriangle() {
-	// Vertices coordinates
-	GLfloat vertices[] =
-	{
-		-0.5f, -0.5f * float(sqrt(3)) / 3, 0.0f, // Lower left corner
-		0.5f, -0.5f * float(sqrt(3)) / 3, 0.0f, // Lower right corner
-		0.0f, 0.5f * float(sqrt(3)) * 2 / 3, 0.0f // Upper corner
-	};
-
-	// Indices for vertices order
-	GLuint indices[] =
-	{
-        0, 1, 2
-	};
-    
+    MeshComponent CreateMesh(const GLfloat* vertices, size_t vertexSize, const GLuint* indices, size_t indexCount, bool WithColor) {
         GLuint vao, vbo, ebo;
 
         glGenVertexArrays(1, &vao);
@@ -61,60 +47,60 @@ namespace C6GE {
         glGenBuffers(1, &ebo);
 
         glBindVertexArray(vao);
+
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+        glBufferData(GL_ARRAY_BUFFER, vertexSize, vertices, GL_STATIC_DRAW);
 
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indexCount * sizeof(GLuint), indices, GL_STATIC_DRAW);
 
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
         glEnableVertexAttribArray(0);
+
+        if (WithColor) {
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+            glEnableVertexAttribArray(1);
+        } else {
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+            glEnableVertexAttribArray(0);
+        }
 
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         glBindVertexArray(0);
 
-
-        return MeshComponent(vao, vbo, ebo, 9);
+        return MeshComponent(vao, vbo, ebo, indexCount);
     }
-    
-    MeshComponent CreateSquare() {
-        // Vertices coordinates
+
+    MeshComponent CreateTriangle() {
+        
         GLfloat vertices[] =
         {
-            -0.5f, -0.5f, 0.0f,
-            -0.5f, 0.5f, 0.0f,
-            0.5f, 0.5f, 0.0f,
-            0.5f, -0.5f, 0.0f
+            //    Position X,       Y,       Z       |     R,     G,     B
+            -0.5f, -0.5f * float(sqrt(3)) / 3, 0.0f,   0.0f, 0.8f, 0.7f,  // Bottom left - teal
+            0.5f, -0.5f * float(sqrt(3)) / 3, 0.0f,   0.3f, 0.5f, 1.0f,  // Bottom right - light blue
+            0.0f,  0.5f * float(sqrt(3)) * 2 / 3, 0.0f,  0.6f, 0.2f, 1.0f  // Top - purple
         };
+	    GLuint indices[] =
+	    {
+            0, 1, 2
+	    };
 
-        // Indices for vertices order
-        GLuint indices[] =
-        {
-            0, 1, 2,
-            2, 3, 0
-        };
-    
-        GLuint vao, vbo, ebo;
+        return CreateMesh(vertices, sizeof(vertices), indices, 9, true);
+    }
 
-        glGenVertexArrays(1, &vao);
-        glGenBuffers(1, &vbo);
-        glGenBuffers(1, &ebo);
+    MeshComponent CreateSquare() {
+    static const GLfloat vertices[] = {
+        // Positions         // Colors (Green)
+        -0.5f, -0.5f, 0.0f,   0.0f, 1.0f, 0.0f,
+        -0.5f,  0.5f, 0.0f,   0.0f, 1.0f, 0.0f,
+        0.5f,  0.5f, 0.0f,   0.0f, 1.0f, 0.0f,
+        0.5f, -0.5f, 0.0f,   0.0f, 1.0f, 0.0f
+    };
+    static const GLuint indices[] = { 0, 1, 2, 2, 3, 0 };
 
-        glBindVertexArray(vao);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
-
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(0);
-
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-        glBindVertexArray(0);
-
-
-        return MeshComponent(vao, vbo, ebo, 6);
+        return CreateMesh(vertices, sizeof(vertices), indices, 6, true);
     }
 
 

@@ -21,6 +21,7 @@ namespace C6GE {
         MeshComponent& operator=(const MeshComponent&) = delete;
         MeshComponent(MeshComponent&& other) noexcept;
         MeshComponent& operator=(MeshComponent&& other) noexcept;
+        MeshComponent CreateMesh(const GLfloat* vertices, size_t vertexSize, const GLuint* indices, size_t indexCount, bool WithColor);
     };
 
     MeshComponent CreateTriangle();
