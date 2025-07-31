@@ -6,6 +6,8 @@
 #include "../Render/Shader/Shader.h"
 #include "../Components/ShaderComponent.h"
 #include "../Components/MeshComponent.h"
+#include "../Render/Texture/Texture.h"
+#include "../Components/TextureComponent.h"
 
 namespace C6GE {
 	bool Init();

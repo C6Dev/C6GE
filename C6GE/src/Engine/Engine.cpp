@@ -22,8 +22,8 @@ namespace C6GE {
 		}
 
 
-		CreateObject("triangle");
-		LogObjectInfo(GetObject("triangle"));
+		CreateObject("square");
+		LogObjectInfo(GetObject("square"));
 
 
 		auto* VertexShader = LoadShader("shader/shader.vert");
@@ -34,12 +34,18 @@ namespace C6GE {
 		auto CompiledVertexShader = CompileShader(VertexShader, ShaderType::Vertex);
 		auto CompiledFragmentShader = CompileShader(FragmentShader, ShaderType::Fragment);
 
-		auto triangleShader = CreateProgram(CompiledVertexShader, CompiledFragmentShader);
+		auto squareShader = CreateProgram(CompiledVertexShader, CompiledFragmentShader);
 
-		AddComponent<ShaderComponent>("triangle", triangleShader);
+		AddComponent<ShaderComponent>("square", squareShader);
 
-        auto triangleMesh = CreateTriangle();
-        AddComponent<MeshComponent>("triangle", std::move(triangleMesh));
+        auto squareMesh = CreateSquare();
+        AddComponent<MeshComponent>("square", std::move(squareMesh));
+
+		int width, height, channels;
+		auto* textureData = LoadTexture("texture/texture.png", width = 512, height = 512, channels = 0);
+
+		auto texture = CreateTexture(textureData, width, height, channels);
+		AddComponent<TextureComponent>("square", texture);
 
 		return true;
 	}
@@ -49,7 +55,7 @@ namespace C6GE {
 		while (IsWindowOpen()) {
 			UpdateWindow();
 			Clear(0.2f, 0.3f, 0.3f, 1.0f); // Clear the screen with teal color
-			RenderObject("triangle");
+			RenderObject("square");
 			Present();
 		}
 	}

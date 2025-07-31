@@ -20,14 +20,27 @@ namespace C6GE {
 	}
 
 	void RenderObject(const std::string& name) {
-		auto* shaderComp = GetComponent<ShaderComponent>(name);
-		auto* meshComp = GetComponent<MeshComponent>(name);
+    	auto* shaderComp = GetComponent<ShaderComponent>(name);
+    	auto* meshComp = GetComponent<MeshComponent>(name);
+    	auto* textureComp = GetComponent<TextureComponent>(name); // Assuming this exists
 
-		if (!shaderComp || !meshComp) return;
+    	if (!shaderComp || !meshComp) return;
 
-		glUseProgram(shaderComp->ShaderProgram);
-		glBindVertexArray(meshComp->VAO);
-		glDrawElements(GL_TRIANGLES, meshComp->vertexCount, GL_UNSIGNED_INT, 0);
-		glBindVertexArray(0);
+    	glUseProgram(shaderComp->ShaderProgram);
+
+    	// Bind texture if it exists
+    	if (textureComp) {
+        	glActiveTexture(GL_TEXTURE0);
+        	glBindTexture(GL_TEXTURE_2D, textureComp->Texture);
+        	// Optional: set sampler uniform
+        	GLint texLoc = glGetUniformLocation(shaderComp->ShaderProgram, "uTexture");
+        	if (texLoc != -1)
+            	glUniform1i(texLoc, 0); // Texture unit 0
+    	}
+
+    	glBindVertexArray(meshComp->VAO);
+    	glDrawElements(GL_TRIANGLES, meshComp->vertexCount, GL_UNSIGNED_INT, 0);
+    	glBindVertexArray(0);
 	}
+
 }

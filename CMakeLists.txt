@@ -18,6 +18,8 @@ set(SOURCES
     ${CMAKE_SOURCE_DIR}/C6GE/src/ECS/Object/Object.cpp
     ${CMAKE_SOURCE_DIR}/C6GE/src/Render/Shader/Shader.cpp
     ${CMAKE_SOURCE_DIR}/C6GE/src/Components/MeshComponent.cpp
+    ${CMAKE_SOURCE_DIR}/C6GE/src/Render/stb.cpp
+    ${CMAKE_SOURCE_DIR}/C6GE/src/Render/Texture/Texture.cpp
 )
 
 # Headers (optional, for IDEs)
@@ -28,6 +30,8 @@ set(HEADERS
     ${CMAKE_SOURCE_DIR}/C6GE/src/Window/Window.h
     ${CMAKE_SOURCE_DIR}/C6GE/src/ECS/Object/Object.h
     ${CMAKE_SOURCE_DIR}/C6GE/src/Render/Shader/Shader.h
+    ${CMAKE_SOURCE_DIR}/C6GE/Libraries/include/stb/stb_image.h
+    ${CMAKE_SOURCE_DIR}/C6GE/src/Render/Texture/Texture.h
 )
 
 
@@ -79,6 +83,13 @@ endif()
 add_custom_command(TARGET C6GE POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:C6GE>/shader"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/C6GE/src/Render/shaderFiles"
+        "${CMAKE_SOURCE_DIR}/C6GE/src/Render/ShaderFiles"
         "$<TARGET_FILE_DIR:C6GE>/shader"
+)
+
+add_custom_command(TARGET C6GE POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:C6GE>/texture"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/C6GE/src/Render/TextureFiles"
+        "$<TARGET_FILE_DIR:C6GE>/texture"
 )
