@@ -112,4 +112,26 @@ namespace C6GE {
         return CreateMesh(vertices, sizeof(vertices), indices, 6, true, true);
     }
 
+    MeshComponent CreateTemple() {
+        static const GLfloat vertices[] = {
+            // Base
+            -0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 0.0f,  0.0f, 0.0f,  // 0
+            0.5f, -0.5f, -0.5f,   0.0f, 1.0f, 0.0f,  1.0f, 0.0f,  // 1
+            0.5f, -0.5f, 0.5f,    0.0f, 0.0f, 1.0f,  1.0f, 1.0f,  // 2
+            -0.5f, -0.5f, 0.5f,   1.0f, 1.0f, 0.0f,  0.0f, 1.0f,  // 3
+            // Apex
+            0.0f, 0.5f, 0.0f,     1.0f, 1.0f, 1.0f,  0.5f, 0.5f    // 4
+        };
+        static const GLuint indices[] = {
+            // Base
+            0, 1, 2,  2, 3, 0,
+            // Sides
+            0, 1, 4,
+            1, 2, 4,
+            2, 3, 4,
+            3, 0, 4
+        };
+        return CreateMesh(vertices, sizeof(vertices), indices, sizeof(indices) / sizeof(GLuint), true, true);
+    }
+
 }

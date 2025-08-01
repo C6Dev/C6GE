@@ -33,5 +33,6 @@ namespace C6GE {
     // Free functions to create predefined meshes
     MeshComponent CreateTriangle();
     MeshComponent CreateSquare();
+    MeshComponent CreateTemple();
 
 }

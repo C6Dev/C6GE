@@ -1,8 +1,12 @@
 #pragma once
 #include <string>
+#include<glm/glm.hpp>
+#include<glm/gtc/matrix_transform.hpp>
+#include<glm/gtc/type_ptr.hpp>
 #include "../Components/ShaderComponent.h"
 #include "../Components/MeshComponent.h"
 #include "../Components/TextureComponent.h"
+#include "../Components/TransformComponent.h"
 
 namespace C6GE {
 	bool InitRender();
