@@ -1,9 +1,9 @@
 #include <glad/glad.h>
 #include "Engine.h"
 #include <utility>
+#include "../Input/Input.h"
 
-
-using namespace C6GE;
+bool MouseCaptured = true;
 
 namespace C6GE {
 
@@ -21,11 +21,15 @@ namespace C6GE {
 			return false;
 		}
 
+		input::EnableMouseCapture(true);
+
 
 		CreateObject("square");
 		CreateObject("temple");
+		CreateObject("camera");
 		LogObjectInfo(GetObject("square"));
 		LogObjectInfo(GetObject("temple"));
+		LogObjectInfo(GetObject("camera"));
 
 
 		auto* VertexShader = LoadShader("shader/shader.vert");
@@ -54,90 +58,67 @@ namespace C6GE {
 		AddComponent<TextureComponent>("square", texture);
 		AddComponent<TextureComponent>("temple", texture);
 
-		AddComponent<TransformComponent>("temple", glm::vec3(0.0f, 0.0f, 0.0f));
+		AddComponent<TransformComponent>("temple", glm::vec3(2.0f, 0.0f, 0.0f));
+
+		auto camera = CreateCamera();
+		AddComponent<CameraComponent>("camera", *camera);
 
 		return true;
 	}
 
 	void Update() {
+		float lastTime = glfwGetTime();
 		// Main loop: update window and render each frame
 		while (IsWindowOpen()) {
 			UpdateWindow();
+			input::Update();
 			Clear(0.2f, 0.3f, 0.3f, 1.0f); // Clear the screen with teal color
 			RenderObject("square");
-			// temp to be replace with input system
-    		if (glfwGetKey(glfwGetCurrentContext(), GLFW_KEY_W) == GLFW_PRESS) {
-				auto* transform = GetComponent<TransformComponent>("temple");
-				if (transform) {  // Always check for null!
-    				transform->Position.y += 0.01f;
-					Log(LogLevel::info, "W is pressed" + std::to_string(transform->Position.y));
-				}
-    		}
-			if (glfwGetKey(glfwGetCurrentContext(), GLFW_KEY_S) == GLFW_PRESS) {
-				auto* transform = GetComponent<TransformComponent>("temple");
-				if (transform) {  // Always check for null!
-    				transform->Position.y -= 0.01f;
-					Log(LogLevel::info, "S is pressed" + std::to_string(transform->Position.y));
-				}
+        float currentTime = glfwGetTime();
+        float deltaTime = currentTime - lastTime;
+        lastTime = currentTime;
+
+        auto* camera = GetComponent<CameraComponent>("camera");
+        // --- Camera Movement ---
+        glm::vec3& pos = camera->Transform.Position;
+        glm::vec3 front = C6GE::GetCameraFront(camera->Transform);
+        glm::vec3 right = glm::normalize(glm::cross(front, glm::vec3(0.0f, 1.0f, 0.0f)));
+        float speed = camera->MovementSpeed * deltaTime;
+
+        if (input::key.w)
+            pos += speed * front;
+        if (input::key.s)
+            pos -= speed * front;
+        if (input::key.a)
+            pos -= speed * right;
+        if (input::key.d)
+            pos += speed * right;
+
+        // Camera Rotation
+        if (camera && MouseCaptured == true) {
+            double xoffset = input::mouse.delta_x * camera->MouseSensitivity;
+            double yoffset = input::mouse.delta_y * camera->MouseSensitivity;
+
+            camera->Transform.Rotation.y += static_cast<float>(xoffset); // Yaw
+            camera->Transform.Rotation.x += static_cast<float>(yoffset); // Pitch
+
+            // Clamp pitch to avoid flipping
+            if (camera->Transform.Rotation.x > 89.0f) camera->Transform.Rotation.x = 89.0f;
+            if (camera->Transform.Rotation.x < -89.0f) camera->Transform.Rotation.x = -89.0f;
+        }
+
+		if (input::key.escape) {
+			MouseCaptured = false;
+			input::EnableMouseCapture(false);
+		}
+
+		if (input::mouse.button1) {
+			if (!MouseCaptured) {
+				MouseCaptured = true;
+				input::EnableMouseCapture(true);
 			}
-			if (glfwGetKey(glfwGetCurrentContext(), GLFW_KEY_A) == GLFW_PRESS) {
-				auto* transform = GetComponent<TransformComponent>("temple");
-				if (transform) {  // Always check for null!
-    				transform->Position.x -= 0.01f;
-					Log(LogLevel::info, "A is pressed" + std::to_string(transform->Position.x));
-				}
-			}
-			if (glfwGetKey(glfwGetCurrentContext(), GLFW_KEY_D) == GLFW_PRESS) {
-				auto* transform = GetComponent<TransformComponent>("temple");
-				if (transform) {  // Always check for null!
-    				transform->Position.x += 0.01f;
-					Log(LogLevel::info, "D is pressed" + std::to_string(transform->Position.x));
-				}
-			}
-			// move position z of object triangle for test
-			if (glfwGetKey(glfwGetCurrentContext(), GLFW_KEY_Q) == GLFW_PRESS) {
-				auto* transform = GetComponent<TransformComponent>("temple");
-				if (transform) {  // Always check for null!
-    				transform->Position.z += 0.01f;
-					Log(LogLevel::info, "Q is pressed" + std::to_string(transform->Position.z));
-				}
-			}
-			if (glfwGetKey(glfwGetCurrentContext(), GLFW_KEY_E) == GLFW_PRESS) {
-				auto* transform = GetComponent<TransformComponent>("temple");
-				if (transform) {  // Always check for null!
-    				transform->Position.z -= 0.01f;
-					Log(LogLevel::info, "E is pressed" + std::to_string(transform->Position.z));
-				}
-			}
-			// move rotation of temple
-			if (glfwGetKey(glfwGetCurrentContext(), GLFW_KEY_I) == GLFW_PRESS) {
-				auto* transform = GetComponent<TransformComponent>("temple");
-				if (transform) {  // Always check for null!
-    				transform->Rotation.x += 0.50f;
-					Log(LogLevel::info, "A is pressed" + std::to_string(transform->Rotation.z));
-				}
-			}
-			if (glfwGetKey(glfwGetCurrentContext(), GLFW_KEY_K) == GLFW_PRESS) {
-				auto* transform = GetComponent<TransformComponent>("temple");
-				if (transform) {  // Always check for null!
-    				transform->Rotation.x -= 0.50f;
-					Log(LogLevel::info, "D is pressed" + std::to_string(transform->Rotation.z));
-				}
-			}
-			if (glfwGetKey(glfwGetCurrentContext(), GLFW_KEY_J) == GLFW_PRESS) {
-				auto* transform = GetComponent<TransformComponent>("temple");
-				if (transform) {  // Always check for null!
-    				transform->Rotation.z += 0.50f;
-					Log(LogLevel::info, "A is pressed" + std::to_string(transform->Rotation.z));
-				}
-			}
-			if (glfwGetKey(glfwGetCurrentContext(), GLFW_KEY_L) == GLFW_PRESS) {
-				auto* transform = GetComponent<TransformComponent>("temple");
-				if (transform) {  // Always check for null!
-    				transform->Rotation.z -= 0.50f;
-					Log(LogLevel::info, "D is pressed" + std::to_string(transform->Rotation.z));
-				}
-			}
+		}
+
 			RenderObject("temple");
 			Present();
 		}

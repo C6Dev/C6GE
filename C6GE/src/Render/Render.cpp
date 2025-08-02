@@ -2,6 +2,7 @@
 #include "Render.h"
 #include "../Window/Window.h"
 #include "../ECS/Object/Object.h"
+#include "../Components/CameraComponent.h"
 
 namespace C6GE {
 	bool InitRender() {
@@ -60,9 +61,10 @@ namespace C6GE {
     	if (modelLoc != -1)
         glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
 
-		glm::mat4 view = glm::mat4(1.0f); // Replace with actual view matrix
-		glm::mat4 proj = glm::mat4(1.0f); // Replace with actual projection matrix
-		float scale = 1.0f;               // Replace with a uniform or logic-based scale
+		auto* camera = GetComponent<CameraComponent>("camera");
+glm::mat4 view = (camera) ? GetViewMatrix(*camera) : glm::mat4(1.0f);
+glm::mat4 proj = glm::perspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+float scale = 1.0f;
 
 		// Set uniforms
 		GLint viewLoc = glGetUniformLocation(shaderComp->ShaderProgram, "view");

@@ -18,7 +18,9 @@ set(SOURCES
     ${CMAKE_SOURCE_DIR}/C6GE/src/ECS/Object/Object.cpp
     ${CMAKE_SOURCE_DIR}/C6GE/src/Render/Shader/Shader.cpp
     ${CMAKE_SOURCE_DIR}/C6GE/src/Components/MeshComponent.cpp
+    ${CMAKE_SOURCE_DIR}/C6GE/src/Components/CameraComponent.cpp
     ${CMAKE_SOURCE_DIR}/C6GE/src/Render/Texture/Texture.cpp
+    ${CMAKE_SOURCE_DIR}/C6GE/src/Input/Input.cpp
 )
 
 # Headers (optional, for IDEs)
@@ -33,6 +35,7 @@ set(HEADERS
     ${CMAKE_SOURCE_DIR}/C6GE/src/Components/MeshComponent.h
     ${CMAKE_SOURCE_DIR}/C6GE/src/Components/ShaderComponent.h
     ${CMAKE_SOURCE_DIR}/C6GE/src/Components/TextureComponent.h
+    ${CMAKE_SOURCE_DIR}/C6GE/src/Components/CameraComponent.h
 )
 
 

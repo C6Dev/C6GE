@@ -7,9 +7,11 @@
 namespace C6GE {
 	#ifdef _WIN32
 #undef CreateWindow
+#undef GetWindow
 #endif
 bool CreateWindow(int width, int height, const char* title);
 	void UpdateWindow();
 	bool IsWindowOpen();
 	void DestroyWindow();
+	GLFWwindow* GetWindow();
 }
