@@ -34,5 +34,6 @@ namespace C6GE {
     MeshComponent CreateTriangle();
     MeshComponent CreateSquare();
     MeshComponent CreateTemple();
+    MeshComponent CreateCube();
 
 }

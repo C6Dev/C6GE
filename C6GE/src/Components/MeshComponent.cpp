@@ -56,7 +56,7 @@ namespace C6GE {
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, indexCount * sizeof(GLuint), indices, GL_STATIC_DRAW);
 
         // Calculate float count per vertex
-        int floatCount = 3; // Position
+        int floatCount = 3 + 3; // Position + Normal
         if (WithColor) floatCount += 3; // Color
         if (WithTexture) floatCount += 2; // Texture
         GLsizei stride = floatCount * sizeof(float);
@@ -65,18 +65,22 @@ namespace C6GE {
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void*)0);
         glEnableVertexAttribArray(0);
 
+        // Normal attribute
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)(3 * sizeof(float)));
+        glEnableVertexAttribArray(1);
+
         // Color attribute
+        size_t offset = 6; // After pos + normal
         if (WithColor) {
-            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)(3 * sizeof(float)));
-            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, stride, (void*)(offset * sizeof(float)));
+            glEnableVertexAttribArray(2);
+            offset += 3;
         }
 
         // Texture attribute
         if (WithTexture) {
-            size_t offset = 3; // Position offset
-            if (WithColor) offset += 3; // Add color offset if present
-            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (void*)(offset * sizeof(float)));
-            glEnableVertexAttribArray(2);
+            glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, stride, (void*)(offset * sizeof(float)));
+            glEnableVertexAttribArray(3);
         }
 
         glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -89,10 +93,10 @@ namespace C6GE {
     MeshComponent CreateTriangle() {
         GLfloat vertices[] =
         {
-            // Position X, Y, Z    | Color R, G, B
-            -0.5f, -0.5f * float(std::sqrt(3)) / 3, 0.0f,   0.0f, 0.8f, 0.7f,
-            0.5f, -0.5f * float(std::sqrt(3)) / 3, 0.0f,    0.3f, 0.5f, 1.0f,
-            0.0f,  0.5f * float(std::sqrt(3)) * 2 / 3, 0.0f, 0.6f, 0.2f, 1.0f
+            // Position X, Y, Z    | Normal X, Y, Z    | Color R, G, B
+            -0.5f, -0.5f * float(std::sqrt(3)) / 3, 0.0f,   0.0f, 0.0f, 1.0f,   0.0f, 0.8f, 0.7f,
+            0.5f, -0.5f * float(std::sqrt(3)) / 3, 0.0f,    0.0f, 0.0f, 1.0f,   0.3f, 0.5f, 1.0f,
+            0.0f,  0.5f * float(std::sqrt(3)) * 2 / 3, 0.0f, 0.0f, 0.0f, 1.0f, 0.6f, 0.2f, 1.0f
         };
         GLuint indices[] = { 0, 1, 2 };
 
@@ -101,11 +105,11 @@ namespace C6GE {
 
     MeshComponent CreateSquare() {
         static const GLfloat vertices[] = {
-            // Positions         // Colors (Green)    // Texture Coords (U, V flipped)
-            -0.5f, -0.5f, 0.0f,   0.0f, 1.0f, 0.0f,    0.0f, 1.0f,  // Bottom-left
-            -0.5f,  0.5f, 0.0f,   0.0f, 1.0f, 0.0f,    0.0f, 0.0f,  // Top-left
-            0.5f,  0.5f, 0.0f,   0.0f, 1.0f, 0.0f,    1.0f, 0.0f,  // Top-right
-            0.5f, -0.5f, 0.0f,   0.0f, 1.0f, 0.0f,    1.0f, 1.0f   // Bottom-right
+            // Positions         // Normals           // Colors (Green)    // Texture Coords (U, V flipped)
+            -0.5f, -0.5f, 0.0f,   0.0f, 0.0f, 1.0f,   0.0f, 1.0f, 0.0f,    0.0f, 1.0f,  // Bottom-left
+            -0.5f,  0.5f, 0.0f,   0.0f, 0.0f, 1.0f,   0.0f, 1.0f, 0.0f,    0.0f, 0.0f,  // Top-left
+            0.5f,  0.5f, 0.0f,   0.0f, 0.0f, 1.0f,   0.0f, 1.0f, 0.0f,    1.0f, 0.0f,  // Top-right
+            0.5f, -0.5f, 0.0f,   0.0f, 0.0f, 1.0f,   0.0f, 1.0f, 0.0f,    1.0f, 1.0f   // Bottom-right
         };
         static const GLuint indices[] = { 0, 1, 2, 2, 3, 0 };
 
@@ -115,12 +119,12 @@ namespace C6GE {
     MeshComponent CreateTemple() {
         static const GLfloat vertices[] = {
             // Base
-            -0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 0.0f,  0.0f, 0.0f,  // 0
-            0.5f, -0.5f, -0.5f,   0.0f, 1.0f, 0.0f,  1.0f, 0.0f,  // 1
-            0.5f, -0.5f, 0.5f,    0.0f, 0.0f, 1.0f,  1.0f, 1.0f,  // 2
-            -0.5f, -0.5f, 0.5f,   1.0f, 1.0f, 0.0f,  0.0f, 1.0f,  // 3
+            -0.5f, -0.5f, -0.5f,  0.0f, -1.0f, 0.0f,  1.0f, 0.0f, 0.0f,  0.0f, 0.0f,  // 0
+            0.5f, -0.5f, -0.5f,   0.0f, -1.0f, 0.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f,  // 1
+            0.5f, -0.5f, 0.5f,    0.0f, -1.0f, 0.0f,  0.0f, 0.0f, 1.0f,  1.0f, 1.0f,  // 2
+            -0.5f, -0.5f, 0.5f,   0.0f, -1.0f, 0.0f,  1.0f, 1.0f, 0.0f,  0.0f, 1.0f,  // 3
             // Apex
-            0.0f, 0.5f, 0.0f,     1.0f, 1.0f, 1.0f,  0.5f, 0.5f    // 4
+            0.0f, 0.5f, 0.0f,     0.0f, 1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.5f, 0.5f    // 4 (apex normal upward for simplicity)
         };
         static const GLuint indices[] = {
             // Base
@@ -131,6 +135,46 @@ namespace C6GE {
             2, 3, 4,
             3, 0, 4
         };
+        return CreateMesh(vertices, sizeof(vertices), indices, sizeof(indices) / sizeof(GLuint), true, true);
+    }
+
+    MeshComponent CreateCube() {
+    static const GLfloat vertices[] = {
+        // Positions           // Normals (averaged)    // Colors              // Texture Coords
+        -0.5f, -0.5f, -0.5f,  -0.577f, -0.577f, -0.577f, 0.0f, 1.0f, 0.0f,   0.0f, 0.0f, // 0
+        0.5f, -0.5f, -0.5f,    0.577f, -0.577f, -0.577f, 0.0f, 1.0f, 0.0f,   1.0f, 0.0f, // 1
+        0.5f,  0.5f, -0.5f,    0.577f, 0.577f, -0.577f,  0.0f, 1.0f, 0.0f,   1.0f, 1.0f, // 2
+        -0.5f,  0.5f, -0.5f,  -0.577f, 0.577f, -0.577f, 0.0f, 1.0f, 0.0f,   0.0f, 1.0f, // 3
+        -0.5f, -0.5f,  0.5f,  -0.577f, -0.577f, 0.577f,  1.0f, 1.0f, 1.0f,   0.0f, 0.0f, // 4
+        0.5f, -0.5f,  0.5f,    0.577f, -0.577f, 0.577f,  1.0f, 1.0f, 1.0f,   1.0f, 0.0f, // 5
+        0.5f,  0.5f,  0.5f,    0.577f, 0.577f, 0.577f,   1.0f, 1.0f, 1.0f,   1.0f, 1.0f, // 6
+        -0.5f,  0.5f,  0.5f,  -0.577f, 0.577f, 0.577f,  1.0f, 1.0f, 1.0f,   0.0f, 1.0f  // 7
+    };
+    static const GLuint indices[] = {
+        // Back face
+        0, 1, 2,
+        2, 3, 0,
+
+        // Front face
+        4, 5, 6,
+        6, 7, 4,
+
+        // Left face
+        0, 3, 7,
+        7, 4, 0,
+
+        // Right face
+        1, 5, 6,
+        6, 2, 1,
+
+        // Top face
+        3, 2, 6,
+        6, 7, 3,
+
+        // Bottom face
+        0, 1, 5,
+        5, 4, 0
+    };
         return CreateMesh(vertices, sizeof(vertices), indices, sizeof(indices) / sizeof(GLuint), true, true);
     }
 

@@ -3,6 +3,8 @@
 #include "../Window/Window.h"
 #include "../ECS/Object/Object.h"
 #include "../Components/CameraComponent.h"
+#include "../Components/LightComponent.h"
+#include <glm/gtc/type_ptr.hpp>
 
 namespace C6GE {
 	bool InitRender() {
@@ -61,7 +63,20 @@ namespace C6GE {
     	if (modelLoc != -1)
         glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
 
+		// Get light data (assume single light)
+		auto* lightTransform = GetComponent<TransformComponent>("light");
+		auto* lightComp = GetComponent<LightComponent>("light");
+		if (lightTransform && lightComp) {
+			glUniform3fv(glGetUniformLocation(shaderComp->ShaderProgram, "lightPos"), 1, glm::value_ptr(lightTransform->Position));
+			glUniform3fv(glGetUniformLocation(shaderComp->ShaderProgram, "lightColor"), 1, glm::value_ptr(lightComp->color));
+			glUniform1f(glGetUniformLocation(shaderComp->ShaderProgram, "lightIntensity"), lightComp->intensity);
+		}
+
 		auto* camera = GetComponent<CameraComponent>("camera");
+		if (camera) {
+			glUniform3fv(glGetUniformLocation(shaderComp->ShaderProgram, "viewPos"), 1, glm::value_ptr(camera->Transform.Position));
+		}
+
 glm::mat4 view = (camera) ? GetViewMatrix(*camera) : glm::mat4(1.0f);
 glm::mat4 proj = glm::perspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
 float scale = 1.0f;

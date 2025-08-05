@@ -36,6 +36,7 @@ set(HEADERS
     ${CMAKE_SOURCE_DIR}/C6GE/src/Components/ShaderComponent.h
     ${CMAKE_SOURCE_DIR}/C6GE/src/Components/TextureComponent.h
     ${CMAKE_SOURCE_DIR}/C6GE/src/Components/CameraComponent.h
+    ${CMAKE_SOURCE_DIR}/C6GE/src/Components/LightComponent.h
 )
 
 
