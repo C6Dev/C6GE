@@ -93,7 +93,7 @@ find_package(OpenGL REQUIRED)
 add_executable(C6GE ${SOURCES} ${HEADERS})
 
 target_link_libraries(C6GE PRIVATE glfw glad EnTT::EnTT OpenGL::GL)
-target_include_directories(C6GE PRIVATE ${glad_SOURCE_DIR}/include ${glm_SOURCE_DIR} ${stb_SOURCE_DIR})
+target_include_directories(C6GE PRIVATE ${glad_BINARY_DIR}/include ${glm_SOURCE_DIR} ${stb_SOURCE_DIR})
 
 # For macOS, link necessary frameworks
 if(APPLE)

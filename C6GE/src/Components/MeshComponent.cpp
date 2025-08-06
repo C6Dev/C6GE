@@ -105,76 +105,117 @@ namespace C6GE {
 
     MeshComponent CreateSquare() {
         static const GLfloat vertices[] = {
-            // Positions         // Normals           // Colors (Green)    // Texture Coords (U, V flipped)
-            -0.5f, -0.5f, 0.0f,   0.0f, 0.0f, 1.0f,   0.0f, 1.0f, 0.0f,    0.0f, 1.0f,  // Bottom-left
-            -0.5f,  0.5f, 0.0f,   0.0f, 0.0f, 1.0f,   0.0f, 1.0f, 0.0f,    0.0f, 0.0f,  // Top-left
-            0.5f,  0.5f, 0.0f,   0.0f, 0.0f, 1.0f,   0.0f, 1.0f, 0.0f,    1.0f, 0.0f,  // Top-right
-            0.5f, -0.5f, 0.0f,   0.0f, 0.0f, 1.0f,   0.0f, 1.0f, 0.0f,    1.0f, 1.0f   // Bottom-right
+            // Front face (normal +Z)
+            -0.5f, -0.5f, 0.0f,   0.0f, 0.0f, 1.0f,   1.0f, 1.0f, 1.0f,    0.0f, 1.0f,  // 0 Bottom-left
+            -0.5f,  0.5f, 0.0f,   0.0f, 0.0f, 1.0f,   1.0f, 1.0f, 1.0f,    0.0f, 0.0f,  // 1 Top-left
+            0.5f,  0.5f, 0.0f,   0.0f, 0.0f, 1.0f,   1.0f, 1.0f, 1.0f,    1.0f, 0.0f,  // 2 Top-right
+            0.5f, -0.5f, 0.0f,   0.0f, 0.0f, 1.0f,   1.0f, 1.0f, 1.0f,    1.0f, 1.0f,  // 3 Bottom-right
+            // Back face (normal -Z)
+            -0.5f, -0.5f, 0.0f,   0.0f, 0.0f, -1.0f,  1.0f, 1.0f, 1.0f,    0.0f, 1.0f,  // 4 Bottom-left
+            -0.5f,  0.5f, 0.0f,   0.0f, 0.0f, -1.0f,  1.0f, 1.0f, 1.0f,    0.0f, 0.0f,  // 5 Top-left
+            0.5f,  0.5f, 0.0f,   0.0f, 0.0f, -1.0f,  1.0f, 1.0f, 1.0f,    1.0f, 0.0f,  // 6 Top-right
+            0.5f, -0.5f, 0.0f,   0.0f, 0.0f, -1.0f,  1.0f, 1.0f, 1.0f,    1.0f, 1.0f   // 7 Bottom-right
         };
-        static const GLuint indices[] = { 0, 1, 2, 2, 3, 0 };
-
-        return CreateMesh(vertices, sizeof(vertices), indices, 6, true, true);
+        static const GLuint indices[] = {
+            // Front face
+            0, 3, 2,
+            0, 2, 1,
+            // Back face (reversed winding)
+            4, 5, 6,
+            4, 6, 7
+        };
+        return CreateMesh(vertices, sizeof(vertices), indices, 12, true, true);
     }
 
     MeshComponent CreateTemple() {
+        // Define vertices with corrected normals
         static const GLfloat vertices[] = {
-            // Base
-            -0.5f, -0.5f, -0.5f,  0.0f, -1.0f, 0.0f,  1.0f, 0.0f, 0.0f,  0.0f, 0.0f,  // 0
-            0.5f, -0.5f, -0.5f,   0.0f, -1.0f, 0.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f,  // 1
-            0.5f, -0.5f, 0.5f,    0.0f, -1.0f, 0.0f,  0.0f, 0.0f, 1.0f,  1.0f, 1.0f,  // 2
-            -0.5f, -0.5f, 0.5f,   0.0f, -1.0f, 0.0f,  1.0f, 1.0f, 0.0f,  0.0f, 1.0f,  // 3
-            // Apex
-            0.0f, 0.5f, 0.0f,     0.0f, 1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.5f, 0.5f    // 4 (apex normal upward for simplicity)
+            // Base - bottom face
+            -0.5f, -0.5f, -0.5f,  0.0f, -1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 0.0f,  // 0
+            0.5f, -0.5f, -0.5f,   0.0f, -1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 0.0f,  // 1
+            0.5f, -0.5f, 0.5f,    0.0f, -1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 1.0f,  // 2
+            -0.5f, -0.5f, 0.5f,   0.0f, -1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 1.0f,  // 3
+            
+            // Front face vertices with correct normals
+            -0.5f, -0.5f, 0.5f,   0.0f, 0.4472f, 0.8944f,  1.0f, 1.0f, 1.0f,  0.0f, 0.0f,  // 4
+            0.5f, -0.5f, 0.5f,    0.0f, 0.4472f, 0.8944f,  1.0f, 1.0f, 1.0f,  1.0f, 0.0f,  // 5
+            0.0f, 0.5f, 0.0f,     0.0f, 0.4472f, 0.8944f,  1.0f, 1.0f, 1.0f,  0.5f, 1.0f,  // 6
+            
+            // Right face vertices with correct normals
+            0.5f, -0.5f, 0.5f,    0.8944f, 0.4472f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 0.0f,  // 7
+            0.5f, -0.5f, -0.5f,   0.8944f, 0.4472f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 0.0f,  // 8
+            0.0f, 0.5f, 0.0f,     0.8944f, 0.4472f, 0.0f,  1.0f, 1.0f, 1.0f,  0.5f, 1.0f,  // 9
+            
+            // Back face vertices with flipped normals
+            0.5f, -0.5f, -0.5f,   0.0f, -0.4472f, 0.8944f,  1.0f, 1.0f, 1.0f,  0.0f, 0.0f,  // 10
+            -0.5f, -0.5f, -0.5f,  0.0f, -0.4472f, 0.8944f,  1.0f, 1.0f, 1.0f,  1.0f, 0.0f,  // 11
+            0.0f, 0.5f, 0.0f,     0.0f, -0.4472f, 0.8944f,  1.0f, 1.0f, 1.0f,  0.5f, 1.0f,  // 12
+            
+            // Left face vertices with correct normals
+            -0.5f, -0.5f, -0.5f,  -0.8944f, 0.4472f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 0.0f,  // 13
+            -0.5f, -0.5f, 0.5f,   -0.8944f, 0.4472f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 0.0f,  // 14
+            0.0f, 0.5f, 0.0f,     -0.8944f, 0.4472f, 0.0f,  1.0f, 1.0f, 1.0f,  0.5f, 1.0f   // 15
         };
+        
+        // Define indices with corrected winding for outward CCW
         static const GLuint indices[] = {
-            // Base
-            0, 1, 2,  2, 3, 0,
-            // Sides
-            0, 1, 4,
-            1, 2, 4,
-            2, 3, 4,
-            3, 0, 4
+            // Base (bottom face, CCW from outside)
+            0, 1, 2,
+            0, 2, 3,
+            // Front face (+Z, CCW)
+            4, 5, 6,
+            // Right face (+X, CCW)
+            7, 8, 9,
+            // Back face (-Z, CCW with flipped normals)
+            10, 11, 12,
+            // Left face (-X, CCW)
+            13, 14, 15
         };
+        
         return CreateMesh(vertices, sizeof(vertices), indices, sizeof(indices) / sizeof(GLuint), true, true);
     }
 
     MeshComponent CreateCube() {
-    static const GLfloat vertices[] = {
-        // Positions           // Normals (averaged)    // Colors              // Texture Coords
-        -0.5f, -0.5f, -0.5f,  -0.577f, -0.577f, -0.577f, 0.0f, 1.0f, 0.0f,   0.0f, 0.0f, // 0
-        0.5f, -0.5f, -0.5f,    0.577f, -0.577f, -0.577f, 0.0f, 1.0f, 0.0f,   1.0f, 0.0f, // 1
-        0.5f,  0.5f, -0.5f,    0.577f, 0.577f, -0.577f,  0.0f, 1.0f, 0.0f,   1.0f, 1.0f, // 2
-        -0.5f,  0.5f, -0.5f,  -0.577f, 0.577f, -0.577f, 0.0f, 1.0f, 0.0f,   0.0f, 1.0f, // 3
-        -0.5f, -0.5f,  0.5f,  -0.577f, -0.577f, 0.577f,  1.0f, 1.0f, 1.0f,   0.0f, 0.0f, // 4
-        0.5f, -0.5f,  0.5f,    0.577f, -0.577f, 0.577f,  1.0f, 1.0f, 1.0f,   1.0f, 0.0f, // 5
-        0.5f,  0.5f,  0.5f,    0.577f, 0.577f, 0.577f,   1.0f, 1.0f, 1.0f,   1.0f, 1.0f, // 6
-        -0.5f,  0.5f,  0.5f,  -0.577f, 0.577f, 0.577f,  1.0f, 1.0f, 1.0f,   0.0f, 1.0f  // 7
-    };
-    static const GLuint indices[] = {
-        // Back face
-        0, 1, 2,
-        2, 3, 0,
-
-        // Front face
-        4, 5, 6,
-        6, 7, 4,
-
-        // Left face
-        0, 3, 7,
-        7, 4, 0,
-
-        // Right face
-        1, 5, 6,
-        6, 2, 1,
-
-        // Top face
-        3, 2, 6,
-        6, 7, 3,
-
-        // Bottom face
-        0, 1, 5,
-        5, 4, 0
-    };
+        static const GLfloat vertices[] = {
+            // Front face (+Z)
+            -0.5f, -0.5f,  0.5f,  0.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f,  0.0f, 0.0f, // 0
+            0.5f, -0.5f,  0.5f,   0.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f,  1.0f, 0.0f, // 1
+            0.5f,  0.5f,  0.5f,   0.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f,  1.0f, 1.0f, // 2
+            -0.5f,  0.5f,  0.5f,  0.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f,  0.0f, 1.0f, // 3
+            // Back face (-Z)
+            -0.5f, -0.5f, -0.5f,  0.0f, 0.0f, -1.0f, 1.0f, 1.0f, 1.0f,  0.0f, 0.0f, // 4
+            0.5f, -0.5f, -0.5f,   0.0f, 0.0f, -1.0f, 1.0f, 1.0f, 1.0f,  1.0f, 0.0f, // 5
+            0.5f,  0.5f, -0.5f,   0.0f, 0.0f, -1.0f, 1.0f, 1.0f, 1.0f,  1.0f, 1.0f, // 6
+            -0.5f,  0.5f, -0.5f,  0.0f, 0.0f, -1.0f, 1.0f, 1.0f, 1.0f,  0.0f, 1.0f, // 7
+            // Left face (-X)
+            -0.5f, -0.5f, -0.5f,  -1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f,  0.0f, 0.0f, // 8
+            -0.5f, -0.5f,  0.5f,  -1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f,  1.0f, 0.0f, // 9
+            -0.5f,  0.5f,  0.5f,  -1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f,  1.0f, 1.0f, // 10
+            -0.5f,  0.5f, -0.5f,  -1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f,  0.0f, 1.0f, // 11
+            // Right face (+X)
+            0.5f, -0.5f, -0.5f,   1.0f, 0.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 0.0f, // 12
+            0.5f, -0.5f,  0.5f,   1.0f, 0.0f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 0.0f, // 13
+            0.5f,  0.5f,  0.5f,   1.0f, 0.0f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 1.0f, // 14
+            0.5f,  0.5f, -0.5f,   1.0f, 0.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 1.0f, // 15
+            // Top face (+Y)
+            -0.5f,  0.5f, -0.5f,  0.0f, 1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 0.0f, // 16
+            0.5f,  0.5f, -0.5f,   0.0f, 1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 0.0f, // 17
+            0.5f,  0.5f,  0.5f,   0.0f, 1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 1.0f, // 18
+            -0.5f,  0.5f,  0.5f,  0.0f, 1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 1.0f, // 19
+            // Bottom face (-Y)
+            -0.5f, -0.5f, -0.5f,  0.0f, -1.0f, 0.0f, 1.0f, 1.0f, 1.0f,  0.0f, 0.0f, // 20
+            0.5f, -0.5f, -0.5f,   0.0f, -1.0f, 0.0f, 1.0f, 1.0f, 1.0f,  1.0f, 0.0f, // 21
+            0.5f, -0.5f,  0.5f,   0.0f, -1.0f, 0.0f, 1.0f, 1.0f, 1.0f,  1.0f, 1.0f, // 22
+            -0.5f, -0.5f,  0.5f,  0.0f, -1.0f, 0.0f, 1.0f, 1.0f, 1.0f,  0.0f, 1.0f  // 23
+        };
+        static const GLuint indices[] = {
+            0, 1, 2, 0, 2, 3,    // Front (CCW)
+            4, 7, 6, 4, 6, 5,    // Back (CW - reversed to fix visibility)
+            8, 9, 10, 8, 10, 11, // Left (CCW)
+            12, 15, 14, 12, 14, 13, // Right (CW - reversed to fix visibility)
+            16, 17, 18, 16, 18, 19, // Top (CCW)
+            20, 21, 22, 20, 22, 23  // Bottom (CCW)
+        };
         return CreateMesh(vertices, sizeof(vertices), indices, sizeof(indices) / sizeof(GLuint), true, true);
     }
 

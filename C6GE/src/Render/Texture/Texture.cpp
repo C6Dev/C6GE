@@ -28,7 +28,19 @@ namespace C6GE {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
         // Determine format
-        GLenum format = (channels == 4) ? GL_RGBA : GL_RGB;
+        GLenum format;
+        if (channels == 1) {
+            format = GL_RED;
+        } else if (channels == 3) {
+            format = GL_RGB;
+        } else if (channels == 4) {
+            format = GL_RGBA;
+        } else {
+            // Handle error: unsupported channel count
+            std::cerr << "Unsupported number of channels: " << channels << std::endl;
+            glDeleteTextures(1, &textureID);
+            return 0;
+        }
 
         // Upload texture to GPU
         glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
