@@ -210,11 +210,11 @@ namespace C6GE {
         };
         static const GLuint indices[] = {
             0, 1, 2, 0, 2, 3,    // Front (CCW)
-            4, 7, 6, 4, 6, 5,    // Back (CW - reversed to fix visibility)
+            4, 5, 6, 4, 6, 7,    // Back (CCW from outside)
             8, 9, 10, 8, 10, 11, // Left (CCW)
-            12, 15, 14, 12, 14, 13, // Right (CW - reversed to fix visibility)
+            12, 13, 14, 12, 14, 15, // Right (CCW)
             16, 17, 18, 16, 18, 19, // Top (CCW)
-            20, 21, 22, 20, 22, 23  // Bottom (CCW)
+            20, 23, 22, 20, 22, 21  // Bottom (CCW from outside)
         };
         return CreateMesh(vertices, sizeof(vertices), indices, sizeof(indices) / sizeof(GLuint), true, true);
     }

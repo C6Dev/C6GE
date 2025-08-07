@@ -1,3 +1,4 @@
+#define NOMINMAX
 #include <glad/glad.h>
 #include "Render.h"
 #include "../Window/Window.h"
@@ -5,8 +6,11 @@
 #include "../Components/CameraComponent.h"
 #include "../Components/LightComponent.h"
 #include "../Components/SpecularTextureComponent.h"
+#include "../Components/ScaleComponent.h"
 #include <glm/gtc/type_ptr.hpp>
 #include <vector>
+#include <string>
+#include <algorithm>
 
 namespace C6GE {
 	bool InitRender() {
@@ -15,8 +19,9 @@ namespace C6GE {
     	}
 
     	glEnable(GL_DEPTH_TEST);
-    	glEnable(GL_CULL_FACE);
-    	glCullFace(GL_BACK);
+    	// Disable face culling to show all faces
+    	// glEnable(GL_CULL_FACE);
+    	// glCullFace(GL_BACK);
     	return true;
 	}
 
@@ -60,28 +65,6 @@ namespace C6GE {
         	glUniform1i(glGetUniformLocation(shaderComp->ShaderProgram, "specularMap"), 1);
     	}
 
-    	// Collect light data
-    	std::vector<glm::vec3> lightPositions;
-    	std::vector<glm::vec3> lightColors;
-    	std::vector<float> lightIntensities;
-    	auto lightView = registry.view<LightComponent, TransformComponent>();
-    	int numLights = 0;
-    	for (auto entity : lightView) {
-        	auto& light = lightView.get<LightComponent>(entity);
-        	auto& trans = lightView.get<TransformComponent>(entity);
-        	if (numLights < 4) {
-            	lightPositions.push_back(trans.Position);
-            	lightColors.push_back(light.color);
-            	lightIntensities.push_back(light.intensity);
-            	numLights++;
-        	}
-    	}
-    	glUniform1i(glGetUniformLocation(shaderComp->ShaderProgram, "numLights"), numLights);
-    	if (numLights > 0) {
-        	glUniform3fv(glGetUniformLocation(shaderComp->ShaderProgram, "lightPos"), numLights, glm::value_ptr(lightPositions[0]));
-        	glUniform3fv(glGetUniformLocation(shaderComp->ShaderProgram, "lightColor"), numLights, glm::value_ptr(lightColors[0]));
-        	glUniform1fv(glGetUniformLocation(shaderComp->ShaderProgram, "lightIntensity"), numLights, lightIntensities.data());
-    	}
 
     	// Construct transform matrix
     	glm::mat4 model = glm::mat4(1.0f);
@@ -96,9 +79,33 @@ namespace C6GE {
         	model = glm::translate(model, glm::vec3(0.0f));
     	}
 
+    	auto* scaleComp = GetComponent<ScaleComponent>(name);
+    	if (scaleComp) {
+        	model = glm::scale(model, scaleComp->scale);
+    	}
+
     	GLint modelLoc = glGetUniformLocation(shaderComp->ShaderProgram, "model");
     	if (modelLoc != -1)
-       	glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+
+		// Collect all lights
+		std::vector<std::string> lightNames = GetAllObjectsWithComponent<LightComponent>();
+		int numLights = std::min(static_cast<int>(lightNames.size()), 3); // MAX_LIGHTS = 3
+		glUniform1i(glGetUniformLocation(shaderComp->ShaderProgram, "numLights"), numLights);
+
+		for (int i = 0; i < numLights; ++i) {
+		    auto* lComp = GetComponent<LightComponent>(lightNames[i]);
+		    auto* lTrans = GetComponent<TransformComponent>(lightNames[i]);
+		    if (lComp && lTrans) {
+		        std::string base = "lights[" + std::to_string(i) + "]";
+		        glUniform1i(glGetUniformLocation(shaderComp->ShaderProgram, (base + ".type").c_str()), lComp->type);
+		        glUniform3fv(glGetUniformLocation(shaderComp->ShaderProgram, (base + ".position").c_str()), 1, glm::value_ptr(lTrans->Position));
+		        glUniform3fv(glGetUniformLocation(shaderComp->ShaderProgram, (base + ".direction").c_str()), 1, glm::value_ptr(lComp->direction));
+		        glUniform3fv(glGetUniformLocation(shaderComp->ShaderProgram, (base + ".color").c_str()), 1, glm::value_ptr(lComp->color));
+		        glUniform1f(glGetUniformLocation(shaderComp->ShaderProgram, (base + ".intensity").c_str()), lComp->intensity);
+		        glUniform1f(glGetUniformLocation(shaderComp->ShaderProgram, (base + ".cutoff").c_str()), lComp->cutoff);
+		    }
+		}
 
 		auto* camera = GetComponent<CameraComponent>("camera");
 		if (camera) {

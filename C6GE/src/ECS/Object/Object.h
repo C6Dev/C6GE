@@ -3,6 +3,7 @@
 #include <string>
 #include <unordered_map>
 #include <stdexcept>
+#include <vector>
 
 namespace C6GE {
 
@@ -47,6 +48,18 @@ entt::entity GetObject(const std::string& name);
         } else {
             throw std::runtime_error("Entity with name '" + name + "' not found.");
         }
+    }
+
+    // Gets all object names with the specified component type T
+    template<typename T>
+    std::vector<std::string> GetAllObjectsWithComponent() {
+        std::vector<std::string> names;
+        for (const auto& pair : nameToEntity) {
+            if (registry.all_of<T>(pair.second)) {
+                names.push_back(pair.first);
+            }
+        }
+        return names;
     }
 
 }

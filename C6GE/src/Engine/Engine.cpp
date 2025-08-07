@@ -4,7 +4,9 @@
 #include "../Input/Input.h"
 #include "../Components/LightComponent.h"
 #include "../Components/SpecularTextureComponent.h"
+#include "../Components/ScaleComponent.h"
 #include <cmath>
+#include <vector>
 
 bool MouseCaptured = true;
 
@@ -27,14 +29,7 @@ namespace C6GE {
 		input::EnableMouseCapture(true);
 
 
-		CreateObject("square");
-		CreateObject("temple");
-		CreateObject("cube");
 		CreateObject("camera");
-		LogObjectInfo(GetObject("square"));
-		LogObjectInfo(GetObject("temple"));
-		LogObjectInfo(GetObject("cube"));
-		LogObjectInfo(GetObject("camera"));
 
 
 		auto* VertexShader = LoadShader("shader/shader.vert");
@@ -55,65 +50,120 @@ namespace C6GE {
 		auto squareShader = CreateProgram(CompiledVertexShader, CompiledFragmentShader);
 		auto lightShader = CreateProgram(CompiledLightVertexShader, CompiledLightFragmentShader);
 
-		AddComponent<ShaderComponent>("square", squareShader);
-		AddComponent<ShaderComponent>("temple", squareShader);
-		AddComponent<ShaderComponent>("cube", squareShader);
-
-        auto squareMesh = CreateSquare();
-        AddComponent<MeshComponent>("square", std::move(squareMesh));
-
-        auto templeMesh = CreateTemple();
-        AddComponent<MeshComponent>("temple", std::move(templeMesh));
-
-		auto cubeMesh = CreateCube();
-		AddComponent<MeshComponent>("cube", std::move(cubeMesh));
+        
 
 		int width = 0, height = 0, channels = 0;
 		auto* diffuseData = LoadTexture("texture/WoodFloor043_2K-JPG/WoodFloor043_2K-JPG_Color.jpg", width, height, channels);
+		GLuint diffuseTexture = 0;
 		if (diffuseData) {
-			auto diffuseTexture = CreateTexture(diffuseData, width, height, channels);
-			AddComponent<TextureComponent>("square", diffuseTexture);
-			AddComponent<TextureComponent>("temple", diffuseTexture);
-			AddComponent<TextureComponent>("cube", diffuseTexture);
+			diffuseTexture = CreateTexture(diffuseData, width, height, channels);
+			
 		} else {
 			Log(LogLevel::error, "Failed to load diffuse texture");
 			// Optionally return false or handle error
 		}
 
 		auto* specularData = LoadTexture("texture/WoodFloor043_2K-JPG/WoodFloor043_2K-JPG_Roughness.jpg", width, height, channels);
+		GLuint specularTexture = 0;
 		if (specularData) {
-			auto specularTexture = CreateTexture(specularData, width, height, channels);
-			AddComponent<SpecularTextureComponent>("square", specularTexture);
-			AddComponent<SpecularTextureComponent>("temple", specularTexture);
-			AddComponent<SpecularTextureComponent>("cube", specularTexture);
+			specularTexture = CreateTexture(specularData, width, height, channels);
+			
 		} else {
 			Log(LogLevel::error, "Failed to load specular texture");
 			// Optionally return false or handle error
 		}
 
-		AddComponent<TransformComponent>("square", glm::vec3(0.0f, 0.0f, 0.0f));
-		AddComponent<TransformComponent>("temple", glm::vec3(2.0f, 0.0f, 0.0f));
-		AddComponent<TransformComponent>("cube", glm::vec3(4.0f, 0.0f, 0.0f));
+		
 
 		auto camera = CreateCamera();
 		AddComponent<CameraComponent>("camera", *camera);
 
-		CreateObject("light");
-		auto lightMesh = CreateCube();
-		AddComponent<MeshComponent>("light", std::move(lightMesh));
-		AddComponent<TransformComponent>("light", glm::vec3(0.0f, 2.0f, 0.0f)); // Position above
-		AddComponent<LightComponent>("light", glm::vec3(1.0f, 1.0f, 1.0f), 1.0f);
-		GetComponent<TransformComponent>("light")->Scale = glm::vec3(0.2f);
-		AddComponent<ShaderComponent>("light", lightShader);
+		
 
-		// create light 2 with a red color and a different position
-		CreateObject("light2");
-		auto light2Mesh = CreateCube();
-		AddComponent<MeshComponent>("light2", std::move(light2Mesh));
-		AddComponent<TransformComponent>("light2", glm::vec3(0.0f, 2.0f, 0.0f)); // Position above
-		AddComponent<LightComponent>("light2", glm::vec3(1.0f, 0.0f, 0.0f), 1.0f);
-		GetComponent<TransformComponent>("light2")->Scale = glm::vec3(0.2f);
-		AddComponent<ShaderComponent>("light2", lightShader);
+        // Create 3 floors
+        std::vector<std::string> floors = {"floor1", "floor2", "floor3"};
+        float floorYs[3] = {0.0f, 5.0f, 10.0f};
+        for (int i = 0; i < 3; ++i) {
+            CreateObject(floors[i]);
+            auto floorMesh = CreateSquare();
+            AddComponent<MeshComponent>(floors[i], std::move(floorMesh));
+            AddComponent<ShaderComponent>(floors[i], squareShader);
+            AddComponent<TextureComponent>(floors[i], diffuseTexture);
+            AddComponent<SpecularTextureComponent>(floors[i], specularTexture);
+            AddComponent<TransformComponent>(floors[i], glm::vec3(0.0f, floorYs[i], 0.0f));
+            GetComponent<TransformComponent>(floors[i])->Rotation = glm::vec3(90.0f, 0.0f, 0.0f); // Flip to horizontal
+            AddComponent<ScaleComponent>(floors[i]);
+            GetComponent<ScaleComponent>(floors[i])->scale = glm::vec3(10.0f);
+
+            // Add shapes on floor
+            std::string sqName = "square" + std::to_string(i+1);
+            CreateObject(sqName);
+            auto sqMesh = CreateSquare();
+            AddComponent<MeshComponent>(sqName, std::move(sqMesh));
+            AddComponent<ShaderComponent>(sqName, squareShader);
+            AddComponent<TextureComponent>(sqName, diffuseTexture);
+            AddComponent<SpecularTextureComponent>(sqName, specularTexture);
+            AddComponent<TransformComponent>(sqName, glm::vec3(-4.0f, floorYs[i] + 0.5f, 0.0f));
+
+            std::string cbName = "cube" + std::to_string(i+1);
+            CreateObject(cbName);
+            auto cbMesh = CreateCube();
+            AddComponent<MeshComponent>(cbName, std::move(cbMesh));
+            AddComponent<ShaderComponent>(cbName, squareShader);
+            AddComponent<TextureComponent>(cbName, diffuseTexture);
+            AddComponent<SpecularTextureComponent>(cbName, specularTexture);
+            AddComponent<TransformComponent>(cbName, glm::vec3(0.0f, floorYs[i] + 0.5f, 0.0f));
+
+            std::string tpName = "temple" + std::to_string(i+1);
+            CreateObject(tpName);
+            auto tpMesh = CreateTemple();
+            AddComponent<MeshComponent>(tpName, std::move(tpMesh));
+            AddComponent<ShaderComponent>(tpName, squareShader);
+            AddComponent<TextureComponent>(tpName, diffuseTexture);
+            AddComponent<SpecularTextureComponent>(tpName, specularTexture);
+            AddComponent<TransformComponent>(tpName, glm::vec3(4.0f, floorYs[i] + 0.5f, 0.0f));
+        }
+
+        // Add lights for each floor (point for floor1, directional for floor2, spot for floor3)
+        // Assuming enum LightType { Point = 0, Directional = 1, Spot = 2 }
+        CreateObject("pointLight");
+        auto plMesh = CreateCube();
+        AddComponent<MeshComponent>("pointLight", std::move(plMesh));
+        AddComponent<ShaderComponent>("pointLight", lightShader);
+        AddComponent<TransformComponent>("pointLight", glm::vec3(0.0f, 2.0f, 0.0f));
+        GetComponent<TransformComponent>("pointLight")->Scale = glm::vec3(0.2f);
+        auto& plComp = AddComponent<LightComponent>("pointLight");
+		plComp.type = LightType::Point;
+		plComp.color = glm::vec3(1.0f);
+		plComp.intensity = 1.0f;
+		plComp.direction = glm::vec3(0.0f);
+		plComp.cutoff = 0.0f;
+
+        CreateObject("dirLight");
+        auto dlMesh = CreateCube();
+        AddComponent<MeshComponent>("dirLight", std::move(dlMesh));
+        AddComponent<ShaderComponent>("dirLight", lightShader);
+        AddComponent<TransformComponent>("dirLight", glm::vec3(0.0f, 7.0f, 0.0f));
+        GetComponent<TransformComponent>("dirLight")->Scale = glm::vec3(0.2f);
+        auto& dlComp = AddComponent<LightComponent>("dirLight");
+		dlComp.type = LightType::Directional;
+		dlComp.color = glm::vec3(1.0f);
+		dlComp.intensity = 1.0f;
+		dlComp.direction = glm::vec3(0.0f, -1.0f, 0.0f);
+		dlComp.cutoff = 0.0f;
+
+        CreateObject("spotLight");
+        auto slMesh = CreateCube();
+        AddComponent<MeshComponent>("spotLight", std::move(slMesh));
+        AddComponent<ShaderComponent>("spotLight", lightShader);
+        AddComponent<TransformComponent>("spotLight", glm::vec3(0.0f, 12.0f, 0.0f));
+        GetComponent<TransformComponent>("spotLight")->Scale = glm::vec3(0.2f);
+        auto& slComp = AddComponent<LightComponent>("spotLight");
+		slComp.type = LightType::Spot;
+		slComp.color = glm::vec3(1.0f);
+		slComp.intensity = 1.0f;
+		slComp.direction = glm::vec3(0.0f, -1.0f, 0.0f);
+		slComp.cutoff = glm::cos(glm::radians(12.5f));
 
 		return true;
 	}
@@ -130,20 +180,7 @@ namespace C6GE {
         	float deltaTime = currentTime - lastTime;
         	lastTime = currentTime;
 
-        	auto* lightTransform = GetComponent<TransformComponent>("light");
-        	if (lightTransform) {
-            	angle += deltaTime * 1.0f; // Adjust speed as needed
-            	lightTransform->Position.x = 3.0f * cos(angle); // Radius 3.0f
-            	lightTransform->Position.z = 3.0f * sin(angle);
-        	}
-
-			// do the same for light2 but in a diffrent direction
-			auto* light2Transform = GetComponent<TransformComponent>("light2");
-			if (light2Transform) {
-				angle += deltaTime * 1.5f; // Adjust speed as needed
-				light2Transform->Position.x = 3.0f * cos(angle + glm::pi<float>()); // Radius 3.0f
-				light2Transform->Position.z = 3.0f * sin(angle + glm::pi<float>());
-			}
+        	
 
         	auto* camera = GetComponent<CameraComponent>("camera");
         	// --- Camera Movement ---
@@ -186,11 +223,10 @@ namespace C6GE {
 				}
 			}
 
-			RenderObject("square");
-			RenderObject("temple");
-			RenderObject("cube");
-			RenderObject("light");
-			RenderObject("light2");
+			auto meshObjects = GetAllObjectsWithComponent<MeshComponent>();
+            for (const auto& name : meshObjects) {
+                RenderObject(name);
+            }
 			Present();
 		}
 	}
