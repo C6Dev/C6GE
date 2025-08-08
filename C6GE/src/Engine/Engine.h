@@ -9,9 +9,13 @@
 #include "../Components/MeshComponent.h"
 #include "../Components/TextureComponent.h"
 #include "../Components/CameraComponent.h"
+#include "../Input/Input.h"
+#include "../Components/LightComponent.h"
+#include "../Components/SpecularTextureComponent.h"
+#include "../Components/ScaleComponent.h"
 
 namespace C6GE {
 	bool Init();
 	void Update();
 	void Shutdown();
-}
+	}

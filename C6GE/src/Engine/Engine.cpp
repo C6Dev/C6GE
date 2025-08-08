@@ -1,3 +1,6 @@
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include <glad/glad.h>
 #include "Engine.h"
 #include <utility>
@@ -163,21 +166,22 @@ namespace C6GE {
 		slComp.color = glm::vec3(1.0f);
 		slComp.intensity = 1.0f;
 		slComp.direction = glm::vec3(0.0f, -1.0f, 0.0f);
-		slComp.cutoff = glm::cos(glm::radians(12.5f));
+		slComp.cutoff = static_cast<float>(glm::cos(glm::radians(12.5f)));
 
 		return true;
 	}
 
 	void Update() {
-		float lastTime = glfwGetTime();
+		float lastTime = static_cast<float>(glfwGetTime());
+		float deltaTime = 0.0f;
 		float angle = 0.0f;
 		// Main loop: update window and render each frame
 		while (IsWindowOpen()) {
 			UpdateWindow();
 			input::Update();
 			Clear(0.2f, 0.3f, 0.3f, 1.0f); // Clear the screen with teal color
-        	float currentTime = glfwGetTime();
-        	float deltaTime = currentTime - lastTime;
+        	float currentTime = static_cast<float>(glfwGetTime());
+        	deltaTime = currentTime - lastTime;
         	lastTime = currentTime;
 
         	

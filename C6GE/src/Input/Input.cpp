@@ -1,3 +1,4 @@
+#include <windows.h>
 #include "Input.h"
 
 namespace input {

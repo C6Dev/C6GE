@@ -1,4 +1,7 @@
 #define NOMINMAX
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include <glad/glad.h>
 #include "Render.h"
 #include "../Window/Window.h"
@@ -113,7 +116,7 @@ namespace C6GE {
 		}
 
 		glm::mat4 view = (camera) ? GetViewMatrix(*camera) : glm::mat4(1.0f);
-		glm::mat4 proj = glm::perspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+		glm::mat4 proj = C6GE::GetProjectionMatrix();
 
 		// Set uniforms
 		GLint viewLoc = glGetUniformLocation(shaderComp->ShaderProgram, "view");
@@ -126,7 +129,7 @@ namespace C6GE {
 
     	// Draw
     	glBindVertexArray(meshComp->VAO);
-    	glDrawElements(GL_TRIANGLES, meshComp->vertexCount, GL_UNSIGNED_INT, 0);
+    	glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(meshComp->vertexCount), GL_UNSIGNED_INT, 0);
     	glBindVertexArray(0);
 	}
 
