@@ -42,6 +42,7 @@ namespace C6GE {
 	void RenderObject(const std::string& name) {
     	auto* shaderComp   = GetComponent<ShaderComponent>(name);
     	auto* meshComp     = GetComponent<MeshComponent>(name);
+		auto* modelComp = GetComponent<ModelComponent>(name);
     	auto* textureComp  = GetComponent<TextureComponent>(name);
     	auto* specularComp = GetComponent<SpecularTextureComponent>(name);
     	auto* transform    = GetComponent<TransformComponent>(name); // optional
@@ -128,8 +129,21 @@ namespace C6GE {
     		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(proj));
 
     	// Draw
-    	glBindVertexArray(meshComp->VAO);
-    	glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(meshComp->vertexCount), GL_UNSIGNED_INT, 0);
+
+		if (modelComp)
+		{
+    		for (auto& mesh : modelComp->meshes)
+    		{
+        		glBindVertexArray(mesh.VAO);
+        		glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(mesh.indices.size()), GL_UNSIGNED_INT, 0);
+    		}
+		}
+		else if (meshComp) // Fallback: single mesh
+		{
+    		glBindVertexArray(meshComp->VAO);
+    		glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(meshComp->vertexCount), GL_UNSIGNED_INT, 0);
+		}
+		
     	glBindVertexArray(0);
 	}
 

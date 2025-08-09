@@ -5,6 +5,7 @@
 #include<glm/gtc/type_ptr.hpp>
 #include "../Components/ShaderComponent.h"
 #include "../Components/MeshComponent.h"
+#include "../Components/ModelComponent.h"
 #include "../Components/TextureComponent.h"
 #include "../Components/TransformComponent.h"
 

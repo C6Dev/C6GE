@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 
 project(C6GE)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
@@ -37,6 +38,7 @@ set(HEADERS
     ${CMAKE_SOURCE_DIR}/C6GE/src/Components/TextureComponent.h
     ${CMAKE_SOURCE_DIR}/C6GE/src/Components/CameraComponent.h
     ${CMAKE_SOURCE_DIR}/C6GE/src/Components/LightComponent.h
+    ${CMAKE_SOURCE_DIR}/C6GE/src/Components/ModelComponent.h
 )
 
 
@@ -78,6 +80,20 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(glm)
 
+# Fetch Assimp
+FetchContent_Declare(
+    assimp
+    GIT_REPOSITORY https://github.com/assimp/assimp.git
+    GIT_TAG v5.4.3
+)
+set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(ASSIMP_INSTALL OFF CACHE BOOL "" FORCE)
+set(ASSIMP_NO_EXPORT ON CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT OFF CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_OBJ_IMPORTER ON CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_FBX_IMPORTER ON CACHE BOOL "" FORCE)  # Add more importers as needed
+FetchContent_MakeAvailable(assimp)
+
 # Fetch stb_image
 FetchContent_Declare(
     stb
@@ -92,25 +108,19 @@ find_package(OpenGL REQUIRED)
 # Executable
 add_executable(C6GE ${SOURCES} ${HEADERS})
 
-target_link_libraries(C6GE PRIVATE glfw glad EnTT::EnTT OpenGL::GL)
-target_include_directories(C6GE PRIVATE ${glad_BINARY_DIR}/include ${glm_SOURCE_DIR} ${stb_SOURCE_DIR})
+target_link_libraries(C6GE PRIVATE glfw glad EnTT::EnTT OpenGL::GL assimp::assimp)
+target_include_directories(C6GE PRIVATE ${glad_BINARY_DIR}/include ${glm_SOURCE_DIR} ${stb_SOURCE_DIR} ${glfw_SOURCE_DIR}/include ${assimp_SOURCE_DIR}/include ${assimp_BINARY_DIR})
 
 # For macOS, link necessary frameworks
 if(APPLE)
     target_link_libraries(C6GE PRIVATE "-framework Cocoa" "-framework IOKit" "-framework CoreFoundation")
+    target_compile_definitions(C6GE PRIVATE GL_SILENCE_DEPRECATION)
 endif()
 
-# Copy shader files to build directory after build
+# Copy Assets files to build directory after build
 add_custom_command(TARGET C6GE POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:C6GE>/shader"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:C6GE>/Assets"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/C6GE/src/Render/ShaderFiles"
-        "$<TARGET_FILE_DIR:C6GE>/shader"
-)
-
-add_custom_command(TARGET C6GE POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:C6GE>/texture"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/C6GE/src/Render/TextureFiles"
-        "$<TARGET_FILE_DIR:C6GE>/texture"
+        "${CMAKE_SOURCE_DIR}/C6GE/src/Render/Assets"
+        "$<TARGET_FILE_DIR:C6GE>/Assets"
 )

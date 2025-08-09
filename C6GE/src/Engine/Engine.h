@@ -7,6 +7,7 @@
 #include "../ECS/Object/Object.h"
 #include "../Components/ShaderComponent.h"
 #include "../Components/MeshComponent.h"
+#include "../Components/ModelComponent.h"
 #include "../Components/TextureComponent.h"
 #include "../Components/CameraComponent.h"
 #include "../Input/Input.h"

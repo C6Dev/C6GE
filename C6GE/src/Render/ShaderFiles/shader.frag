@@ -18,18 +18,26 @@ struct Light {
     vec3 direction;
     vec3 color;
     float intensity;
-    float cutoff;
+    float cutoff;  // Cosine of cutoff angle for spot light
 };
 
 uniform Light lights[MAX_LIGHTS];
 uniform int numLights;
 
+// Optional fallback color if your model doesn't have vertex colors
+uniform vec3 objectColor = vec3(1.0);
+
 void main() {
     vec3 norm = normalize(Normal);
     vec3 viewDir = normalize(viewPos - FragPos);
-    vec3 result = vec3(0.0);
-    vec3 texColor = texture(tex0, texCoord).rgb * color;
+    
+    // Use vertex color only if it is non-zero; otherwise use objectColor uniform
+    vec3 baseColor = (color == vec3(0.0)) ? objectColor : color;
+
+    vec3 texColor = texture(tex0, texCoord).rgb * baseColor;
     float specMap = texture(specularMap, texCoord).r;
+
+    vec3 result = vec3(0.0);
 
     for (int i = 0; i < numLights; i++) {
         Light light = lights[i];
@@ -44,29 +52,26 @@ void main() {
             attenuation = 1.0 / (1.0 + 0.09 * distance + 0.032 * distance * distance);
         }
 
-        // Ambient
+        // Ambient component
         float ambientStrength = 0.1;
         vec3 ambient = ambientStrength * light.color * texColor;
 
-        // Diffuse
+        // Diffuse component
         float diff = max(dot(norm, lightDir), 0.0);
         vec3 diffuse = diff * light.color * texColor;
 
-        // Specular
+        // Specular component
         vec3 reflectDir = reflect(-lightDir, norm);
         float spec = pow(max(dot(viewDir, reflectDir), 0.0), 32.0);
         float specularStrength = specMap;
         vec3 specular = specularStrength * spec * light.color;
 
-        // Spot light
+        // Spotlight factor
         float spotFactor = 1.0;
         if (light.type == 2) { // Spot
             float theta = dot(lightDir, normalize(-light.direction));
-            if (theta > light.cutoff) {
-                spotFactor = 1.0;
-            } else {
-                spotFactor = 0.0;
-            }
+            float epsilon = 0.05; // Soft edge width
+            spotFactor = clamp((theta - light.cutoff) / epsilon, 0.0, 1.0);
         }
 
         result += (ambient + (diffuse + specular) * spotFactor) * attenuation * light.intensity;

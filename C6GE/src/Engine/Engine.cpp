@@ -35,13 +35,13 @@ namespace C6GE {
 		CreateObject("camera");
 
 
-		auto* VertexShader = LoadShader("shader/shader.vert");
+		auto* VertexShader = LoadShader("Assets/shader.vert");
 
-		auto* FragmentShader = LoadShader("shader/shader.frag");
+		auto* FragmentShader = LoadShader("Assets/shader.frag");
 
-		auto* LightVertexShader = LoadShader("shader/light.vert");
+		auto* LightVertexShader = LoadShader("Assets/light.vert");
 
-		auto* LightFragmentShader = LoadShader("shader/light.frag");
+		auto* LightFragmentShader = LoadShader("Assets/light.frag");
 
 
 		auto CompiledVertexShader = CompileShader(VertexShader, ShaderType::Vertex);
@@ -56,8 +56,9 @@ namespace C6GE {
         
 
 		int width = 0, height = 0, channels = 0;
-		auto* diffuseData = LoadTexture("texture/WoodFloor043_2K-JPG/WoodFloor043_2K-JPG_Color.jpg", width, height, channels);
+		auto* diffuseData = LoadTexture("Assets/textures/WoodFloor043_2K-JPG_Color.jpg", width, height, channels);
 		GLuint diffuseTexture = 0;
+		GLuint cubeDiffuseTexture = 0;
 		if (diffuseData) {
 			diffuseTexture = CreateTexture(diffuseData, width, height, channels);
 			
@@ -66,13 +67,30 @@ namespace C6GE {
 			// Optionally return false or handle error
 		}
 
-		auto* specularData = LoadTexture("texture/WoodFloor043_2K-JPG/WoodFloor043_2K-JPG_Roughness.jpg", width, height, channels);
+		auto* specularData = LoadTexture("Assets/textures/WoodFloor043_2K-JPG_Roughness.jpg", width, height, channels);
+		GLuint cubeSpecularTexture = 0;
 		GLuint specularTexture = 0;
 		if (specularData) {
 			specularTexture = CreateTexture(specularData, width, height, channels);
 			
 		} else {
 			Log(LogLevel::error, "Failed to load specular texture");
+			// Optionally return false or handle error
+		}
+
+		// Create Texture for cube using textures/table/ file name
+		auto* cubeDiffuseData = LoadTexture("Assets/textures/round_wooden_table_01_diff_4k.jpg", width, height, channels);
+		if (cubeDiffuseData) {
+			cubeDiffuseTexture = CreateTexture(cubeDiffuseData, width, height, channels);
+		} else {
+			Log(LogLevel::error, "Failed to load cube diffuse texture");
+			// Optionally return false or handle error
+		}
+		auto* cubeSpecularData = LoadTexture("Assets/textures/round_wooden_table_01_rough_4k.jpg", width, height, channels);
+		if (cubeSpecularData) {
+			cubeSpecularTexture = CreateTexture(cubeSpecularData, width, height, channels);
+		} else {
+			Log(LogLevel::error, "Failed to load cube specular texture");
 			// Optionally return false or handle error
 		}
 
@@ -110,12 +128,14 @@ namespace C6GE {
 
             std::string cbName = "cube" + std::to_string(i+1);
             CreateObject(cbName);
-            auto cbMesh = CreateCube();
+            auto cbMesh = LoadModel("assets/round_wooden_table_01_4k.fbx");
             AddComponent<MeshComponent>(cbName, std::move(cbMesh));
             AddComponent<ShaderComponent>(cbName, squareShader);
-            AddComponent<TextureComponent>(cbName, diffuseTexture);
-            AddComponent<SpecularTextureComponent>(cbName, specularTexture);
+			AddComponent<TextureComponent>(cbName, cubeDiffuseTexture);
+			AddComponent<SpecularTextureComponent>(cbName, cubeSpecularTexture);
             AddComponent<TransformComponent>(cbName, glm::vec3(0.0f, floorYs[i] + 0.5f, 0.0f));
+			GetComponent<TransformComponent>(cbName)->Rotation = glm::vec3(-90.0f, 0.0f, 0.0f);
+			GetComponent<TransformComponent>(cbName)->Position.y -= 0.5f;
 
             std::string tpName = "temple" + std::to_string(i+1);
             CreateObject(tpName);

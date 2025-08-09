@@ -1,11 +1,13 @@
+#include <glad/glad.h>
 #include "Window.h"
+
 
 namespace C6GE {
 
 GLFWwindow* window = nullptr;
 
 float fov = 60.0f;
-float nearPlane = 0.1f;
+float nearPlane = 0.3f;
 float farPlane = 100.0f;
 glm::mat4 projectionMatrix;
 
@@ -49,8 +51,12 @@ bool CreateWindow(int width, int height, const char* title) {
 
 		// Set OpenGL profile to core
 		glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+#ifdef __APPLE__
+		glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+#endif
 
-		window = glfwCreateWindow(width, height, title, nullptr, nullptr);
+		glfwWindowHint(GLFW_DEPTH_BITS, 24);
+window = glfwCreateWindow(width, height, title, nullptr, nullptr);
 
 		// Check if window creation was successful
 		if (!window) {
@@ -59,6 +65,7 @@ bool CreateWindow(int width, int height, const char* title) {
 		}
 
 		glfwMakeContextCurrent(window);
+		glfwSwapInterval(1);
 		return true;
 	}
 
