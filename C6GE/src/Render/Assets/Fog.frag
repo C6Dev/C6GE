@@ -1,4 +1,5 @@
 #version 330 core
+
 out vec4 FragColor;
 
 in vec3 Normal;
@@ -27,10 +28,15 @@ uniform int numLights;
 // Optional fallback color if your model doesn't have vertex colors
 uniform vec3 objectColor = vec3(1.0);
 
+// Fog parameters
+uniform vec3 fogColor;
+uniform float fogNear;
+uniform float fogFar;
+
 void main() {
     vec3 norm = normalize(Normal);
     vec3 viewDir = normalize(viewPos - FragPos);
-    
+
     // Use vertex color only if it is non-zero; otherwise use objectColor uniform
     vec3 baseColor = (color == vec3(0.0)) ? objectColor : color;
 
@@ -77,5 +83,11 @@ void main() {
         result += (ambient + (diffuse + specular) * spotFactor) * attenuation * light.intensity;
     }
 
-    FragColor = vec4(result, 1.0);
+    // Apply fog
+    float dist = length(viewPos - FragPos);
+    float fogFactor = clamp((dist - fogNear) / (fogFar - fogNear), 0.0, 1.0);
+
+    vec3 finalColor = mix(result, fogColor, fogFactor);
+
+    FragColor = vec4(finalColor, 1.0);
 }

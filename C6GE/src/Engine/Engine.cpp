@@ -12,6 +12,7 @@
 #include <vector>
 
 bool MouseCaptured = true;
+GLuint fogShader = 0;
 
 namespace C6GE {
 
@@ -52,6 +53,20 @@ namespace C6GE {
 
 		auto squareShader = CreateProgram(CompiledVertexShader, CompiledFragmentShader);
 		auto lightShader = CreateProgram(CompiledLightVertexShader, CompiledLightFragmentShader);
+
+		// Create Fog Shader using fog.vert and fog.frag
+		auto* FogVertexShader = LoadShader("Assets/fog.vert");
+		auto* FogFragmentShader = LoadShader("Assets/fog.frag");
+		auto CompiledFogVertexShader = CompileShader(FogVertexShader, ShaderType::Vertex);
+		auto CompiledFogFragmentShader = CompileShader(FogFragmentShader, ShaderType::Fragment);
+		fogShader = CreateProgram(CompiledFogVertexShader, CompiledFogFragmentShader);
+
+		// set fog uniform values and set frag color to red
+		UseProgram(fogShader);
+		SetShaderUniformVec3(fogShader, "fogColor", glm::vec3(0.5f, 0.5f, 0.5f));
+		SetShaderUniformFloat(fogShader, "fogNear", 1.0f);
+		SetShaderUniformFloat(fogShader, "fogFar", 50.0f);
+		UseProgram(0); // Unbind the shader program
 
         
 
@@ -108,7 +123,7 @@ namespace C6GE {
             CreateObject(floors[i]);
             auto floorMesh = CreateSquare();
             AddComponent<MeshComponent>(floors[i], std::move(floorMesh));
-            AddComponent<ShaderComponent>(floors[i], squareShader);
+            AddComponent<ShaderComponent>(floors[i], fogShader);
             AddComponent<TextureComponent>(floors[i], diffuseTexture);
             AddComponent<SpecularTextureComponent>(floors[i], specularTexture);
             AddComponent<TransformComponent>(floors[i], glm::vec3(0.0f, floorYs[i], 0.0f));
@@ -121,7 +136,7 @@ namespace C6GE {
             CreateObject(sqName);
             auto sqMesh = CreateSquare();
             AddComponent<MeshComponent>(sqName, std::move(sqMesh));
-            AddComponent<ShaderComponent>(sqName, squareShader);
+            AddComponent<ShaderComponent>(sqName, fogShader);
             AddComponent<TextureComponent>(sqName, diffuseTexture);
             AddComponent<SpecularTextureComponent>(sqName, specularTexture);
             AddComponent<TransformComponent>(sqName, glm::vec3(-4.0f, floorYs[i] + 0.5f, 0.0f));
@@ -130,7 +145,7 @@ namespace C6GE {
             CreateObject(cbName);
             auto cbMesh = LoadModel("assets/round_wooden_table_01_4k.fbx");
             AddComponent<MeshComponent>(cbName, std::move(cbMesh));
-            AddComponent<ShaderComponent>(cbName, squareShader);
+            AddComponent<ShaderComponent>(cbName, fogShader);
 			AddComponent<TextureComponent>(cbName, cubeDiffuseTexture);
 			AddComponent<SpecularTextureComponent>(cbName, cubeSpecularTexture);
             AddComponent<TransformComponent>(cbName, glm::vec3(0.0f, floorYs[i] + 0.5f, 0.0f));
@@ -141,7 +156,7 @@ namespace C6GE {
             CreateObject(tpName);
             auto tpMesh = CreateTemple();
             AddComponent<MeshComponent>(tpName, std::move(tpMesh));
-            AddComponent<ShaderComponent>(tpName, squareShader);
+            AddComponent<ShaderComponent>(tpName, fogShader);
             AddComponent<TextureComponent>(tpName, diffuseTexture);
             AddComponent<SpecularTextureComponent>(tpName, specularTexture);
             AddComponent<TransformComponent>(tpName, glm::vec3(4.0f, floorYs[i] + 0.5f, 0.0f));
@@ -251,6 +266,9 @@ namespace C6GE {
             for (const auto& name : meshObjects) {
                 RenderObject(name);
             }
+			
+    		SetShaderUniformVec3(fogShader, "viewPos", camera->Transform.Position);
+
 			Present();
 		}
 	}

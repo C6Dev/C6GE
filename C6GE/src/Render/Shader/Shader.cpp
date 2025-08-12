@@ -125,4 +125,34 @@ namespace C6GE {
         glUseProgram(Program);
         return Program;
     }
+
+     // Sets a uniform vec3 in the shader
+    void SetShaderUniformVec3(GLuint program, const std::string& name, const glm::vec3& value) {
+        GLint location = glGetUniformLocation(program, name.c_str());
+        if (location == -1) {
+            Log(LogLevel::warning, "Uniform '" + name + "' not found in shader");
+            return;
+        }
+        glUniform3fv(location, 1, glm::value_ptr(value));
+    }
+
+    // Sets a uniform float in the shader
+    void SetShaderUniformFloat(GLuint program, const std::string& name, float value) {
+        GLint location = glGetUniformLocation(program, name.c_str());
+        if (location == -1) {
+            Log(LogLevel::warning, "Uniform '" + name + "' not found in shader");
+            return;
+        }
+        glUniform1f(location, value);
+    }
+
+    // Sets a uniform int in the shader
+    void SetShaderUniformInt(GLuint program, const std::string& name, int value) {
+        GLint location = glGetUniformLocation(program, name.c_str());
+        if (location == -1) {
+            Log(LogLevel::warning, "Uniform '" + name + "' not found in shader");
+            return;
+        }
+        glUniform1i(location, value);
+    }
 }
