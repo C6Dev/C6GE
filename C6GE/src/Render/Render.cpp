@@ -22,6 +22,8 @@ namespace C6GE {
     	}
 
     	glEnable(GL_DEPTH_TEST);
+    	// Enable stencil test
+    	glEnable(GL_STENCIL_TEST);
     	// Disable face culling to show all faces
     	// glEnable(GL_CULL_FACE);
     	// glCullFace(GL_BACK);
@@ -31,7 +33,7 @@ namespace C6GE {
 	// Clear the screen with a specified color
 	void Clear(float r, float g, float b, float a) {
 		glClearColor(r, g, b, a);
-		glClear(GL_COLOR_BUFFER_BIT	| GL_DEPTH_BUFFER_BIT);
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 	}
 
 	// Present the rendered frame to the window
@@ -39,7 +41,7 @@ namespace C6GE {
 		glfwSwapBuffers(glfwGetCurrentContext());
 	}
 
-	void RenderObject(const std::string& name) {
+	void RenderObject(const std::string& name, bool useStencil, bool isOutlinePass) {
     	auto* shaderComp   = GetComponent<ShaderComponent>(name);
     	auto* meshComp     = GetComponent<MeshComponent>(name);
 		auto* modelComp = GetComponent<ModelComponent>(name);
@@ -49,6 +51,26 @@ namespace C6GE {
     	auto* lightComp    = GetComponent<LightComponent>(name);
 
     	if (!shaderComp || !meshComp) return;
+
+        // Configure stencil operations based on the current pass
+        if (useStencil) {
+            if (!isOutlinePass) {
+                // First pass: Write to the stencil buffer
+                glStencilFunc(GL_ALWAYS, 1, 0xFF); // Always pass stencil test and set stencil value to 1
+                glStencilMask(0xFF); // Enable writing to stencil buffer
+                glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE); // Replace stencil value on stencil and depth pass
+            } else {
+                // Second pass: Draw outline using stencil test
+                glStencilFunc(GL_NOTEQUAL, 1, 0xFF); // Only pass where stencil is NOT 1 (outside the object)
+                glStencilMask(0x00); // Disable writing to stencil buffer
+                // Disable depth testing for outline pass to draw over everything
+                glDisable(GL_DEPTH_TEST);
+            }
+        } else {
+            // Normal rendering without stencil operations
+            glStencilMask(0x00); // Disable writing to stencil buffer
+            glStencilFunc(GL_ALWAYS, 1, 0xFF); // Always pass stencil test
+        }
 
     	glUseProgram(shaderComp->ShaderProgram);
 
@@ -145,6 +167,11 @@ namespace C6GE {
 		}
 		
     	glBindVertexArray(0);
+
+        // Restore depth test if it was disabled for outline pass
+        if (useStencil && isOutlinePass) {
+            glEnable(GL_DEPTH_TEST);
+        }
 	}
 
 

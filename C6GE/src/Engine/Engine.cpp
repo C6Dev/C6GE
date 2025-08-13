@@ -13,6 +13,8 @@
 
 bool MouseCaptured = true;
 GLuint fogShader = 0;
+GLuint outlineShader = 0;
+bool enableOutline = false; // Toggle for outline effect
 
 namespace C6GE {
 
@@ -60,6 +62,13 @@ namespace C6GE {
 		auto CompiledFogVertexShader = CompileShader(FogVertexShader, ShaderType::Vertex);
 		auto CompiledFogFragmentShader = CompileShader(FogFragmentShader, ShaderType::Fragment);
 		fogShader = CreateProgram(CompiledFogVertexShader, CompiledFogFragmentShader);
+
+		// Create Outline Shader using outline.vert and outline.frag
+		auto* OutlineVertexShader = LoadShader("Assets/outline.vert");
+		auto* OutlineFragmentShader = LoadShader("Assets/outline.frag");
+		auto CompiledOutlineVertexShader = CompileShader(OutlineVertexShader, ShaderType::Vertex);
+		auto CompiledOutlineFragmentShader = CompileShader(OutlineFragmentShader, ShaderType::Fragment);
+		outlineShader = CreateProgram(CompiledOutlineVertexShader, CompiledOutlineFragmentShader);
 
 		// set fog uniform values and set frag color to red
 		UseProgram(fogShader);
@@ -141,16 +150,16 @@ namespace C6GE {
             AddComponent<SpecularTextureComponent>(sqName, specularTexture);
             AddComponent<TransformComponent>(sqName, glm::vec3(-4.0f, floorYs[i] + 0.5f, 0.0f));
 
-            std::string cbName = "cube" + std::to_string(i+1);
-            CreateObject(cbName);
-            auto cbMesh = LoadModel("assets/round_wooden_table_01_4k.fbx");
-            AddComponent<MeshComponent>(cbName, std::move(cbMesh));
-            AddComponent<ShaderComponent>(cbName, fogShader);
-			AddComponent<TextureComponent>(cbName, cubeDiffuseTexture);
-			AddComponent<SpecularTextureComponent>(cbName, cubeSpecularTexture);
-            AddComponent<TransformComponent>(cbName, glm::vec3(0.0f, floorYs[i] + 0.5f, 0.0f));
-			GetComponent<TransformComponent>(cbName)->Rotation = glm::vec3(-90.0f, 0.0f, 0.0f);
-			GetComponent<TransformComponent>(cbName)->Position.y -= 0.5f;
+            std::string tableName = "table" + std::to_string(i+1);
+            CreateObject(tableName);
+            auto tableMesh = LoadModel("assets/round_wooden_table_01_4k.fbx");
+            AddComponent<MeshComponent>(tableName, std::move(tableMesh));
+            AddComponent<ShaderComponent>(tableName, fogShader);
+			AddComponent<TextureComponent>(tableName, cubeDiffuseTexture);
+			AddComponent<SpecularTextureComponent>(tableName, cubeSpecularTexture);
+            AddComponent<TransformComponent>(tableName, glm::vec3(0.0f, floorYs[i] + 0.5f, 0.0f));
+			GetComponent<TransformComponent>(tableName)->Rotation = glm::vec3(-90.0f, 0.0f, 0.0f);
+			GetComponent<TransformComponent>(tableName)->Position.y -= 0.5f;
 
             std::string tpName = "temple" + std::to_string(i+1);
             CreateObject(tpName);
@@ -262,9 +271,55 @@ namespace C6GE {
 				}
 			}
 
+			// Always enable outline effect
+			enableOutline = true;
+
 			auto meshObjects = GetAllObjectsWithComponent<MeshComponent>();
+
+            // First render all non-table objects normally
             for (const auto& name : meshObjects) {
+                // Skip tables for now, we'll render them with special handling
+                if (name.find("table") == 0) continue;
                 RenderObject(name);
+            }
+
+            // Now render tables with outline effect if enabled
+            for (const auto& name : meshObjects) {
+                if (name.find("table") == 0) {
+                    if (enableOutline) {
+                        // First pass: Render the table normally but write to stencil buffer
+                        RenderObject(name, true, false);
+                        
+                        // Second pass: Render the outline using the stencil test
+                        auto* tableShaderComp = GetComponent<ShaderComponent>(name);
+                        if (tableShaderComp) {
+                            // Store the original shader
+                            GLuint originalShader = tableShaderComp->ShaderProgram;
+                            
+                            // Temporarily use the outline shader
+                            tableShaderComp->ShaderProgram = outlineShader;
+                            
+                            // Set outline color (orange) and view position
+                            UseProgram(outlineShader);
+                            SetShaderUniformVec3(outlineShader, "outlineColor", glm::vec3(1.0f, 0.5f, 0.0f));
+                            
+                            // Pass camera position to the outline shader for distance-based scaling
+                            auto* camera = GetComponent<CameraComponent>("camera");
+                            if (camera) {
+                                SetShaderUniformVec3(outlineShader, "viewPos", camera->Transform.Position);
+                            }
+                            
+                            // Render the outline
+                            RenderObject(name, true, true);
+                            
+                            // Restore the original shader
+                            tableShaderComp->ShaderProgram = originalShader;
+                        }
+                    } else {
+                        // Just render the table normally without outline
+                        RenderObject(name);
+                    }
+                }
             }
 			
     		SetShaderUniformVec3(fogShader, "viewPos", camera->Transform.Position);
