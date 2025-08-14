@@ -14,6 +14,7 @@
 #include "../Components/LightComponent.h"
 #include "../Components/SpecularTextureComponent.h"
 #include "../Components/ScaleComponent.h"
+#include "../Time/DeltaTime.h"
 
 namespace C6GE {
 	bool Init();

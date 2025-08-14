@@ -42,7 +42,7 @@ struct MeshComponent {
 
 // Free functions to create predefined meshes
 MeshComponent CreateTriangle();
-MeshComponent CreateSquare();
+MeshComponent CreateQuad();
 MeshComponent CreateTemple();
 MeshComponent CreateCube();
 

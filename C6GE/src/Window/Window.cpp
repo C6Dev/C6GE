@@ -65,7 +65,7 @@ window = glfwCreateWindow(width, height, title, nullptr, nullptr);
 		}
 
 		glfwMakeContextCurrent(window);
-		glfwSwapInterval(1);
+		glfwSwapInterval(0);
 		return true;
 	}
 

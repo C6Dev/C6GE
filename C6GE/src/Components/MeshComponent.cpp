@@ -122,20 +122,29 @@ MeshComponent CreateTriangle() {
     return CreateMesh(vertices, sizeof(vertices), indices, 3, true, false);
 }
 
-MeshComponent CreateSquare() {
+MeshComponent CreateQuad() {
     static const GLfloat vertices[] = {
-        // Front face (normal +Z)
+        // Front face (+Z)
         -0.5f, -0.5f, 0.0f,   0.0f, 0.0f, 1.0f,   1.0f, 1.0f, 1.0f,    0.0f, 1.0f,  // 0 Bottom-left
         -0.5f,  0.5f, 0.0f,   0.0f, 0.0f, 1.0f,   1.0f, 1.0f, 1.0f,    0.0f, 0.0f,  // 1 Top-left
-        0.5f,  0.5f, 0.0f,   0.0f, 0.0f, 1.0f,   1.0f, 1.0f, 1.0f,    1.0f, 0.0f,  // 2 Top-right
-        0.5f, -0.5f, 0.0f,   0.0f, 0.0f, 1.0f,   1.0f, 1.0f, 1.0f,    1.0f, 1.0f,  // 3 Bottom-right
+         0.5f,  0.5f, 0.0f,   0.0f, 0.0f, 1.0f,   1.0f, 1.0f, 1.0f,    1.0f, 0.0f,  // 2 Top-right
+         0.5f, -0.5f, 0.0f,   0.0f, 0.0f, 1.0f,   1.0f, 1.0f, 1.0f,    1.0f, 1.0f,  // 3 Bottom-right
+
+        // Back face (-Z)
+        -0.5f, -0.5f, 0.0f,   0.0f, 0.0f,-1.0f,   1.0f, 1.0f, 1.0f,    0.0f, 1.0f,  // 4 Bottom-left
+        -0.5f,  0.5f, 0.0f,   0.0f, 0.0f,-1.0f,   1.0f, 1.0f, 1.0f,    0.0f, 0.0f,  // 5 Top-left
+         0.5f,  0.5f, 0.0f,   0.0f, 0.0f,-1.0f,   1.0f, 1.0f, 1.0f,    1.0f, 0.0f,  // 6 Top-right
+         0.5f, -0.5f, 0.0f,   0.0f, 0.0f,-1.0f,   1.0f, 1.0f, 1.0f,    1.0f, 1.0f   // 7 Bottom-right
     };
+
     static const GLuint indices[] = {
-        // Front face
-        0, 3, 2,
-        0, 2, 1
+        // Front (+Z)
+        0, 1, 2, 0, 2, 3,
+        // Back (-Z) — wound so normal points -Z
+        4, 6, 5, 4, 7, 6
     };
-    return CreateMesh(vertices, sizeof(vertices), indices, 6, true, true);
+
+    return CreateMesh(vertices, sizeof(vertices), indices, sizeof(indices) / sizeof(GLuint), true, true);
 }
 
 MeshComponent CreateTemple() {
@@ -188,43 +197,51 @@ MeshComponent CreateCube() {
     static const GLfloat vertices[] = {
         // Front face (+Z)
         -0.5f, -0.5f,  0.5f,  0.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f,  0.0f, 0.0f, // 0
-        0.5f, -0.5f,  0.5f,   0.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f,  1.0f, 0.0f, // 1
-        0.5f,  0.5f,  0.5f,   0.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f,  1.0f, 1.0f, // 2
+         0.5f, -0.5f,  0.5f,  0.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f,  1.0f, 0.0f, // 1
+         0.5f,  0.5f,  0.5f,  0.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f,  1.0f, 1.0f, // 2
         -0.5f,  0.5f,  0.5f,  0.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f,  0.0f, 1.0f, // 3
         // Back face (-Z)
-        -0.5f, -0.5f, -0.5f,  0.0f, 0.0f, -1.0f, 1.0f, 1.0f, 1.0f,  0.0f, 0.0f, // 4
-        0.5f, -0.5f, -0.5f,   0.0f, 0.0f, -1.0f, 1.0f, 1.0f, 1.0f,  1.0f, 0.0f, // 5
-        0.5f,  0.5f, -0.5f,   0.0f, 0.0f, -1.0f, 1.0f, 1.0f, 1.0f,  1.0f, 1.0f, // 6
-        -0.5f,  0.5f, -0.5f,  0.0f, 0.0f, -1.0f, 1.0f, 1.0f, 1.0f,  0.0f, 1.0f, // 7
+        -0.5f, -0.5f, -0.5f,  0.0f, 0.0f,-1.0f,  1.0f, 1.0f, 1.0f,  0.0f, 0.0f, // 4
+         0.5f, -0.5f, -0.5f,  0.0f, 0.0f,-1.0f,  1.0f, 1.0f, 1.0f,  1.0f, 0.0f, // 5
+         0.5f,  0.5f, -0.5f,  0.0f, 0.0f,-1.0f,  1.0f, 1.0f, 1.0f,  1.0f, 1.0f, // 6
+        -0.5f,  0.5f, -0.5f,  0.0f, 0.0f,-1.0f,  1.0f, 1.0f, 1.0f,  0.0f, 1.0f, // 7
         // Left face (-X)
-        -0.5f, -0.5f, -0.5f,  -1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f,  0.0f, 0.0f, // 8
-        -0.5f, -0.5f,  0.5f,  -1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f,  1.0f, 0.0f, // 9
-        -0.5f,  0.5f,  0.5f,  -1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f,  1.0f, 1.0f, // 10
-        -0.5f,  0.5f, -0.5f,  -1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f,  0.0f, 1.0f, // 11
+        -0.5f, -0.5f, -0.5f, -1.0f, 0.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 0.0f, // 8
+        -0.5f, -0.5f,  0.5f, -1.0f, 0.0f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 0.0f, // 9
+        -0.5f,  0.5f,  0.5f, -1.0f, 0.0f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 1.0f, //10
+        -0.5f,  0.5f, -0.5f, -1.0f, 0.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 1.0f, //11
         // Right face (+X)
-        0.5f, -0.5f, -0.5f,   1.0f, 0.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 0.0f, // 12
-        0.5f, -0.5f,  0.5f,   1.0f, 0.0f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 0.0f, // 13
-        0.5f,  0.5f,  0.5f,   1.0f, 0.0f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 1.0f, // 14
-        0.5f,  0.5f, -0.5f,   1.0f, 0.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 1.0f, // 15
+         0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 0.0f, //12
+         0.5f, -0.5f,  0.5f,  1.0f, 0.0f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 0.0f, //13
+         0.5f,  0.5f,  0.5f,  1.0f, 0.0f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 1.0f, //14
+         0.5f,  0.5f, -0.5f,  1.0f, 0.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 1.0f, //15
         // Top face (+Y)
-        -0.5f,  0.5f, -0.5f,  0.0f, 1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 0.0f, // 16
-        0.5f,  0.5f, -0.5f,   0.0f, 1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 0.0f, // 17
-        0.5f,  0.5f,  0.5f,   0.0f, 1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 1.0f, // 18
-        -0.5f,  0.5f,  0.5f,  0.0f, 1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 1.0f, // 19
+        -0.5f,  0.5f, -0.5f,  0.0f, 1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 0.0f, //16
+         0.5f,  0.5f, -0.5f,  0.0f, 1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 0.0f, //17
+         0.5f,  0.5f,  0.5f,  0.0f, 1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 1.0f, //18
+        -0.5f,  0.5f,  0.5f,  0.0f, 1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 1.0f, //19
         // Bottom face (-Y)
-        -0.5f, -0.5f, -0.5f,  0.0f, -1.0f, 0.0f, 1.0f, 1.0f, 1.0f,  0.0f, 0.0f, // 20
-        0.5f, -0.5f, -0.5f,   0.0f, -1.0f, 0.0f, 1.0f, 1.0f, 1.0f,  1.0f, 0.0f, // 21
-        0.5f, -0.5f,  0.5f,   0.0f, -1.0f, 0.0f, 1.0f, 1.0f, 1.0f,  1.0f, 1.0f, // 22
-        -0.5f, -0.5f,  0.5f,  0.0f, -1.0f, 0.0f, 1.0f, 1.0f, 1.0f,  0.0f, 1.0f  // 23
+        -0.5f, -0.5f, -0.5f,  0.0f,-1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 0.0f, //20
+         0.5f, -0.5f, -0.5f,  0.0f,-1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 0.0f, //21
+         0.5f, -0.5f,  0.5f,  0.0f,-1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 1.0f, //22
+        -0.5f, -0.5f,  0.5f,  0.0f,-1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 1.0f  //23
     };
+
     static const GLuint indices[] = {
-        0, 1, 2, 0, 2, 3,    // Front (CCW)
-        4, 5, 6, 4, 6, 7,    // Back (CCW from outside)
-        8, 9, 10, 8, 10, 11, // Left (CCW)
-        12, 13, 14, 12, 14, 15, // Right (CCW)
-        16, 17, 18, 16, 18, 19, // Top (CCW)
-        20, 23, 22, 20, 22, 21  // Bottom (CCW from outside)
+        // Front (+Z)
+        0, 1, 2,    0, 2, 3,
+        // Back (-Z) — wound so normal points -Z
+        4, 6, 5,    4, 7, 6,
+        // Left (-X)
+        8, 9, 10,   8, 10, 11,
+        // Right (+X)
+        12, 14, 13, 12, 15, 14,
+        // Top (+Y)
+        16, 18, 17, 16, 19, 18,
+        // Bottom (-Y)
+        20, 21, 22, 20, 22, 23
     };
+
     return CreateMesh(vertices, sizeof(vertices), indices, sizeof(indices) / sizeof(GLuint), true, true);
 }
 
@@ -271,13 +288,12 @@ Mesh ProcessMesh(aiMesh* mesh, const aiScene* scene, const std::string& director
     for (unsigned int i = 0; i < mesh->mNumVertices; i++) {
         Vertex vertex;
         vertex.Position = { mesh->mVertices[i].x, mesh->mVertices[i].y, mesh->mVertices[i].z };
-        vertex.Normal = { mesh->mNormals[i].x, mesh->mNormals[i].y, mesh->mNormals[i].z };
+        vertex.Normal   = { mesh->mNormals[i].x, mesh->mNormals[i].y, mesh->mNormals[i].z };
 
-        // Extract color data if available
         if (mesh->HasVertexColors(0)) {
             vertex.Color = { mesh->mColors[0][i].r, mesh->mColors[0][i].g, mesh->mColors[0][i].b };
         } else {
-            vertex.Color = { 0.0f, 0.0f, 0.0f }; // Default to zero to indicate no color data
+            vertex.Color = { 0.0f, 0.0f, 0.0f };
         }
 
         if (mesh->mTextureCoords[0]) {
@@ -292,24 +308,36 @@ Mesh ProcessMesh(aiMesh* mesh, const aiScene* scene, const std::string& director
     // Process indices
     for (unsigned int i = 0; i < mesh->mNumFaces; i++) {
         aiFace face = mesh->mFaces[i];
-        for (unsigned int j = 0; j < face.mNumIndices; j++)
+        for (unsigned int j = 0; j < face.mNumIndices; j++) {
             newMesh.indices.push_back(face.mIndices[j]);
+        }
     }
 
-    // Process material
+    // **Fix winding order to CCW**
+    for (size_t i = 0; i < newMesh.indices.size(); i += 3) {
+        auto& v0 = newMesh.vertices[newMesh.indices[i + 0]];
+        auto& v1 = newMesh.vertices[newMesh.indices[i + 1]];
+        auto& v2 = newMesh.vertices[newMesh.indices[i + 2]];
+
+        glm::vec3 edge1 = v1.Position - v0.Position;
+        glm::vec3 edge2 = v2.Position - v0.Position;
+        glm::vec3 normal = glm::cross(edge1, edge2);
+
+        // If normal is pointing away from vertex normal, flip
+        if (glm::dot(normal, v0.Normal) < 0.0f) {
+            std::swap(newMesh.indices[i + 1], newMesh.indices[i + 2]);
+        }
+    }
+
+    // Process material (same as your existing code) ...
     if (mesh->mMaterialIndex >= 0) {
         aiMaterial* material = scene->mMaterials[mesh->mMaterialIndex];
-
-        // Lambda to load textures from material
         auto loadMaterialTextures = [&](aiTextureType type, const std::string& typeName) {
             std::vector<Texture> textures;
-
             for (unsigned int i = 0; i < material->GetTextureCount(type); i++) {
                 aiString str;
                 material->GetTexture(type, i, &str);
                 std::string filename = str.C_Str();
-
-                // Check if texture was loaded before
                 bool skip = false;
                 for (const auto& loadedTex : textures_loaded) {
                     if (loadedTex.path == filename) {
@@ -325,23 +353,20 @@ Mesh ProcessMesh(aiMesh* mesh, const aiScene* scene, const std::string& director
                     textures_loaded.push_back(texture);
                 }
             }
-
             return textures;
         };
 
-        // Load diffuse textures
         std::vector<Texture> diffuseMaps = loadMaterialTextures(aiTextureType_DIFFUSE, "texture_diffuse");
         newMesh.textures.insert(newMesh.textures.end(), diffuseMaps.begin(), diffuseMaps.end());
 
-        // Load specular textures
         std::vector<Texture> specularMaps = loadMaterialTextures(aiTextureType_SPECULAR, "texture_specular");
         newMesh.textures.insert(newMesh.textures.end(), specularMaps.begin(), specularMaps.end());
     }
 
     SetupMesh(newMesh);
-
     return newMesh;
 }
+
 
 // ProcessNode function to recursively process nodes
 void ProcessNode(aiNode* node, const aiScene* scene, ModelComponent& model, std::vector<Texture>& textures_loaded) {

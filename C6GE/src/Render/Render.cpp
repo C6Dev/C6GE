@@ -24,9 +24,10 @@ namespace C6GE {
     	glEnable(GL_DEPTH_TEST);
     	// Enable stencil test
     	glEnable(GL_STENCIL_TEST);
-    	// Disable face culling to show all faces
-    	// glEnable(GL_CULL_FACE);
-    	// glCullFace(GL_BACK);
+		// enable face culling
+		glEnable(GL_CULL_FACE);
+		glCullFace(GL_BACK);
+		glFrontFace(GL_CCW); // Expect all meshes to be counter-clockwise
     	return true;
 	}
 

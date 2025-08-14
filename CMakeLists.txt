@@ -39,6 +39,7 @@ set(HEADERS
     ${CMAKE_SOURCE_DIR}/C6GE/src/Components/CameraComponent.h
     ${CMAKE_SOURCE_DIR}/C6GE/src/Components/LightComponent.h
     ${CMAKE_SOURCE_DIR}/C6GE/src/Components/ModelComponent.h
+    ${CMAKE_SOURCE_DIR}/C6GE/src/Time/DeltaTime.h
 )
 
 

@@ -10,127 +10,110 @@
 #include "../Components/ScaleComponent.h"
 #include <cmath>
 #include <vector>
+#include <iomanip>
+#include <sstream>
 
 bool MouseCaptured = true;
 GLuint fogShader = 0;
 GLuint outlineShader = 0;
+GLuint lightShader = 0; // Moved to global scope
 bool enableOutline = false; // Toggle for outline effect
 
 namespace C6GE {
 
-	bool Init() {
+    bool Init() {
+        // Create the main application window
+        if (!CreateWindow(800, 800, "C6GE Window")) {
+            Log(LogLevel::critical, "Failed to create window.");
+            return false;
+        }
 
-		// Create the main application window
-		if (!CreateWindow(800, 800, "C6GE Window")) {
-			Log(LogLevel::critical, "Failed to create window.");
-			return false;
-		}
+        // Initialize rendering system
+        if (!InitRender()) {
+            Log(LogLevel::critical, "Failed to initialize rendering.");
+            return false;
+        }
 
-		// Initialize rendering system
-		if (!InitRender()) {
-			Log(LogLevel::critical, "Failed to initialize rendering.");
-			return false;
-		}
+        input::EnableMouseCapture(true);
 
-		input::EnableMouseCapture(true);
+        CreateObject("camera");
 
+        auto* VertexShader = LoadShader("Assets/shader.vert");
+        auto* FragmentShader = LoadShader("Assets/shader.frag");
+        auto* LightVertexShader = LoadShader("Assets/light.vert");
+        auto* LightFragmentShader = LoadShader("Assets/light.frag");
 
-		CreateObject("camera");
+        auto CompiledVertexShader = CompileShader(VertexShader, ShaderType::Vertex);
+        auto CompiledFragmentShader = CompileShader(FragmentShader, ShaderType::Fragment);
+        auto CompiledLightVertexShader = CompileShader(LightVertexShader, ShaderType::Vertex);
+        auto CompiledLightFragmentShader = CompileShader(LightFragmentShader, ShaderType::Fragment);
 
+        auto squareShader = CreateProgram(CompiledVertexShader, CompiledFragmentShader);
+        lightShader = CreateProgram(CompiledLightVertexShader, CompiledLightFragmentShader); // Assign to global
 
-		auto* VertexShader = LoadShader("Assets/shader.vert");
+        // Create Fog Shader using fog.vert and fog.frag
+        auto* FogVertexShader = LoadShader("Assets/fog.vert");
+        auto* FogFragmentShader = LoadShader("Assets/fog.frag");
+        auto CompiledFogVertexShader = CompileShader(FogVertexShader, ShaderType::Vertex);
+        auto CompiledFogFragmentShader = CompileShader(FogFragmentShader, ShaderType::Fragment);
+        fogShader = CreateProgram(CompiledFogVertexShader, CompiledFogFragmentShader);
 
-		auto* FragmentShader = LoadShader("Assets/shader.frag");
+        // Create Outline Shader using outline.vert and outline.frag
+        auto* OutlineVertexShader = LoadShader("Assets/outline.vert");
+        auto* OutlineFragmentShader = LoadShader("Assets/outline.frag");
+        auto CompiledOutlineVertexShader = CompileShader(OutlineVertexShader, ShaderType::Vertex);
+        auto CompiledOutlineFragmentShader = CompileShader(OutlineFragmentShader, ShaderType::Fragment);
+        outlineShader = CreateProgram(CompiledOutlineVertexShader, CompiledOutlineFragmentShader);
 
-		auto* LightVertexShader = LoadShader("Assets/light.vert");
+        // set fog uniform values and set frag color to red
+        UseProgram(fogShader);
+        SetShaderUniformVec3(fogShader, "fogColor", glm::vec3(0.5f, 0.5f, 0.5f));
+        SetShaderUniformFloat(fogShader, "fogNear", 1.0f);
+        SetShaderUniformFloat(fogShader, "fogFar", 50.0f);
+        UseProgram(0); // Unbind the shader program
 
-		auto* LightFragmentShader = LoadShader("Assets/light.frag");
+        int width = 0, height = 0, channels = 0;
+        auto* diffuseData = LoadTexture("Assets/textures/WoodFloor043_2K-JPG_Color.jpg", width, height, channels);
+        GLuint diffuseTexture = 0;
+        GLuint cubeDiffuseTexture = 0;
+        if (diffuseData) {
+            diffuseTexture = CreateTexture(diffuseData, width, height, channels);
+        } else {
+            Log(LogLevel::error, "Failed to load diffuse texture");
+        }
 
+        auto* specularData = LoadTexture("Assets/textures/WoodFloor043_2K-JPG_Roughness.jpg", width, height, channels);
+        GLuint cubeSpecularTexture = 0;
+        GLuint specularTexture = 0;
+        if (specularData) {
+            specularTexture = CreateTexture(specularData, width, height, channels);
+        } else {
+            Log(LogLevel::error, "Failed to load specular texture");
+        }
 
-		auto CompiledVertexShader = CompileShader(VertexShader, ShaderType::Vertex);
-		auto CompiledFragmentShader = CompileShader(FragmentShader, ShaderType::Fragment);
+        // Create Texture for cube using textures/table/ file name
+        auto* cubeDiffuseData = LoadTexture("Assets/textures/round_wooden_table_01_diff_4k.jpg", width, height, channels);
+        if (cubeDiffuseData) {
+            cubeDiffuseTexture = CreateTexture(cubeDiffuseData, width, height, channels);
+        } else {
+            Log(LogLevel::error, "Failed to load cube diffuse texture");
+        }
+        auto* cubeSpecularData = LoadTexture("Assets/textures/round_wooden_table_01_rough_4k.jpg", width, height, channels);
+        if (cubeSpecularData) {
+            cubeSpecularTexture = CreateTexture(cubeSpecularData, width, height, channels);
+        } else {
+            Log(LogLevel::error, "Failed to load cube specular texture");
+        }
 
-		auto CompiledLightVertexShader = CompileShader(LightVertexShader, ShaderType::Vertex);
-		auto CompiledLightFragmentShader = CompileShader(LightFragmentShader, ShaderType::Fragment);
-
-		auto squareShader = CreateProgram(CompiledVertexShader, CompiledFragmentShader);
-		auto lightShader = CreateProgram(CompiledLightVertexShader, CompiledLightFragmentShader);
-
-		// Create Fog Shader using fog.vert and fog.frag
-		auto* FogVertexShader = LoadShader("Assets/fog.vert");
-		auto* FogFragmentShader = LoadShader("Assets/fog.frag");
-		auto CompiledFogVertexShader = CompileShader(FogVertexShader, ShaderType::Vertex);
-		auto CompiledFogFragmentShader = CompileShader(FogFragmentShader, ShaderType::Fragment);
-		fogShader = CreateProgram(CompiledFogVertexShader, CompiledFogFragmentShader);
-
-		// Create Outline Shader using outline.vert and outline.frag
-		auto* OutlineVertexShader = LoadShader("Assets/outline.vert");
-		auto* OutlineFragmentShader = LoadShader("Assets/outline.frag");
-		auto CompiledOutlineVertexShader = CompileShader(OutlineVertexShader, ShaderType::Vertex);
-		auto CompiledOutlineFragmentShader = CompileShader(OutlineFragmentShader, ShaderType::Fragment);
-		outlineShader = CreateProgram(CompiledOutlineVertexShader, CompiledOutlineFragmentShader);
-
-		// set fog uniform values and set frag color to red
-		UseProgram(fogShader);
-		SetShaderUniformVec3(fogShader, "fogColor", glm::vec3(0.5f, 0.5f, 0.5f));
-		SetShaderUniformFloat(fogShader, "fogNear", 1.0f);
-		SetShaderUniformFloat(fogShader, "fogFar", 50.0f);
-		UseProgram(0); // Unbind the shader program
-
-        
-
-		int width = 0, height = 0, channels = 0;
-		auto* diffuseData = LoadTexture("Assets/textures/WoodFloor043_2K-JPG_Color.jpg", width, height, channels);
-		GLuint diffuseTexture = 0;
-		GLuint cubeDiffuseTexture = 0;
-		if (diffuseData) {
-			diffuseTexture = CreateTexture(diffuseData, width, height, channels);
-			
-		} else {
-			Log(LogLevel::error, "Failed to load diffuse texture");
-			// Optionally return false or handle error
-		}
-
-		auto* specularData = LoadTexture("Assets/textures/WoodFloor043_2K-JPG_Roughness.jpg", width, height, channels);
-		GLuint cubeSpecularTexture = 0;
-		GLuint specularTexture = 0;
-		if (specularData) {
-			specularTexture = CreateTexture(specularData, width, height, channels);
-			
-		} else {
-			Log(LogLevel::error, "Failed to load specular texture");
-			// Optionally return false or handle error
-		}
-
-		// Create Texture for cube using textures/table/ file name
-		auto* cubeDiffuseData = LoadTexture("Assets/textures/round_wooden_table_01_diff_4k.jpg", width, height, channels);
-		if (cubeDiffuseData) {
-			cubeDiffuseTexture = CreateTexture(cubeDiffuseData, width, height, channels);
-		} else {
-			Log(LogLevel::error, "Failed to load cube diffuse texture");
-			// Optionally return false or handle error
-		}
-		auto* cubeSpecularData = LoadTexture("Assets/textures/round_wooden_table_01_rough_4k.jpg", width, height, channels);
-		if (cubeSpecularData) {
-			cubeSpecularTexture = CreateTexture(cubeSpecularData, width, height, channels);
-		} else {
-			Log(LogLevel::error, "Failed to load cube specular texture");
-			// Optionally return false or handle error
-		}
-
-		
-
-		auto camera = CreateCamera();
-		AddComponent<CameraComponent>("camera", *camera);
-
-		
+        auto camera = CreateCamera();
+        AddComponent<CameraComponent>("camera", *camera);
 
         // Create 3 floors
         std::vector<std::string> floors = {"floor1", "floor2", "floor3"};
         float floorYs[3] = {0.0f, 5.0f, 10.0f};
         for (int i = 0; i < 3; ++i) {
             CreateObject(floors[i]);
-            auto floorMesh = CreateSquare();
+            auto floorMesh = CreateQuad();
             AddComponent<MeshComponent>(floors[i], std::move(floorMesh));
             AddComponent<ShaderComponent>(floors[i], fogShader);
             AddComponent<TextureComponent>(floors[i], diffuseTexture);
@@ -143,7 +126,7 @@ namespace C6GE {
             // Add shapes on floor
             std::string sqName = "square" + std::to_string(i+1);
             CreateObject(sqName);
-            auto sqMesh = CreateSquare();
+            auto sqMesh = CreateQuad();
             AddComponent<MeshComponent>(sqName, std::move(sqMesh));
             AddComponent<ShaderComponent>(sqName, fogShader);
             AddComponent<TextureComponent>(sqName, diffuseTexture);
@@ -155,11 +138,11 @@ namespace C6GE {
             auto tableMesh = LoadModel("assets/round_wooden_table_01_4k.fbx");
             AddComponent<MeshComponent>(tableName, std::move(tableMesh));
             AddComponent<ShaderComponent>(tableName, fogShader);
-			AddComponent<TextureComponent>(tableName, cubeDiffuseTexture);
-			AddComponent<SpecularTextureComponent>(tableName, cubeSpecularTexture);
+            AddComponent<TextureComponent>(tableName, cubeDiffuseTexture);
+            AddComponent<SpecularTextureComponent>(tableName, cubeSpecularTexture);
             AddComponent<TransformComponent>(tableName, glm::vec3(0.0f, floorYs[i] + 0.5f, 0.0f));
-			GetComponent<TransformComponent>(tableName)->Rotation = glm::vec3(-90.0f, 0.0f, 0.0f);
-			GetComponent<TransformComponent>(tableName)->Position.y -= 0.5f;
+            GetComponent<TransformComponent>(tableName)->Rotation = glm::vec3(-90.0f, 0.0f, 0.0f);
+            GetComponent<TransformComponent>(tableName)->Position.y -= 0.5f;
 
             std::string tpName = "temple" + std::to_string(i+1);
             CreateObject(tpName);
@@ -180,11 +163,11 @@ namespace C6GE {
         AddComponent<TransformComponent>("pointLight", glm::vec3(0.0f, 2.0f, 0.0f));
         GetComponent<TransformComponent>("pointLight")->Scale = glm::vec3(0.2f);
         auto& plComp = AddComponent<LightComponent>("pointLight");
-		plComp.type = LightType::Point;
-		plComp.color = glm::vec3(1.0f);
-		plComp.intensity = 1.0f;
-		plComp.direction = glm::vec3(0.0f);
-		plComp.cutoff = 0.0f;
+        plComp.type = LightType::Point;
+        plComp.color = glm::vec3(1.0f);
+        plComp.intensity = 1.0f;
+        plComp.direction = glm::vec3(0.0f);
+        plComp.cutoff = 0.0f;
 
         CreateObject("dirLight");
         auto dlMesh = CreateCube();
@@ -193,11 +176,11 @@ namespace C6GE {
         AddComponent<TransformComponent>("dirLight", glm::vec3(0.0f, 7.0f, 0.0f));
         GetComponent<TransformComponent>("dirLight")->Scale = glm::vec3(0.2f);
         auto& dlComp = AddComponent<LightComponent>("dirLight");
-		dlComp.type = LightType::Directional;
-		dlComp.color = glm::vec3(1.0f);
-		dlComp.intensity = 1.0f;
-		dlComp.direction = glm::vec3(0.0f, -1.0f, 0.0f);
-		dlComp.cutoff = 0.0f;
+        dlComp.type = LightType::Directional;
+        dlComp.color = glm::vec3(1.0f);
+        dlComp.intensity = 1.0f;
+        dlComp.direction = glm::vec3(0.0f, -1.0f, 0.0f);
+        dlComp.cutoff = 0.0f;
 
         CreateObject("spotLight");
         auto slMesh = CreateCube();
@@ -206,130 +189,143 @@ namespace C6GE {
         AddComponent<TransformComponent>("spotLight", glm::vec3(0.0f, 12.0f, 0.0f));
         GetComponent<TransformComponent>("spotLight")->Scale = glm::vec3(0.2f);
         auto& slComp = AddComponent<LightComponent>("spotLight");
-		slComp.type = LightType::Spot;
-		slComp.color = glm::vec3(1.0f);
-		slComp.intensity = 1.0f;
-		slComp.direction = glm::vec3(0.0f, -1.0f, 0.0f);
-		slComp.cutoff = static_cast<float>(glm::cos(glm::radians(12.5f)));
+        slComp.type = LightType::Spot;
+        slComp.color = glm::vec3(1.0f);
+        slComp.intensity = 1.0f;
+        slComp.direction = glm::vec3(0.0f, -1.0f, 0.0f);
+        slComp.cutoff = static_cast<float>(glm::cos(glm::radians(12.5f)));
 
-		return true;
-	}
+        return true;
+    }
 
-	void Update() {
-		float lastTime = static_cast<float>(glfwGetTime());
-		float deltaTime = 0.0f;
-		float angle = 0.0f;
-		// Main loop: update window and render each frame
-		while (IsWindowOpen()) {
-			UpdateWindow();
-			input::Update();
-			Clear(0.2f, 0.3f, 0.3f, 1.0f); // Clear the screen with teal color
-        	float currentTime = static_cast<float>(glfwGetTime());
-        	deltaTime = currentTime - lastTime;
-        	lastTime = currentTime;
+    void Update() {
+        // FPS smoothing variables
+        static const int SAMPLE_COUNT = 10;
+        static double deltaTimes[SAMPLE_COUNT] = {0.0};
+        static int currentSample = 0;
 
-        	
+        // Main loop: update window and render each frame
+        while (IsWindowOpen()) {
+            UpdateWindow();
+            input::Update();
+            Clear(0.2f, 0.3f, 0.3f, 1.0f); // Clear the screen with teal color
 
-        	auto* camera = GetComponent<CameraComponent>("camera");
-        	// --- Camera Movement ---
-        	glm::vec3& pos = camera->Transform.Position;
-        	glm::vec3 front = C6GE::GetCameraFront(camera->Transform);
-        	glm::vec3 right = glm::normalize(glm::cross(front, glm::vec3(0.0f, 1.0f, 0.0f)));
-        	float speed = camera->MovementSpeed * deltaTime;
+            // Calculate delta time once per frame
+            double dt = DeltaTime::deltaTime();
 
-        	if (input::key.w)
-            	pos += speed * front;
-        	if (input::key.s)
-            	pos -= speed * front;
-        	if (input::key.a)
-            	pos -= speed * right;
-        	if (input::key.d)
-            	pos += speed * right;
+            // Store delta time for FPS smoothing
+            deltaTimes[currentSample] = dt;
+            currentSample = (currentSample + 1) % SAMPLE_COUNT;
 
-        	// Camera Rotation
-        	if (camera && MouseCaptured == true) {
-            	double xoffset = input::mouse.delta_x * camera->MouseSensitivity;
-            	double yoffset = input::mouse.delta_y * camera->MouseSensitivity;
+            // Calculate smoothed FPS
+            double averageDeltaTime = 0.0;
+            int validSamples = 0;
+            for (int i = 0; i < SAMPLE_COUNT; i++) {
+                if (deltaTimes[i] > 0.0) {
+                    averageDeltaTime += deltaTimes[i];
+                    validSamples++;
+                }
+            }
+            double fps = (validSamples > 0 && averageDeltaTime > 0.0) ? 1.0 / (averageDeltaTime / validSamples) : 0.0;
 
-            	camera->Transform.Rotation.y += static_cast<float>(xoffset); // Yaw
-            	camera->Transform.Rotation.x += static_cast<float>(yoffset); // Pitch
+            // Update window title with smoothed FPS
+            std::stringstream ss;
+            ss << std::fixed << std::setprecision(1) << "C6GE Window + " << fps << " FPS";
+            glfwSetWindowTitle(GetWindow(), ss.str().c_str());
 
-            	// Clamp pitch to avoid flipping
-            	if (camera->Transform.Rotation.x > 89.0f) camera->Transform.Rotation.x = 89.0f;
-            	if (camera->Transform.Rotation.x < -89.0f) camera->Transform.Rotation.x = -89.0f;
-        	}
+            auto* camera = GetComponent<CameraComponent>("camera");
+            // --- Camera Movement ---
+            glm::vec3& pos = camera->Transform.Position;
+            glm::vec3 front = C6GE::GetCameraFront(camera->Transform);
+            glm::vec3 right = glm::normalize(glm::cross(front, glm::vec3(0.0f, 1.0f, 0.0f)));
+            float speed = camera->MovementSpeed * static_cast<float>(dt);
 
-			if (input::key.escape) {
-				MouseCaptured = false;
-				input::EnableMouseCapture(false);
-			}
+            if (input::key.w)
+                pos += speed * front;
+            if (input::key.s)
+                pos -= speed * front;
+            if (input::key.a)
+                pos -= speed * right;
+            if (input::key.d)
+                pos += speed * right;
 
-			if (input::mouse.button1) {
-				if (!MouseCaptured) {
-					MouseCaptured = true;
-					input::EnableMouseCapture(true);
-				}
-			}
+            // Camera Rotation
+            if (camera && MouseCaptured == true) {
+                double xoffset = input::mouse.delta_x * camera->MouseSensitivity;
+                double yoffset = input::mouse.delta_y * camera->MouseSensitivity;
 
-			// Always enable outline effect
-			enableOutline = true;
+                camera->Transform.Rotation.y += static_cast<float>(xoffset); // Yaw
+                camera->Transform.Rotation.x += static_cast<float>(yoffset); // Pitch
 
-			auto meshObjects = GetAllObjectsWithComponent<MeshComponent>();
+                // Clamp pitch to avoid flipping
+                if (camera->Transform.Rotation.x > 89.0f) camera->Transform.Rotation.x = 89.0f;
+                if (camera->Transform.Rotation.x < -89.0f) camera->Transform.Rotation.x = -89.0f;
+            }
 
-            // First render all non-table objects normally
+            if (input::key.escape) {
+                MouseCaptured = false;
+                input::EnableMouseCapture(false);
+            }
+
+            if (input::mouse.button1) {
+                if (!MouseCaptured) {
+                    MouseCaptured = true;
+                    input::EnableMouseCapture(true);
+                }
+            }
+
+            // Always enable outline effect
+            enableOutline = true;
+
+            auto meshObjects = GetAllObjectsWithComponent<MeshComponent>();
+
+            // Render all fog-shader objects first to minimize shader switches
+            UseProgram(fogShader);
+            SetShaderUniformVec3(fogShader, "viewPos", camera->Transform.Position);
             for (const auto& name : meshObjects) {
-                // Skip tables for now, we'll render them with special handling
-                if (name.find("table") == 0) continue;
+                if (name.find("table") == 0) continue; // Skip tables for now
                 RenderObject(name);
             }
 
-            // Now render tables with outline effect if enabled
+            // Render tables with outline effect
             for (const auto& name : meshObjects) {
                 if (name.find("table") == 0) {
                     if (enableOutline) {
-                        // First pass: Render the table normally but write to stencil buffer
+                        // First pass: Render table normally with stencil
                         RenderObject(name, true, false);
                         
-                        // Second pass: Render the outline using the stencil test
+                        // Second pass: Render outline
                         auto* tableShaderComp = GetComponent<ShaderComponent>(name);
                         if (tableShaderComp) {
-                            // Store the original shader
                             GLuint originalShader = tableShaderComp->ShaderProgram;
-                            
-                            // Temporarily use the outline shader
                             tableShaderComp->ShaderProgram = outlineShader;
-                            
-                            // Set outline color (orange) and view position
                             UseProgram(outlineShader);
                             SetShaderUniformVec3(outlineShader, "outlineColor", glm::vec3(1.0f, 0.5f, 0.0f));
-                            
-                            // Pass camera position to the outline shader for distance-based scaling
-                            auto* camera = GetComponent<CameraComponent>("camera");
-                            if (camera) {
-                                SetShaderUniformVec3(outlineShader, "viewPos", camera->Transform.Position);
-                            }
-                            
-                            // Render the outline
+                            SetShaderUniformVec3(outlineShader, "viewPos", camera->Transform.Position);
                             RenderObject(name, true, true);
-                            
-                            // Restore the original shader
                             tableShaderComp->ShaderProgram = originalShader;
                         }
                     } else {
-                        // Just render the table normally without outline
+                        UseProgram(fogShader); // Ensure fog shader is active
                         RenderObject(name);
                     }
                 }
             }
-			
-    		SetShaderUniformVec3(fogShader, "viewPos", camera->Transform.Position);
 
-			Present();
-		}
-	}
+            // Render lights with light shader
+            UseProgram(lightShader);
+            for (const auto& name : meshObjects) {
+                if (name.find("Light") != std::string::npos) { // Assumes light objects have "Light" in name
+                    RenderObject(name);
+                }
+            }
 
-	void Shutdown() {
-		// Clean up and close the window
-		DestroyWindow();
-	}
+            Present();
+        }
+    }
+
+    void Shutdown() {
+        // Clean up and close the window
+        DestroyWindow();
+    }
 }
