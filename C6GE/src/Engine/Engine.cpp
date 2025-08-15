@@ -12,11 +12,13 @@
 #include <vector>
 #include <iomanip>
 #include <sstream>
+#include <algorithm>
 
 bool MouseCaptured = true;
 GLuint fogShader = 0;
 GLuint outlineShader = 0;
 GLuint lightShader = 0; // Moved to global scope
+GLuint postShader = 0;
 bool enableOutline = false; // Toggle for outline effect
 
 namespace C6GE {
@@ -65,6 +67,13 @@ namespace C6GE {
         auto CompiledOutlineFragmentShader = CompileShader(OutlineFragmentShader, ShaderType::Fragment);
         outlineShader = CreateProgram(CompiledOutlineVertexShader, CompiledOutlineFragmentShader);
 
+        // Create Post-processing Shader using post.vert and post.frag
+        auto* PostVertexShader = LoadShader("Assets/post.vert");
+        auto* PostFragmentShader = LoadShader("Assets/post.frag");
+        auto CompiledPostVertexShader = CompileShader(PostVertexShader, ShaderType::Vertex);
+        auto CompiledPostFragmentShader = CompileShader(PostFragmentShader, ShaderType::Fragment);
+        postShader = CreateProgram(CompiledPostVertexShader, CompiledPostFragmentShader);
+
         // set fog uniform values and set frag color to red
         UseProgram(fogShader);
         SetShaderUniformVec3(fogShader, "fogColor", glm::vec3(0.5f, 0.5f, 0.5f));
@@ -105,6 +114,21 @@ namespace C6GE {
             Log(LogLevel::error, "Failed to load cube specular texture");
         }
 
+        auto* quadData = LoadTexture("Assets/textures/blending_transparent_window.png", width, height, channels);
+        GLuint quadTexture = 0;
+        if (quadData) {
+            quadTexture = CreateTexture(quadData, width, height, channels);
+        } else {
+            Log(LogLevel::error, "Failed to load quad texture");
+        }
+        auto* grassData = LoadTexture("Assets/textures/grass.png", width, height, channels);
+        GLuint grassTexture = 0;
+        if (grassData) {
+            grassTexture = CreateTexture(grassData, width, height, channels);
+        } else {
+            Log(LogLevel::error, "Failed to load grass texture");
+        }
+
         auto camera = CreateCamera();
         AddComponent<CameraComponent>("camera", *camera);
 
@@ -124,14 +148,23 @@ namespace C6GE {
             GetComponent<ScaleComponent>(floors[i])->scale = glm::vec3(10.0f);
 
             // Add shapes on floor
-            std::string sqName = "square" + std::to_string(i+1);
+            std::string sqName = "quad" + std::to_string(i+1);
             CreateObject(sqName);
             auto sqMesh = CreateQuad();
             AddComponent<MeshComponent>(sqName, std::move(sqMesh));
             AddComponent<ShaderComponent>(sqName, fogShader);
-            AddComponent<TextureComponent>(sqName, diffuseTexture);
+            AddComponent<TextureComponent>(sqName, quadTexture);
             AddComponent<SpecularTextureComponent>(sqName, specularTexture);
             AddComponent<TransformComponent>(sqName, glm::vec3(-4.0f, floorYs[i] + 0.5f, 0.0f));
+
+            std::string grassName = "quadGrass" + std::to_string(i+1);
+            CreateObject(grassName);
+            auto grassMesh = CreateQuad();
+            AddComponent<MeshComponent>(grassName, std::move(grassMesh));
+            AddComponent<ShaderComponent>(grassName, fogShader);
+            AddComponent<TextureComponent>(grassName, grassTexture);
+            AddComponent<SpecularTextureComponent>(grassName, specularTexture);
+            AddComponent<TransformComponent>(grassName, glm::vec3(-4.0f, floorYs[i] + 0.5f, 1.0f));
 
             std::string tableName = "table" + std::to_string(i+1);
             CreateObject(tableName);
@@ -208,6 +241,7 @@ namespace C6GE {
         while (IsWindowOpen()) {
             UpdateWindow();
             input::Update();
+            BindFramebuffer();
             Clear(0.2f, 0.3f, 0.3f, 1.0f); // Clear the screen with teal color
 
             // Calculate delta time once per frame
@@ -275,51 +309,69 @@ namespace C6GE {
             }
 
             // Always enable outline effect
-            enableOutline = true;
+            enableOutline = true; // Toggle for outline effect
 
             auto meshObjects = GetAllObjectsWithComponent<MeshComponent>();
 
-            // Render all fog-shader objects first to minimize shader switches
+            std::vector<std::string> opaque, tables, lights, transparent;
+            for(const auto& name : meshObjects){
+                if(name.find("quad") != std::string::npos) transparent.push_back(name);
+                else if(name.find("table") == 0) tables.push_back(name);
+                else if(name.find("Light") != std::string::npos) lights.push_back(name);
+                else opaque.push_back(name);
+            }
+
+            // Render opaque with fog
             UseProgram(fogShader);
             SetShaderUniformVec3(fogShader, "viewPos", camera->Transform.Position);
-            for (const auto& name : meshObjects) {
-                if (name.find("table") == 0) continue; // Skip tables for now
-                RenderObject(name);
-            }
+            for(const auto& name : opaque) RenderObject(name);
 
-            // Render tables with outline effect
-            for (const auto& name : meshObjects) {
-                if (name.find("table") == 0) {
-                    if (enableOutline) {
-                        // First pass: Render table normally with stencil
-                        RenderObject(name, true, false);
-                        
-                        // Second pass: Render outline
-                        auto* tableShaderComp = GetComponent<ShaderComponent>(name);
-                        if (tableShaderComp) {
-                            GLuint originalShader = tableShaderComp->ShaderProgram;
-                            tableShaderComp->ShaderProgram = outlineShader;
-                            UseProgram(outlineShader);
-                            SetShaderUniformVec3(outlineShader, "outlineColor", glm::vec3(1.0f, 0.5f, 0.0f));
-                            SetShaderUniformVec3(outlineShader, "viewPos", camera->Transform.Position);
-                            RenderObject(name, true, true);
-                            tableShaderComp->ShaderProgram = originalShader;
-                        }
-                    } else {
-                        UseProgram(fogShader); // Ensure fog shader is active
-                        RenderObject(name);
+            // Render tables with outline
+            for(const auto& name : tables){
+                if(enableOutline){
+                    // First pass
+                    RenderObject(name, true, false);
+                    auto* tableShaderComp = GetComponent<ShaderComponent>(name);
+                    if(tableShaderComp){
+                        GLuint originalShader = tableShaderComp->ShaderProgram;
+                        tableShaderComp->ShaderProgram = outlineShader;
+                        UseProgram(outlineShader);
+                        SetShaderUniformVec3(outlineShader, "outlineColor", glm::vec3(1.0f, 0.5f, 0.0f));
+                        SetShaderUniformVec3(outlineShader, "viewPos", camera->Transform.Position);
+                        RenderObject(name, true, true);
+                        tableShaderComp->ShaderProgram = originalShader;
                     }
-                }
-            }
-
-            // Render lights with light shader
-            UseProgram(lightShader);
-            for (const auto& name : meshObjects) {
-                if (name.find("Light") != std::string::npos) { // Assumes light objects have "Light" in name
+                } else {
+                    UseProgram(fogShader);
                     RenderObject(name);
                 }
             }
 
+            // Render transparent sorted back to front
+            std::vector<std::pair<float, std::string>> transItems;
+            for(const auto& name : transparent){
+                auto* t = GetComponent<TransformComponent>(name);
+                if(t){
+                    float dist = glm::length(camera->Transform.Position - t->Position);
+                    transItems.emplace_back(dist, name);
+                }
+            }
+            std::sort(transItems.rbegin(), transItems.rend());
+            UseProgram(fogShader);
+            SetShaderUniformVec3(fogShader, "viewPos", camera->Transform.Position);
+            glDepthMask(GL_FALSE);
+            for(const auto& item : transItems){
+                RenderObject(item.second);
+            }
+            glDepthMask(GL_TRUE);
+
+            // Render lights
+            UseProgram(lightShader);
+            for(const auto& name : lights){
+                RenderObject(name);
+            }
+
+            UnbindFramebuffer();
             Present();
         }
     }

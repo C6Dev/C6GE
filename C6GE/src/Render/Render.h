@@ -12,6 +12,8 @@
 namespace C6GE {
 	bool InitRender();
 	void Clear(float r, float g, float b, float a);
+	void BindFramebuffer();
+	void UnbindFramebuffer();
 	void Present();
 	void RenderObject(const std::string& name, bool useStencil = false, bool isOutlinePass = false);
 }

@@ -15,19 +15,75 @@
 #include <string>
 #include <algorithm>
 
+GLuint fbo, colorTexture, depthStencilRBO;
+GLuint quadVAO = 0, quadVBO = 0;
+extern GLuint postShader;
+
+float quadVertices[] = {
+    // positions   // texCoords
+    -1.0f,  1.0f,  0.0f, 1.0f,
+    -1.0f, -1.0f,  0.0f, 0.0f,
+     1.0f, -1.0f,  1.0f, 0.0f,
+
+    -1.0f,  1.0f,  0.0f, 1.0f,
+     1.0f, -1.0f,  1.0f, 0.0f,
+     1.0f,  1.0f,  1.0f, 1.0f
+};
+
 namespace C6GE {
+
 	bool InitRender() {
     	if (!gladLoadGL()) {
-        	return false; // OpenGL failed to initialize
+        	return false;
     	}
 
     	glEnable(GL_DEPTH_TEST);
-    	// Enable stencil test
     	glEnable(GL_STENCIL_TEST);
-		// enable face culling
-		glEnable(GL_CULL_FACE);
-		glCullFace(GL_BACK);
-		glFrontFace(GL_CCW); // Expect all meshes to be counter-clockwise
+    	glEnable(GL_CULL_FACE);
+    	glCullFace(GL_BACK);
+    	glFrontFace(GL_CCW);
+    	glEnable(GL_BLEND);
+    	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    	// Create FBO
+    	glGenFramebuffers(1, &fbo);
+    	glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+
+    	// Create color texture attachment
+    	glGenTextures(1, &colorTexture);
+    	glBindTexture(GL_TEXTURE_2D, colorTexture);
+    	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 800, 800, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr); // Adjust size as needed
+    	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorTexture, 0);
+
+    	// Create depth-stencil renderbuffer
+    	glGenRenderbuffers(1, &depthStencilRBO);
+    	glBindRenderbuffer(GL_RENDERBUFFER, depthStencilRBO);
+    	glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, 800, 800); // Adjust size
+    	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, depthStencilRBO);
+
+    	// Check FBO status
+    	if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        // Handle error
+        return false;
+    }
+
+    	// Unbind FBO
+    	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+		// Screen quad VAO
+		glGenVertexArrays(1, &quadVAO);
+		glGenBuffers(1, &quadVBO);
+		glBindVertexArray(quadVAO);
+		glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
+		glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), quadVertices, GL_STATIC_DRAW);
+		glEnableVertexAttribArray(0);
+		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+		glEnableVertexAttribArray(1);
+		glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+		glBindVertexArray(0);
+
     	return true;
 	}
 
@@ -37,8 +93,33 @@ namespace C6GE {
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 	}
 
+	void BindFramebuffer() {
+		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+	}
+
+	void UnbindFramebuffer() {
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	}
+
 	// Present the rendered frame to the window
 	void Present() {
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		Clear(0.0f, 0.0f, 0.0f, 1.0f);
+
+		glDisable(GL_DEPTH_TEST);
+
+		glUseProgram(postShader);
+
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, colorTexture);
+		glUniform1i(glGetUniformLocation(postShader, "screenTexture"), 0);
+
+		glBindVertexArray(quadVAO);
+		glDrawArrays(GL_TRIANGLES, 0, 6);
+		glBindVertexArray(0);
+
+		glEnable(GL_DEPTH_TEST);
+
 		glfwSwapBuffers(glfwGetCurrentContext());
 	}
 

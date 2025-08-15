@@ -34,7 +34,7 @@ void main() {
     // Use vertex color only if it is non-zero; otherwise use objectColor uniform
     vec3 baseColor = (color == vec3(0.0)) ? objectColor : color;
 
-    vec3 texColor = texture(tex0, texCoord).rgb * baseColor;
+    vec4 texColor = texture(tex0, texCoord) * vec4(baseColor, 1.0);
     float specMap = texture(specularMap, texCoord).r;
 
     vec3 result = vec3(0.0);
@@ -54,11 +54,11 @@ void main() {
 
         // Ambient component
         float ambientStrength = 0.1;
-        vec3 ambient = ambientStrength * light.color * texColor;
+        vec3 ambient = ambientStrength * light.color * texColor.rgb;
 
         // Diffuse component
         float diff = max(dot(norm, lightDir), 0.0);
-        vec3 diffuse = diff * light.color * texColor;
+        vec3 diffuse = diff * light.color * texColor.rgb;
 
         // Specular component
         vec3 reflectDir = reflect(-lightDir, norm);
@@ -77,5 +77,5 @@ void main() {
         result += (ambient + (diffuse + specular) * spotFactor) * attenuation * light.intensity;
     }
 
-    FragColor = vec4(result, 1.0);
+    FragColor = vec4(result, texColor.a);
 }
