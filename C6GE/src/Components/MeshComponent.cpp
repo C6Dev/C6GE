@@ -245,6 +245,64 @@ MeshComponent CreateCube() {
     return CreateMesh(vertices, sizeof(vertices), indices, sizeof(indices) / sizeof(GLuint), true, true);
 }
 
+MeshComponent CreateSphere() {
+    const float PI = 3.14159265358979323846f;
+    const unsigned int sectors = 36;
+    const unsigned int stacks = 18;
+    const float radius = 1.0f;
+
+    std::vector<GLfloat> vertices;
+    std::vector<GLuint> indices;
+
+    for (unsigned int y = 0; y <= stacks; ++y) {
+        float ySegment = static_cast<float>(y) / stacks;
+        float phi = ySegment * PI;
+        for (unsigned int x = 0; x <= sectors; ++x) {
+            float xSegment = static_cast<float>(x) / sectors;
+            float theta = xSegment * 2.0f * PI;
+
+            float posX = radius * std::sin(phi) * std::cos(theta);
+            float posY = radius * std::cos(phi);
+            float posZ = radius * std::sin(phi) * std::sin(theta);
+
+            float normX = posX / radius;
+            float normY = posY / radius;
+            float normZ = posZ / radius;
+
+            vertices.push_back(posX);
+            vertices.push_back(posY);
+            vertices.push_back(posZ);
+            vertices.push_back(normX);
+            vertices.push_back(normY);
+            vertices.push_back(normZ);
+            vertices.push_back(1.0f); // R
+            vertices.push_back(1.0f); // G
+            vertices.push_back(1.0f); // B
+            vertices.push_back(xSegment);
+            vertices.push_back(ySegment);
+        }
+    }
+
+    for (unsigned int y = 0; y < stacks; ++y) {
+        for (unsigned int x = 0; x < sectors; ++x) {
+            unsigned int first = (y * (sectors + 1)) + x;
+            unsigned int second = first + sectors + 1;
+
+            // First triangle (CCW)
+            indices.push_back(first);
+            indices.push_back(second);
+            indices.push_back(first + 1);
+
+            // Second triangle (CCW)
+            indices.push_back(second);
+            indices.push_back(second + 1);
+            indices.push_back(first + 1);
+        }
+    }
+
+    return CreateMesh(vertices.data(), vertices.size() * sizeof(GLfloat), indices.data(), indices.size(), true, true);
+}
+
 // ModelComponent
 void SetupMesh(Mesh& mesh) {
     glGenVertexArrays(1, &mesh.VAO);

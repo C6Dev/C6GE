@@ -8,6 +8,7 @@
 #include "../Components/LightComponent.h"
 #include "../Components/SpecularTextureComponent.h"
 #include "../Components/ScaleComponent.h"
+#include "../Components/CubemapComponent.h"
 #include <cmath>
 #include <vector>
 #include <iomanip>
@@ -19,6 +20,7 @@ GLuint fogShader = 0;
 GLuint outlineShader = 0;
 GLuint lightShader = 0; // Moved to global scope
 GLuint postShader = 0;
+GLuint skyboxShader = 0;
 bool enableOutline = false; // Toggle for outline effect
 
 namespace C6GE {
@@ -74,6 +76,12 @@ namespace C6GE {
         auto CompiledPostFragmentShader = CompileShader(PostFragmentShader, ShaderType::Fragment);
         postShader = CreateProgram(CompiledPostVertexShader, CompiledPostFragmentShader);
 
+        auto* SkyboxVertexShader = LoadShader("Assets/skybox.vert");
+        auto* SkyboxFragmentShader = LoadShader("Assets/skybox.frag");
+        auto CompiledSkyboxVertexShader = CompileShader(SkyboxVertexShader, ShaderType::Vertex);
+        auto CompiledSkyboxFragmentShader = CompileShader(SkyboxFragmentShader, ShaderType::Fragment);
+        skyboxShader = CreateProgram(CompiledSkyboxVertexShader, CompiledSkyboxFragmentShader);
+
         // set fog uniform values and set frag color to red
         UseProgram(fogShader);
         SetShaderUniformVec3(fogShader, "fogColor", glm::vec3(0.5f, 0.5f, 0.5f));
@@ -128,6 +136,8 @@ namespace C6GE {
         } else {
             Log(LogLevel::error, "Failed to load grass texture");
         }
+
+        GLuint cubemapTexture = CreateCubemapFromHDR("Assets/textures/kloofendal_48d_partly_cloudy_puresky_4k.hdr");
 
         auto camera = CreateCamera();
         AddComponent<CameraComponent>("camera", *camera);
@@ -228,6 +238,25 @@ namespace C6GE {
         slComp.direction = glm::vec3(0.0f, -1.0f, 0.0f);
         slComp.cutoff = static_cast<float>(glm::cos(glm::radians(12.5f)));
 
+        // Create cube with cubemap in front of table1
+        CreateObject("envCube");
+        auto envMesh = CreateCube();
+        AddComponent<MeshComponent>("envCube", std::move(envMesh));
+        AddComponent<ShaderComponent>("envCube", fogShader);
+        AddComponent<CubemapComponent>("envCube", cubemapTexture);
+        AddComponent<TransformComponent>("envCube", glm::vec3(0.0f, 0.5f, -2.0f));
+        AddComponent<ScaleComponent>("envCube");
+        GetComponent<ScaleComponent>("envCube")->scale = glm::vec3(0.5f);
+
+        CreateObject("skybox");
+        auto skyboxMesh = CreateSphere();
+        AddComponent<MeshComponent>("skybox", std::move(skyboxMesh));
+        AddComponent<ShaderComponent>("skybox", skyboxShader);
+        AddComponent<CubemapComponent>("skybox", cubemapTexture);
+        AddComponent<TransformComponent>("skybox", glm::vec3(0.0f, 0.5f, -2.0f));
+        AddComponent<ScaleComponent>("skybox");
+        GetComponent<ScaleComponent>("skybox")->scale = glm::vec3(0.5f);
+
         return true;
     }
 
@@ -315,6 +344,7 @@ namespace C6GE {
 
             std::vector<std::string> opaque, tables, lights, transparent;
             for(const auto& name : meshObjects){
+                if(name == "skybox") continue;
                 if(name.find("quad") != std::string::npos) transparent.push_back(name);
                 else if(name.find("table") == 0) tables.push_back(name);
                 else if(name.find("Light") != std::string::npos) lights.push_back(name);
@@ -371,6 +401,24 @@ namespace C6GE {
                 RenderObject(name);
             }
 
+            // Render skybox
+            glDepthFunc(GL_LEQUAL);
+            glDisable(GL_CULL_FACE);
+            UseProgram(skyboxShader);
+            glm::mat4 view = GetViewMatrix(*camera);
+            glm::mat4 proj = GetProjectionMatrix();
+            glUniformMatrix4fv(glGetUniformLocation(skyboxShader, "view"), 1, GL_FALSE, glm::value_ptr(glm::mat4(glm::mat3(view))));
+            glUniformMatrix4fv(glGetUniformLocation(skyboxShader, "proj"), 1, GL_FALSE, glm::value_ptr(proj));
+            auto* skyboxCubemap = GetComponent<CubemapComponent>("skybox");
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_CUBE_MAP, skyboxCubemap->Cubemap);
+            glUniform1i(glGetUniformLocation(skyboxShader, "skybox"), 0);
+            auto* skyboxMeshComp = GetComponent<MeshComponent>("skybox");
+            glBindVertexArray(skyboxMeshComp->VAO);
+            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(skyboxMeshComp->vertexCount), GL_UNSIGNED_INT, 0);
+            glBindVertexArray(0);
+            glEnable(GL_CULL_FACE);
+            glDepthFunc(GL_LESS);
             UnbindFramebuffer();
             Present();
         }

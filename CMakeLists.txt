@@ -122,6 +122,6 @@ endif()
 add_custom_command(TARGET C6GE POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:C6GE>/Assets"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/C6GE/src/Render/Assets"
+        "${CMAKE_SOURCE_DIR}/C6GE/src/Assets"
         "$<TARGET_FILE_DIR:C6GE>/Assets"
 )

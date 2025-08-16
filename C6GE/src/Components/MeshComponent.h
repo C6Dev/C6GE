@@ -45,6 +45,7 @@ MeshComponent CreateTriangle();
 MeshComponent CreateQuad();
 MeshComponent CreateTemple();
 MeshComponent CreateCube();
+MeshComponent CreateSphere();
 
 // Function to create a mesh from raw vertex and index data
 MeshComponent CreateMesh(const GLfloat* vertices, size_t vertexSize, const GLuint* indices, size_t indexCount, bool WithColor = true, bool WithTexture = true);

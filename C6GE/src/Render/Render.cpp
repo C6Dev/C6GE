@@ -9,6 +9,7 @@
 #include "../Components/CameraComponent.h"
 #include "../Components/LightComponent.h"
 #include "../Components/SpecularTextureComponent.h"
+#include "../Components/CubemapComponent.h"
 #include "../Components/ScaleComponent.h"
 #include <glm/gtc/type_ptr.hpp>
 #include <vector>
@@ -129,6 +130,7 @@ namespace C6GE {
 		auto* modelComp = GetComponent<ModelComponent>(name);
     	auto* textureComp  = GetComponent<TextureComponent>(name);
     	auto* specularComp = GetComponent<SpecularTextureComponent>(name);
+auto* cubemapComp = GetComponent<CubemapComponent>(name);
     	auto* transform    = GetComponent<TransformComponent>(name); // optional
     	auto* lightComp    = GetComponent<LightComponent>(name);
 
@@ -172,7 +174,12 @@ namespace C6GE {
         	glBindTexture(GL_TEXTURE_2D, specularComp->Texture);
         	glUniform1i(glGetUniformLocation(shaderComp->ShaderProgram, "specularMap"), 1);
     	}
-
+if (cubemapComp) {
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapComp->Cubemap);
+    glUniform1i(glGetUniformLocation(shaderComp->ShaderProgram, "cubemap"), 2);
+}
+glUniform1i(glGetUniformLocation(shaderComp->ShaderProgram, "hasCubemap"), cubemapComp ? 1 : 0);
 
     	// Construct transform matrix
     	glm::mat4 model = glm::mat4(1.0f);
