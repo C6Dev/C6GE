@@ -9,7 +9,7 @@ Keyboard key;
 Mouse mouse;
 
 void Update() {
-    GLFWwindow* win = C6GE::GetWindow();
+    GLFWwindow* win = static_cast<GLFWwindow*>(C6GE::GetWindow());
 
     // Keyboard
     key.space = glfwGetKey(win, GLFW_KEY_SPACE) == GLFW_PRESS;
@@ -164,7 +164,7 @@ void Update() {
 }
 
 void EnableMouseCapture(bool enable) {
-    GLFWwindow* win = C6GE::GetWindow();
+    GLFWwindow* win = static_cast<GLFWwindow*>(C6GE::GetWindow());
     glfwSetInputMode(win, GLFW_CURSOR, enable ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
 }
 

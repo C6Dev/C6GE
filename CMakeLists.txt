@@ -1,8 +1,6 @@
-cmake_minimum_required(VERSION 3.10)
-
+cmake_minimum_required(VERSION 3.10...3.28)
 project(C6GE)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
@@ -24,6 +22,12 @@ set(SOURCES
     ${CMAKE_SOURCE_DIR}/C6GE/src/Input/Input.cpp
 )
 
+# Add macOS-specific source files
+if(APPLE)
+    list(APPEND SOURCES ${CMAKE_SOURCE_DIR}/C6GE/src/Window/Window_macOS.mm)
+    list(APPEND SOURCES ${CMAKE_SOURCE_DIR}/C6GE/src/Render/Render_macOS.mm)
+endif()
+
 # Headers (optional, for IDEs)
 set(HEADERS
     ${CMAKE_SOURCE_DIR}/C6GE/src/Engine/Engine.h
@@ -41,7 +45,6 @@ set(HEADERS
     ${CMAKE_SOURCE_DIR}/C6GE/src/Components/ModelComponent.h
     ${CMAKE_SOURCE_DIR}/C6GE/src/Time/DeltaTime.h
 )
-
 
 # Fetch dependencies
 include(FetchContent)
@@ -92,7 +95,7 @@ set(ASSIMP_INSTALL OFF CACHE BOOL "" FORCE)
 set(ASSIMP_NO_EXPORT ON CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT OFF CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_OBJ_IMPORTER ON CACHE BOOL "" FORCE)
-set(ASSIMP_BUILD_FBX_IMPORTER ON CACHE BOOL "" FORCE)  # Add more importers as needed
+set(ASSIMP_BUILD_FBX_IMPORTER ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(assimp)
 
 # Fetch stb_image
@@ -103,19 +106,99 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(stb)
 
+# Fetch bx (bgfx dependency)
+FetchContent_Declare(
+    bx
+    GIT_REPOSITORY https://github.com/bkaradzic/bx.git
+    GIT_TAG master
+)
+FetchContent_MakeAvailable(bx)
+
+# Fetch bimg (bgfx dependency)
+FetchContent_Declare(
+    bimg
+    GIT_REPOSITORY https://github.com/bkaradzic/bimg.git
+    GIT_TAG master
+)
+FetchContent_MakeAvailable(bimg)
+
+# Fetch bgfx itself
+FetchContent_Declare(
+    bgfx
+    GIT_REPOSITORY https://github.com/bkaradzic/bgfx.cmake.git
+    GIT_TAG master
+)
+set(BGFX_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(BGFX_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(BGFX_INSTALL OFF CACHE BOOL "" FORCE)
+set(BGFX_AMALGAMATED OFF CACHE BOOL "" FORCE)
+set(BGFX_LIBRARY_TYPE STATIC CACHE STRING "" FORCE)
+
+# BGFX configuration for Apple Silicon
+if(APPLE)
+    set(BGFX_CONFIG_RENDERER_METAL ON CACHE BOOL "" FORCE)
+    set(BGFX_CONFIG_RENDERER_OPENGL ON CACHE BOOL "" FORCE)
+    set(BGFX_CONFIG_RENDERER_VULKAN OFF CACHE BOOL "" FORCE)
+    set(BGFX_CONFIG_RENDERER_DIRECT3D9 OFF CACHE BOOL "" FORCE)
+    set(BGFX_CONFIG_RENDERER_DIRECT3D11 OFF CACHE BOOL "" FORCE)
+    set(BGFX_CONFIG_RENDERER_DIRECT3D12 OFF CACHE BOOL "" FORCE)
+endif()
+
+FetchContent_MakeAvailable(bgfx)
+
 # Find OpenGL
 find_package(OpenGL REQUIRED)
 
 # Executable
 add_executable(C6GE ${SOURCES} ${HEADERS})
 
-target_link_libraries(C6GE PRIVATE glfw glad EnTT::EnTT OpenGL::GL assimp::assimp)
-target_include_directories(C6GE PRIVATE ${glad_BINARY_DIR}/include ${glm_SOURCE_DIR} ${stb_SOURCE_DIR} ${glfw_SOURCE_DIR}/include ${assimp_SOURCE_DIR}/include ${assimp_BINARY_DIR})
+# Ensure bgfx is built before linking
+add_dependencies(C6GE bgfx bx bimg)
 
-# For macOS, link necessary frameworks
+target_link_libraries(C6GE PRIVATE 
+    glfw 
+    glad 
+    EnTT::EnTT 
+    OpenGL::GL 
+    assimp::assimp 
+    bgfx 
+    bx 
+    bimg
+)
+
+# Include directories for all dependencies
+target_include_directories(C6GE PRIVATE 
+    ${glad_BINARY_DIR}/include 
+    ${glm_SOURCE_DIR} 
+    ${stb_SOURCE_DIR} 
+    ${glfw_SOURCE_DIR}/include 
+    ${assimp_SOURCE_DIR}/include 
+    ${assimp_BINARY_DIR}
+    ${bgfx_SOURCE_DIR}/include
+    ${bx_SOURCE_DIR}/include
+    ${bimg_SOURCE_DIR}/include
+    ${bgfx_SOURCE_DIR}/3rdparty
+)
+
+# For macOS, link necessary frameworks and add bgfx-specific settings
 if(APPLE)
-    target_link_libraries(C6GE PRIVATE "-framework Cocoa" "-framework IOKit" "-framework CoreFoundation")
-    target_compile_definitions(C6GE PRIVATE GL_SILENCE_DEPRECATION)
+    # Find SQLite3 for macOS (required for BGFX on Apple Silicon)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(SQLITE3 REQUIRED sqlite3)
+    
+    target_link_libraries(C6GE PRIVATE 
+        "-framework Cocoa" 
+        "-framework IOKit" 
+        "-framework CoreFoundation" 
+        "-framework Metal" 
+        "-framework QuartzCore"
+        ${SQLITE3_LIBRARIES}
+    )
+    target_compile_definitions(C6GE PRIVATE 
+        GL_SILENCE_DEPRECATION
+        BGFX_CONFIG_RENDERER_METAL=1
+    )
+    target_include_directories(C6GE PRIVATE ${SQLITE3_INCLUDE_DIRS})
 endif()
 
 # Copy Assets files to build directory after build

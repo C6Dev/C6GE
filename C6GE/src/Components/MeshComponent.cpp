@@ -487,4 +487,4 @@ std::string NormalizePath(const std::string& path) {
     return normalized;
 }
 
-}
+} // namespace C6GE

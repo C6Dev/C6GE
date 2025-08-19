@@ -7,4 +7,9 @@ namespace C6GE {
         CubemapComponent(unsigned int id) : Cubemap(id) {}
     };
 
-}
+    struct SkyboxComponent {
+        unsigned int Cubemap;
+        SkyboxComponent(unsigned int id) : Cubemap(id) {}
+    };
+
+} // namespace C6GE

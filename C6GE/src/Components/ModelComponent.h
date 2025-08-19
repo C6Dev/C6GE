@@ -39,4 +39,4 @@ namespace C6GE {
     static void ProcessNode(aiNode* node, const aiScene* scene, ModelComponent& model, std::vector<Texture>& textures_loaded);
     ModelComponent* LoadModel(const std::string& path);
 
-}
+} // namespace C6GE

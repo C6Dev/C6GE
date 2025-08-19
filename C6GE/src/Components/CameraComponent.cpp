@@ -24,4 +24,4 @@ namespace C6GE {
         glm::vec3 pos = cam.Transform.Position;
         return glm::lookAt(pos, pos + front, glm::vec3(0.0f, 1.0f, 0.0f));
     }
-}
+} // namespace C6GE

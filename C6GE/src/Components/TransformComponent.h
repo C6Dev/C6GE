@@ -11,4 +11,4 @@ namespace C6GE {
         glm::vec3 Scale    = glm::vec3(1.0f);
     };
 
-}
+} // namespace C6GE

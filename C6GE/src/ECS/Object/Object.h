@@ -62,4 +62,4 @@ entt::entity GetObject(const std::string& name);
         return names;
     }
 
-}
+} // namespace C6GE

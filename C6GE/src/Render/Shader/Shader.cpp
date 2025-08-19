@@ -84,6 +84,9 @@ namespace C6GE {
             case ShaderType::Fragment:
                 shaderID = glCreateShader(GL_FRAGMENT_SHADER);
                 break;
+            case ShaderType::Geometry:
+                shaderID = glCreateShader(GL_GEOMETRY_SHADER);
+                break;
             default:
                 Log(LogLevel::error, "Invalid shader type");
                 return 0;
@@ -110,13 +113,30 @@ namespace C6GE {
         return shaderID;
     }
 
-	GLuint CreateProgram(GLuint VertexShader, GLuint FragmentShader) {
+	GLuint CreateProgram(GLuint VertexShader, GLuint FragmentShader, GLuint GeometryShader) {
 	GLuint Program = glCreateProgram();
         glAttachShader(Program, VertexShader);
         glAttachShader(Program, FragmentShader);
+        if (GeometryShader != 0) {
+            glAttachShader(Program, GeometryShader);
+        }
         glLinkProgram(Program);
+
+        GLint success;
+        glGetProgramiv(Program, GL_LINK_STATUS, &success);
+        if (!success) {
+            char infoLog[512];
+            glGetProgramInfoLog(Program, 512, nullptr, infoLog);
+            Log(LogLevel::error, std::string("Program linking failed: ") + infoLog);
+            glDeleteProgram(Program);
+            return 0;
+        }
+
         glDeleteShader(VertexShader);
         glDeleteShader(FragmentShader);
+        if (GeometryShader != 0) {
+            glDeleteShader(GeometryShader);
+        }
 
         return Program;
 	}

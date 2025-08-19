@@ -37,4 +37,4 @@ entt::entity GetObject(const std::string& name) {
         }
         Log(LogLevel::warning, "Entity not found in nameToEntity map. entt entity: " + std::to_string(static_cast<uint32_t>(entity)));
     }
-}
+} // namespace C6GE

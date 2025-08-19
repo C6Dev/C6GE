@@ -13,4 +13,4 @@ namespace C6GE {
         LightComponent(LightType t = Point, glm::vec3 col = glm::vec3(1.0f), float intens = 1.0f, glm::vec3 dir = glm::vec3(0.0f, -1.0f, 0.0f), float cut = 12.5f) 
             : type(t), color(col), intensity(intens), direction(dir), cutoff(glm::cos(glm::radians(cut))) {}
     };
-}
+} // namespace C6GE

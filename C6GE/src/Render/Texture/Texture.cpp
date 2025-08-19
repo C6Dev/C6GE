@@ -183,9 +183,9 @@ GLuint CreateCubemapFromHDR(const std::string& path) {
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, captureRBO);
 
     // Load and compile shaders
-    const char* vertSource = LoadShader("../shaders/equirect.vert");
+    const char* vertSource = LoadShader("Assets/shaders/equirect.vert");
     GLuint vertShader = CompileShader(vertSource, Vertex);
-    const char* fragSource = LoadShader("../shaders/equirect.frag");
+    const char* fragSource = LoadShader("Assets/shaders/equirect.frag");
     GLuint fragShader = CompileShader(fragSource, Fragment);
     GLuint equirectProgram = CreateProgram(vertShader, fragShader);
     UseProgram(equirectProgram);

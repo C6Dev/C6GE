@@ -19,7 +19,8 @@
 
 enum ShaderType {
     Vertex,
-    Fragment
+    Fragment,
+    Geometry
 };
 
 namespace C6GE {
@@ -27,7 +28,7 @@ namespace C6GE {
     // Loads a shader file and returns its contents as a const char*
     const char* LoadShader(const std::string& path);
     GLuint CompileShader(const char* Shader, ShaderType ShaderType);
-    GLuint CreateProgram(GLuint VertexShader, GLuint FragmentShader);
+    GLuint CreateProgram(GLuint VertexShader, GLuint FragmentShader, GLuint GeometryShader = 0);
     GLuint UseProgram(GLuint Program);
     void SetShaderUniformVec3(GLuint Program, const std::string& name, const glm::vec3& value);
     void SetShaderUniformFloat(GLuint Program, const std::string& name, float value);

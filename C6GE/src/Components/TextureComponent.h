@@ -13,4 +13,4 @@ namespace C6GE {
 	TextureComponent(unsigned int id) : Texture(id) {}
 	};
 
-}
+} // namespace C6GE

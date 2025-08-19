@@ -18,22 +18,26 @@
 bool MouseCaptured = true;
 GLuint fogShader = 0;
 GLuint outlineShader = 0;
-GLuint lightShader = 0; // Moved to global scope
+GLuint lightShader = 0;
 GLuint postShader = 0;
 GLuint skyboxShader = 0;
-bool enableOutline = false; // Toggle for outline effect
+GLuint linesShader = 0; // New shader for debugging lines
+bool enableOutline = false;
+bool debugLines = false; // Toggle for debug lines
+unsigned int width = 800;
+unsigned int height = 800;
 
 namespace C6GE {
 
     bool Init() {
         // Create the main application window
-        if (!CreateWindow(800, 800, "C6GE Window")) {
+        if (!CreateWindow(width, height, "C6GE Window")) {
             Log(LogLevel::critical, "Failed to create window.");
             return false;
         }
 
         // Initialize rendering system
-        if (!InitRender()) {
+        if (!InitRender(width, height, RendererType::OpenGL)) {
             Log(LogLevel::critical, "Failed to initialize rendering.");
             return false;
         }
@@ -42,10 +46,10 @@ namespace C6GE {
 
         CreateObject("camera");
 
-        auto* VertexShader = LoadShader("Assets/shader.vert");
-        auto* FragmentShader = LoadShader("Assets/shader.frag");
-        auto* LightVertexShader = LoadShader("Assets/light.vert");
-        auto* LightFragmentShader = LoadShader("Assets/light.frag");
+        auto* VertexShader = LoadShader("Assets/shaders/shader.vert");
+        auto* FragmentShader = LoadShader("Assets/shaders/shader.frag");
+        auto* LightVertexShader = LoadShader("Assets/shaders/light.vert");
+        auto* LightFragmentShader = LoadShader("Assets/shaders/light.frag");
 
         auto CompiledVertexShader = CompileShader(VertexShader, ShaderType::Vertex);
         auto CompiledFragmentShader = CompileShader(FragmentShader, ShaderType::Fragment);
@@ -56,31 +60,40 @@ namespace C6GE {
         lightShader = CreateProgram(CompiledLightVertexShader, CompiledLightFragmentShader); // Assign to global
 
         // Create Fog Shader using fog.vert and fog.frag
-        auto* FogVertexShader = LoadShader("Assets/fog.vert");
-        auto* FogFragmentShader = LoadShader("Assets/fog.frag");
+        auto* FogVertexShader = LoadShader("Assets/shaders/fog.vert");
+        auto* FogFragmentShader = LoadShader("Assets/shaders/fog.frag");
         auto CompiledFogVertexShader = CompileShader(FogVertexShader, ShaderType::Vertex);
         auto CompiledFogFragmentShader = CompileShader(FogFragmentShader, ShaderType::Fragment);
         fogShader = CreateProgram(CompiledFogVertexShader, CompiledFogFragmentShader);
 
         // Create Outline Shader using outline.vert and outline.frag
-        auto* OutlineVertexShader = LoadShader("Assets/outline.vert");
-        auto* OutlineFragmentShader = LoadShader("Assets/outline.frag");
+        auto* OutlineVertexShader = LoadShader("Assets/shaders/outline.vert");
+        auto* OutlineFragmentShader = LoadShader("Assets/shaders/outline.frag");
         auto CompiledOutlineVertexShader = CompileShader(OutlineVertexShader, ShaderType::Vertex);
         auto CompiledOutlineFragmentShader = CompileShader(OutlineFragmentShader, ShaderType::Fragment);
         outlineShader = CreateProgram(CompiledOutlineVertexShader, CompiledOutlineFragmentShader);
 
         // Create Post-processing Shader using post.vert and post.frag
-        auto* PostVertexShader = LoadShader("Assets/post.vert");
-        auto* PostFragmentShader = LoadShader("Assets/post.frag");
+        auto* PostVertexShader = LoadShader("Assets/shaders/post.vert");
+        auto* PostFragmentShader = LoadShader("Assets/shaders/post.frag");
         auto CompiledPostVertexShader = CompileShader(PostVertexShader, ShaderType::Vertex);
         auto CompiledPostFragmentShader = CompileShader(PostFragmentShader, ShaderType::Fragment);
         postShader = CreateProgram(CompiledPostVertexShader, CompiledPostFragmentShader);
 
-        auto* SkyboxVertexShader = LoadShader("Assets/skybox.vert");
-        auto* SkyboxFragmentShader = LoadShader("Assets/skybox.frag");
+        auto* SkyboxVertexShader = LoadShader("Assets/shaders/skybox.vert");
+        auto* SkyboxFragmentShader = LoadShader("Assets/shaders/skybox.frag");
         auto CompiledSkyboxVertexShader = CompileShader(SkyboxVertexShader, ShaderType::Vertex);
         auto CompiledSkyboxFragmentShader = CompileShader(SkyboxFragmentShader, ShaderType::Fragment);
         skyboxShader = CreateProgram(CompiledSkyboxVertexShader, CompiledSkyboxFragmentShader);
+
+        // Initialize lines shader
+        auto* LinesVertexShader = LoadShader("Assets/shaders/lines.vert");
+        auto* LinesGeometryShader = LoadShader("Assets/shaders/lines.geom");
+        auto* LinesFragmentShader = LoadShader("Assets/shaders/lines.frag");
+        auto CompiledLinesVertex = CompileShader(LinesVertexShader, ShaderType::Vertex);
+        auto CompiledLinesGeometry = CompileShader(LinesGeometryShader, ShaderType::Geometry);
+        auto CompiledLinesFragment = CompileShader(LinesFragmentShader, ShaderType::Fragment);
+        linesShader = CreateProgram(CompiledLinesVertex, CompiledLinesFragment);
 
         // set fog uniform values and set frag color to red
         UseProgram(fogShader);
@@ -95,6 +108,7 @@ namespace C6GE {
         GLuint cubeDiffuseTexture = 0;
         if (diffuseData) {
             diffuseTexture = CreateTexture(diffuseData, width, height, channels);
+            Log(LogLevel::info, "Diffuse texture created with ID: " + std::to_string(diffuseTexture));
         } else {
             Log(LogLevel::error, "Failed to load diffuse texture");
         }
@@ -104,6 +118,7 @@ namespace C6GE {
         GLuint specularTexture = 0;
         if (specularData) {
             specularTexture = CreateTexture(specularData, width, height, channels);
+            Log(LogLevel::info, "Specular texture created with ID: " + std::to_string(specularTexture));
         } else {
             Log(LogLevel::error, "Failed to load specular texture");
         }
@@ -180,7 +195,7 @@ namespace C6GE {
             CreateObject(tableName);
             auto tableMesh = LoadModel("assets/round_wooden_table_01_4k.fbx");
             AddComponent<MeshComponent>(tableName, std::move(tableMesh));
-            AddComponent<ShaderComponent>(tableName, fogShader);
+            AddComponent<ShaderComponent>(tableName, fogShader); // Corrected to fogShader
             AddComponent<TextureComponent>(tableName, cubeDiffuseTexture);
             AddComponent<SpecularTextureComponent>(tableName, cubeSpecularTexture);
             AddComponent<TransformComponent>(tableName, glm::vec3(0.0f, floorYs[i] + 0.5f, 0.0f));
@@ -252,7 +267,7 @@ namespace C6GE {
         auto skyboxMesh = CreateSphere();
         AddComponent<MeshComponent>("skybox", std::move(skyboxMesh));
         AddComponent<ShaderComponent>("skybox", skyboxShader);
-        AddComponent<CubemapComponent>("skybox", cubemapTexture);
+        AddComponent<SkyboxComponent>("skybox", cubemapTexture);
         AddComponent<TransformComponent>("skybox", glm::vec3(0.0f, 0.5f, -2.0f));
         AddComponent<ScaleComponent>("skybox");
         GetComponent<ScaleComponent>("skybox")->scale = glm::vec3(0.5f);
@@ -270,7 +285,7 @@ namespace C6GE {
         while (IsWindowOpen()) {
             UpdateWindow();
             input::Update();
-            BindFramebuffer();
+            BindMultisampleFramebuffer();
             Clear(0.2f, 0.3f, 0.3f, 1.0f); // Clear the screen with teal color
 
             // Calculate delta time once per frame
@@ -294,7 +309,7 @@ namespace C6GE {
             // Update window title with smoothed FPS
             std::stringstream ss;
             ss << std::fixed << std::setprecision(1) << "C6GE Window + " << fps << " FPS";
-            glfwSetWindowTitle(GetWindow(), ss.str().c_str());
+            glfwSetWindowTitle(static_cast<GLFWwindow*>(GetWindow()), ss.str().c_str());
 
             auto* camera = GetComponent<CameraComponent>("camera");
             // --- Camera Movement ---
@@ -337,8 +352,8 @@ namespace C6GE {
                 }
             }
 
-            // Always enable outline effect
-            enableOutline = true; // Toggle for outline effect
+            // Disable outline effect for now to fix texture rendering
+            enableOutline = false; // Toggle for outline effect
 
             auto meshObjects = GetAllObjectsWithComponent<MeshComponent>();
 
@@ -355,6 +370,8 @@ namespace C6GE {
             UseProgram(fogShader);
             SetShaderUniformVec3(fogShader, "viewPos", camera->Transform.Position);
             for(const auto& name : opaque) RenderObject(name);
+
+
 
             // Render tables with outline
             for(const auto& name : tables){
@@ -377,6 +394,15 @@ namespace C6GE {
                 }
             }
 
+            // Render lights
+            UseProgram(lightShader);
+            for(const auto& name : lights){
+                RenderObject(name);
+            }
+
+            // Render skybox
+            RenderObject("skybox");
+
             // Render transparent sorted back to front
             std::vector<std::pair<float, std::string>> transItems;
             for(const auto& name : transparent){
@@ -395,31 +421,44 @@ namespace C6GE {
             }
             glDepthMask(GL_TRUE);
 
-            // Render lights
-            UseProgram(lightShader);
-            for(const auto& name : lights){
-                RenderObject(name);
+            // Toggle debug lines
+            static bool lastL = false; // Corrected to false
+            if (input::key.l && !lastL) {
+                debugLines = !debugLines;
+                std::cout << "Debug lines toggled to: " << debugLines << std::endl;
+            }
+            lastL = input::key.l;
+            std::cout << "L key state: " << input::key.l << ", debugLines: " << debugLines << std::endl;
+            std::cout << "W key state: " << input::key.w << std::endl;
+
+            // Debug lines pass
+            if (debugLines) {
+                glDisable(GL_DEPTH_TEST);
+                glLineWidth(1.0f); // Ensure thin lines
+                for(const auto& name : opaque) {
+                    auto* shaderComp = GetComponent<ShaderComponent>(name);
+                    if (shaderComp) {
+                        GLuint originalShader = shaderComp->ShaderProgram;
+                        shaderComp->ShaderProgram = linesShader;
+                        UseProgram(linesShader);
+                        RenderObject(name);
+                        shaderComp->ShaderProgram = originalShader;
+                    }
+                }
+                for(const auto& name : tables) {
+                    auto* shaderComp = GetComponent<ShaderComponent>(name);
+                    if (shaderComp) {
+                        GLuint originalShader = shaderComp->ShaderProgram;
+                        shaderComp->ShaderProgram = linesShader;
+                        UseProgram(linesShader);
+                        RenderObject(name);
+                        shaderComp->ShaderProgram = originalShader;
+                    }
+                }
+                glEnable(GL_DEPTH_TEST);
             }
 
-            // Render skybox
-            glDepthFunc(GL_LEQUAL);
-            glDisable(GL_CULL_FACE);
-            UseProgram(skyboxShader);
-            glm::mat4 view = GetViewMatrix(*camera);
-            glm::mat4 proj = GetProjectionMatrix();
-            glUniformMatrix4fv(glGetUniformLocation(skyboxShader, "view"), 1, GL_FALSE, glm::value_ptr(glm::mat4(glm::mat3(view))));
-            glUniformMatrix4fv(glGetUniformLocation(skyboxShader, "proj"), 1, GL_FALSE, glm::value_ptr(proj));
-            auto* skyboxCubemap = GetComponent<CubemapComponent>("skybox");
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_CUBE_MAP, skyboxCubemap->Cubemap);
-            glUniform1i(glGetUniformLocation(skyboxShader, "skybox"), 0);
-            auto* skyboxMeshComp = GetComponent<MeshComponent>("skybox");
-            glBindVertexArray(skyboxMeshComp->VAO);
-            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(skyboxMeshComp->vertexCount), GL_UNSIGNED_INT, 0);
-            glBindVertexArray(0);
-            glEnable(GL_CULL_FACE);
-            glDepthFunc(GL_LESS);
-            UnbindFramebuffer();
+            UnbindMultisampleFramebuffer();
             Present();
         }
     }

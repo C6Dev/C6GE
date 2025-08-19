@@ -15,4 +15,4 @@ namespace C6GE {
 
     glm::vec3 GetCameraFront(const TransformComponent& t);
     glm::mat4 GetViewMatrix(const CameraComponent& cam);
-}
+} // namespace C6GE

@@ -7,4 +7,4 @@ namespace C6GE {
         SpecularTextureComponent(unsigned int tex) : Texture(tex) {}
     };
 
-}
+} // namespace C6GE
