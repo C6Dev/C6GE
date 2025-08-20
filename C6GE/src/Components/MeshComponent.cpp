@@ -1,64 +1,79 @@
-#include <glad/glad.h>
+// GLAD include removed - using bgfx for OpenGL context management
 #include <cmath>
 #include "../Components/MeshComponent.h"
-#include "../Components/ModelComponent.h"
 #include <iostream>
 
-namespace C6GE {
+// Define M_PI for Windows if not already defined
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 // Forward declarations of your texture loading utilities
 GLuint LoadTextureFromFile(const std::string& filename, const std::string& directory);
 
-// Constructor from ModelComponent pointer
-MeshComponent::MeshComponent(C6GE::ModelComponent* modelPtr) {
-    if (modelPtr && !modelPtr->meshes.empty()) {
-        VAO = modelPtr->meshes[0].VAO;
-        VBO = modelPtr->meshes[0].VBO;
-        EBO = modelPtr->meshes[0].EBO;
-        vertexCount = modelPtr->meshes[0].indices.size();
-    } else {
-        VAO = VBO = EBO = 0;
-        vertexCount = 0;
-    }
-}
-
-// Allocator-aware constructor forwarding
-MeshComponent::MeshComponent(std::allocator_arg_t, const std::allocator<MeshComponent>&, C6GE::ModelComponent* modelPtr)
-    : MeshComponent(modelPtr) {}
-
-MeshComponent::~MeshComponent() {
-    if (VAO) glDeleteVertexArrays(1, &VAO);
-    if (VBO) glDeleteBuffers(1, &VBO);
-    if (EBO) glDeleteBuffers(1, &EBO);
-}
-
-// Move constructor
-MeshComponent::MeshComponent(MeshComponent&& other) noexcept
-    : VAO(other.VAO), VBO(other.VBO), EBO(other.EBO), vertexCount(other.vertexCount) {
-    other.VAO = 0;
-    other.VBO = 0;
-    other.EBO = 0;
-    other.vertexCount = 0;
-}
-
-// Move assignment operator
-MeshComponent& MeshComponent::operator=(MeshComponent&& other) noexcept {
-    if (this != &other) {
-        if (VAO) glDeleteVertexArrays(1, &VAO);
-        if (VBO) glDeleteBuffers(1, &VBO);
-        if (EBO) glDeleteBuffers(1, &EBO);
-
-        VAO = other.VAO;
-        VBO = other.VBO;
-        EBO = other.EBO;
-        vertexCount = other.vertexCount;
-
-        other.VAO = 0;
-        other.VBO = 0;
-        other.EBO = 0;
-        other.vertexCount = 0;
-    }
-    return *this;
+// Stub implementations for OpenGL functions (these will be replaced by bgfx later)
+extern "C" {
+    GLboolean gladLoadGL() { return GL_TRUE; }
+    
+    void glEnable(GLenum cap) {}
+    void glDisable(GLenum cap) {}
+    void glDepthMask(GLboolean flag) {}
+    void glLineWidth(GLfloat width) {}
+    GLuint glCreateProgram() { return 1; }
+    GLuint glCreateShader(GLenum type) { return 1; }
+    void glShaderSource(GLuint shader, GLsizei count, const GLchar* const* string, const GLint* length) {}
+    void glCompileShader(GLuint shader) {}
+    void glGetShaderiv(GLuint shader, GLenum pname, GLint* params) { *params = GL_TRUE; }
+    void glGetShaderInfoLog(GLuint shader, GLsizei bufSize, GLsizei* length, GLchar* infoLog) {}
+    void glAttachShader(GLuint program, GLuint shader) {}
+    void glLinkProgram(GLuint program) {}
+    void glGetProgramiv(GLuint program, GLenum pname, GLint* params) { *params = GL_TRUE; }
+    void glGetProgramInfoLog(GLuint program, GLsizei bufSize, GLsizei* length, GLchar* infoLog) {}
+    void glDeleteShader(GLuint shader) {}
+    void glDeleteProgram(GLuint program) {}
+    void glUseProgram(GLuint program) {}
+    GLint glGetUniformLocation(GLuint program, const GLchar* name) { return 0; }
+    void glUniform3f(GLint location, GLfloat v0, GLfloat v1, GLfloat v2) {}
+    void glUniform3fv(GLint location, GLsizei count, const GLfloat* value) {}
+    void glUniform1f(GLint location, GLfloat v0) {}
+    void glUniform1i(GLint location, GLint v0) {}
+    void glUniformMatrix4fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat* value) {}
+    void glGenVertexArrays(GLsizei n, GLuint* arrays) { for(GLsizei i = 0; i < n; i++) arrays[i] = i + 1; }
+    void glBindVertexArray(GLuint array) {}
+    void glGenBuffers(GLsizei n, GLuint* buffers) { for(GLsizei i = 0; i < n; i++) buffers[i] = i + 1; }
+    void glBindBuffer(GLenum target, GLuint buffer) {}
+    void glBufferData(GLenum target, GLsizeiptr size, const void* data, GLenum usage) {}
+    void glVertexAttribPointer(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void* pointer) {}
+    void glEnableVertexAttribArray(GLuint index) {}
+    void glDrawElements(GLenum mode, GLsizei count, GLenum type, const void* indices) {}
+    void glDrawArrays(GLenum mode, GLint first, GLsizei count) {}
+    void glGenTextures(GLsizei n, GLuint* textures) { for(GLsizei i = 0; i < n; i++) textures[i] = i + 1; }
+    void glBindTexture(GLenum target, GLuint texture) {}
+    void glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void* pixels) {}
+    void glTexParameteri(GLenum target, GLenum pname, GLint param) {}
+    void glGenerateMipmap(GLenum target) {}
+    void glViewport(GLint x, GLint y, GLsizei width, GLsizei height) {}
+    void glGetIntegerv(GLenum pname, GLint* params) { *params = 0; }
+    void glGenFramebuffers(GLsizei n, GLuint* framebuffers) { for(GLsizei i = 0; i < n; i++) framebuffers[i] = i + 1; }
+    void glBindFramebuffer(GLenum target, GLuint framebuffer) {}
+    void glTexImage2DMultisample(GLenum target, GLsizei samples, GLint internalformat, GLsizei width, GLsizei height, GLboolean fixedsamplelocations) {}
+    void glFramebufferTexture2D(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level) {}
+    void glGenRenderbuffers(GLsizei n, GLuint* renderbuffers) { for(GLsizei i = 0; i < n; i++) renderbuffers[i] = i + 1; }
+    void glBindRenderbuffer(GLenum target, GLuint renderbuffer) {}
+    void glRenderbufferStorage(GLenum target, GLenum internalformat, GLsizei width, GLsizei height) {}
+    void glRenderbufferStorageMultisample(GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height) {}
+    void glFramebufferRenderbuffer(GLenum target, GLenum attachment, GLenum renderbuffertarget, GLuint renderbuffer) {}
+    GLenum glCheckFramebufferStatus(GLenum target) { return GL_FRAMEBUFFER_COMPLETE; }
+    void glDeleteRenderbuffers(GLsizei n, const GLuint* renderbuffers) {}
+    void glDeleteFramebuffers(GLsizei n, const GLuint* framebuffers) {}
+    void glBlitFramebuffer(GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter) {}
+    void glVertexAttribDivisor(GLuint index, GLuint divisor) {}
+    void glDrawElementsInstanced(GLenum mode, GLsizei count, GLenum type, const void* indices, GLsizei primcount) {}
+    void glDeleteVertexArrays(GLsizei n, const GLuint* arrays) {}
+    void glDeleteBuffers(GLsizei n, const GLuint* buffers) {}
+    void glDeleteTextures(GLsizei n, const GLuint* textures) {}
+    void glClear(GLbitfield mask) {}
+    void glActiveTexture(GLenum texture) {}
 }
 
 MeshComponent CreateMesh(const GLfloat* vertices, size_t vertexSize, const GLuint* indices, size_t indexCount, bool WithColor, bool WithTexture) {
@@ -98,202 +113,126 @@ MeshComponent CreateMesh(const GLfloat* vertices, size_t vertexSize, const GLuin
         offset += 3;
     }
 
-    // Texture coords
+    // Texture
     if (WithTexture) {
         glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, stride, (void*)(offset * sizeof(float)));
         glEnableVertexAttribArray(3);
     }
 
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
 
     return MeshComponent(vao, vbo, ebo, indexCount);
 }
 
-MeshComponent CreateTriangle() {
-    GLfloat vertices[] = {
-        // Position X, Y, Z    | Normal X, Y, Z    | Color R, G, B
-        -0.5f, -0.5f * float(std::sqrt(3)) / 3, 0.0f,   0.0f, 0.0f, 1.0f,   0.0f, 0.8f, 0.7f,
-        0.5f, -0.5f * float(std::sqrt(3)) / 3, 0.0f,    0.0f, 0.0f, 1.0f,   0.3f, 0.5f, 1.0f,
-        0.0f,  0.5f * float(std::sqrt(3)) * 2 / 3, 0.0f, 0.0f, 0.0f, 1.0f, 0.6f, 0.2f, 1.0f
-    };
-    GLuint indices[] = { 0, 1, 2 };
-
-    return CreateMesh(vertices, sizeof(vertices), indices, 3, true, false);
-}
-
-MeshComponent CreateQuad() {
+MeshComponent CreateCubeMesh() {
     static const GLfloat vertices[] = {
-        // Front face (+Z)
-        -0.5f, -0.5f, 0.0f,   0.0f, 0.0f, 1.0f,   1.0f, 1.0f, 1.0f,    0.0f, 1.0f,  // 0 Bottom-left
-        -0.5f,  0.5f, 0.0f,   0.0f, 0.0f, 1.0f,   1.0f, 1.0f, 1.0f,    0.0f, 0.0f,  // 1 Top-left
-         0.5f,  0.5f, 0.0f,   0.0f, 0.0f, 1.0f,   1.0f, 1.0f, 1.0f,    1.0f, 0.0f,  // 2 Top-right
-         0.5f, -0.5f, 0.0f,   0.0f, 0.0f, 1.0f,   1.0f, 1.0f, 1.0f,    1.0f, 1.0f,  // 3 Bottom-right
-
-        // Back face (-Z)
-        -0.5f, -0.5f, 0.0f,   0.0f, 0.0f,-1.0f,   1.0f, 1.0f, 1.0f,    0.0f, 1.0f,  // 4 Bottom-left
-        -0.5f,  0.5f, 0.0f,   0.0f, 0.0f,-1.0f,   1.0f, 1.0f, 1.0f,    0.0f, 0.0f,  // 5 Top-left
-         0.5f,  0.5f, 0.0f,   0.0f, 0.0f,-1.0f,   1.0f, 1.0f, 1.0f,    1.0f, 0.0f,  // 6 Top-right
-         0.5f, -0.5f, 0.0f,   0.0f, 0.0f,-1.0f,   1.0f, 1.0f, 1.0f,    1.0f, 1.0f   // 7 Bottom-right
+        // positions          // normals           // colors           // texture coords
+        -0.5f, -0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  1.0f, 0.0f, 0.0f,  0.0f, 0.0f,
+         0.5f, -0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f,
+         0.5f,  0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  0.0f, 0.0f, 1.0f,  1.0f, 1.0f,
+        -0.5f,  0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  1.0f, 1.0f, 0.0f,  0.0f, 1.0f,
+        
+        -0.5f, -0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  1.0f, 0.0f, 0.0f,  0.0f, 0.0f,
+         0.5f, -0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f,
+         0.5f,  0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  0.0f, 0.0f, 1.0f,  1.0f, 1.0f,
+        -0.5f,  0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  1.0f, 1.0f, 0.0f,  0.0f, 1.0f,
+        
+        -0.5f,  0.5f,  0.5f, -1.0f,  0.0f,  0.0f,  1.0f, 0.0f, 0.0f,  1.0f, 0.0f,
+        -0.5f,  0.5f, -0.5f, -1.0f,  0.0f,  0.0f,  0.0f, 1.0f, 0.0f,  1.0f, 1.0f,
+        -0.5f, -0.5f, -0.5f, -1.0f,  0.0f,  0.0f,  0.0f, 0.0f, 1.0f,  0.0f, 1.0f,
+        -0.5f, -0.5f,  0.5f, -1.0f,  0.0f,  0.0f,  1.0f, 1.0f, 0.0f,  0.0f, 0.0f,
+        
+         0.5f,  0.5f,  0.5f,  1.0f,  0.0f,  0.0f,  1.0f, 0.0f, 0.0f,  1.0f, 0.0f,
+         0.5f,  0.5f, -0.5f,  1.0f,  0.0f,  0.0f,  0.0f, 1.0f, 0.0f,  1.0f, 1.0f,
+         0.5f, -0.5f, -0.5f,  1.0f,  0.0f,  0.0f,  0.0f, 0.0f, 1.0f,  0.0f, 1.0f,
+         0.5f, -0.5f,  0.5f,  1.0f,  0.0f,  0.0f,  1.0f, 1.0f, 0.0f,  0.0f, 0.0f,
+        
+        -0.5f, -0.5f, -0.5f,  0.0f, -1.0f,  0.0f,  1.0f, 0.0f, 0.0f,  0.0f, 1.0f,
+         0.5f, -0.5f, -0.5f,  0.0f, -1.0f,  0.0f,  0.0f, 1.0f, 0.0f,  1.0f, 1.0f,
+         0.5f, -0.5f,  0.5f,  0.0f, -1.0f,  0.0f,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f,
+        -0.5f, -0.5f,  0.5f,  0.0f, -1.0f,  0.0f,  1.0f, 1.0f, 0.0f,  0.0f, 0.0f,
+        
+        -0.5f,  0.5f, -0.5f,  0.0f,  1.0f,  0.0f,  1.0f, 0.0f, 0.0f,  0.0f, 1.0f,
+         0.5f,  0.5f, -0.5f,  0.0f,  1.0f,  0.0f,  0.0f, 1.0f, 0.0f,  1.0f, 1.0f,
+         0.5f,  0.5f,  0.5f,  0.0f,  1.0f,  0.0f,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f,
+        -0.5f,  0.5f,  0.5f,  0.0f,  1.0f,  0.0f,  1.0f, 1.0f, 0.0f,  0.0f, 0.0f
     };
 
     static const GLuint indices[] = {
-        // Front (+Z)
-        0, 1, 2, 0, 2, 3,
-        // Back (-Z) — wound so normal points -Z
-        4, 6, 5, 4, 7, 6
+        0,  1,  2,    2,  3,  0,   // front
+        4,  5,  6,    6,  7,  4,   // back
+        8,  9,  10,   10, 11, 8,   // left
+        12, 13, 14,   14, 15, 12,  // right
+        16, 17, 18,   18, 19, 16,  // bottom
+        20, 21, 22,   22, 23, 20   // top
     };
 
     return CreateMesh(vertices, sizeof(vertices), indices, sizeof(indices) / sizeof(GLuint), true, true);
 }
 
-MeshComponent CreateTemple() {
+MeshComponent CreatePlaneMesh() {
     static const GLfloat vertices[] = {
-        // Base - bottom face
-        -0.5f, -0.5f, -0.5f,  0.0f, -1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 0.0f,  // 0
-        0.5f, -0.5f, -0.5f,   0.0f, -1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 0.0f,  // 1
-        0.5f, -0.5f, 0.5f,    0.0f, -1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 1.0f,  // 2
-        -0.5f, -0.5f, 0.5f,   0.0f, -1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 1.0f,  // 3
-        
-        // Front face vertices with correct normals
-        -0.5f, -0.5f, 0.5f,   0.0f, 0.4472f, 0.8944f,  1.0f, 1.0f, 1.0f,  0.0f, 0.0f,  // 4
-        0.5f, -0.5f, 0.5f,    0.0f, 0.4472f, 0.8944f,  1.0f, 1.0f, 1.0f,  1.0f, 0.0f,  // 5
-        0.0f, 0.5f, 0.0f,     0.0f, 0.4472f, 0.8944f,  1.0f, 1.0f, 1.0f,  0.5f, 1.0f,  // 6
-        
-        // Right face vertices with correct normals
-        0.5f, -0.5f, 0.5f,    0.8944f, 0.4472f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 0.0f,  // 7
-        0.5f, -0.5f, -0.5f,   0.8944f, 0.4472f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 0.0f,  // 8
-        0.0f, 0.5f, 0.0f,     0.8944f, 0.4472f, 0.0f,  1.0f, 1.0f, 1.0f,  0.5f, 1.0f,  // 9
-        
-        // Back face vertices with flipped normals
-        0.5f, -0.5f, -0.5f,   0.0f, -0.4472f, 0.8944f,  1.0f, 1.0f, 1.0f,  0.0f, 0.0f,  // 10
-        -0.5f, -0.5f, -0.5f,  0.0f, -0.4472f, 0.8944f,  1.0f, 1.0f, 1.0f,  1.0f, 0.0f,  // 11
-        0.0f, 0.5f, 0.0f,     0.0f, -0.4472f, 0.8944f,  1.0f, 1.0f, 1.0f,  0.5f, 1.0f,  // 12
-        
-        // Left face vertices with correct normals
-        -0.5f, -0.5f, -0.5f,  -0.8944f, 0.4472f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 0.0f,  // 13
-        -0.5f, -0.5f, 0.5f,   -0.8944f, 0.4472f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 0.0f,  // 14
-        0.0f, 0.5f, 0.0f,     -0.8944f, 0.4472f, 0.0f,  1.0f, 1.0f, 1.0f,  0.5f, 1.0f   // 15
+        // positions          // normals           // colors           // texture coords
+        -1.0f,  0.0f, -1.0f,  0.0f,  1.0f,  0.0f,  1.0f, 0.0f, 0.0f,  0.0f, 0.0f,
+         1.0f,  0.0f, -1.0f,  0.0f,  1.0f,  0.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f,
+         1.0f,  0.0f,  1.0f,  0.0f,  1.0f,  0.0f,  0.0f, 0.0f, 1.0f,  1.0f, 1.0f,
+        -1.0f,  0.0f,  1.0f,  0.0f,  1.0f,  0.0f,  1.0f, 1.0f, 0.0f,  0.0f, 1.0f
     };
-    
+
     static const GLuint indices[] = {
-        // Base (bottom face, CCW from outside)
         0, 1, 2,
-        0, 2, 3,
-        // Front face (+Z, CCW)
-        4, 5, 6,
-        // Right face (+X, CCW)
-        7, 8, 9,
-        // Back face (-Z, CCW with flipped normals)
-        10, 11, 12,
-        // Left face (-X, CCW)
-        13, 14, 15
-    };
-    
-    return CreateMesh(vertices, sizeof(vertices), indices, sizeof(indices) / sizeof(GLuint), true, true);
-}
-
-MeshComponent CreateCube() {
-    static const GLfloat vertices[] = {
-        // Front face (+Z)
-        -0.5f, -0.5f,  0.5f,  0.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f,  0.0f, 0.0f, // 0
-         0.5f, -0.5f,  0.5f,  0.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f,  1.0f, 0.0f, // 1
-         0.5f,  0.5f,  0.5f,  0.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f,  1.0f, 1.0f, // 2
-        -0.5f,  0.5f,  0.5f,  0.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f,  0.0f, 1.0f, // 3
-        // Back face (-Z)
-        -0.5f, -0.5f, -0.5f,  0.0f, 0.0f,-1.0f,  1.0f, 1.0f, 1.0f,  0.0f, 0.0f, // 4
-         0.5f, -0.5f, -0.5f,  0.0f, 0.0f,-1.0f,  1.0f, 1.0f, 1.0f,  1.0f, 0.0f, // 5
-         0.5f,  0.5f, -0.5f,  0.0f, 0.0f,-1.0f,  1.0f, 1.0f, 1.0f,  1.0f, 1.0f, // 6
-        -0.5f,  0.5f, -0.5f,  0.0f, 0.0f,-1.0f,  1.0f, 1.0f, 1.0f,  0.0f, 1.0f, // 7
-        // Left face (-X)
-        -0.5f, -0.5f, -0.5f, -1.0f, 0.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 0.0f, // 8
-        -0.5f, -0.5f,  0.5f, -1.0f, 0.0f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 0.0f, // 9
-        -0.5f,  0.5f,  0.5f, -1.0f, 0.0f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 1.0f, //10
-        -0.5f,  0.5f, -0.5f, -1.0f, 0.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 1.0f, //11
-        // Right face (+X)
-         0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 0.0f, //12
-         0.5f, -0.5f,  0.5f,  1.0f, 0.0f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 0.0f, //13
-         0.5f,  0.5f,  0.5f,  1.0f, 0.0f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 1.0f, //14
-         0.5f,  0.5f, -0.5f,  1.0f, 0.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 1.0f, //15
-        // Top face (+Y)
-        -0.5f,  0.5f, -0.5f,  0.0f, 1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 0.0f, //16
-         0.5f,  0.5f, -0.5f,  0.0f, 1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 0.0f, //17
-         0.5f,  0.5f,  0.5f,  0.0f, 1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 1.0f, //18
-        -0.5f,  0.5f,  0.5f,  0.0f, 1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 1.0f, //19
-        // Bottom face (-Y)
-        -0.5f, -0.5f, -0.5f,  0.0f,-1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 0.0f, //20
-         0.5f, -0.5f, -0.5f,  0.0f,-1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 0.0f, //21
-         0.5f, -0.5f,  0.5f,  0.0f,-1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  1.0f, 1.0f, //22
-        -0.5f, -0.5f,  0.5f,  0.0f,-1.0f, 0.0f,  1.0f, 1.0f, 1.0f,  0.0f, 1.0f  //23
-    };
-
-    static const GLuint indices[] = {
-        // Front (+Z)
-        0, 1, 2,    0, 2, 3,
-        // Back (-Z) — wound so normal points -Z
-        4, 6, 5,    4, 7, 6,
-        // Left (-X)
-        8, 9, 10,   8, 10, 11,
-        // Right (+X)
-        12, 14, 13, 12, 15, 14,
-        // Top (+Y)
-        16, 18, 17, 16, 19, 18,
-        // Bottom (-Y)
-        20, 21, 22, 20, 22, 23
+        2, 3, 0
     };
 
     return CreateMesh(vertices, sizeof(vertices), indices, sizeof(indices) / sizeof(GLuint), true, true);
 }
 
-MeshComponent CreateSphere() {
-    const float PI = 3.14159265358979323846f;
-    const unsigned int sectors = 36;
-    const unsigned int stacks = 18;
-    const float radius = 1.0f;
-
+MeshComponent CreateSphereMesh(int segments) {
     std::vector<GLfloat> vertices;
     std::vector<GLuint> indices;
 
-    for (unsigned int y = 0; y <= stacks; ++y) {
-        float ySegment = static_cast<float>(y) / stacks;
-        float phi = ySegment * PI;
-        for (unsigned int x = 0; x <= sectors; ++x) {
-            float xSegment = static_cast<float>(x) / sectors;
-            float theta = xSegment * 2.0f * PI;
+    // Generate sphere vertices
+    for (int i = 0; i <= segments; ++i) {
+        float lat = M_PI * (-0.5f + (float)i / segments);
+        float y = sin(lat);
+        float r = cos(lat);
 
-            float posX = radius * std::sin(phi) * std::cos(theta);
-            float posY = radius * std::cos(phi);
-            float posZ = radius * std::sin(phi) * std::sin(theta);
+        for (int j = 0; j <= segments; ++j) {
+            float lon = 2 * M_PI * (float)j / segments;
+            float x = cos(lon) * r;
+            float z = sin(lon) * r;
 
-            float normX = posX / radius;
-            float normY = posY / radius;
-            float normZ = posZ / radius;
+            // Position
+            vertices.push_back(x);
+            vertices.push_back(y);
+            vertices.push_back(z);
 
-            vertices.push_back(posX);
-            vertices.push_back(posY);
-            vertices.push_back(posZ);
-            vertices.push_back(normX);
-            vertices.push_back(normY);
-            vertices.push_back(normZ);
-            vertices.push_back(1.0f); // R
-            vertices.push_back(1.0f); // G
-            vertices.push_back(1.0f); // B
-            vertices.push_back(xSegment);
-            vertices.push_back(ySegment);
+            // Normal (same as position for unit sphere)
+            vertices.push_back(x);
+            vertices.push_back(y);
+            vertices.push_back(z);
+
+            // Color
+            vertices.push_back(1.0f);
+            vertices.push_back(1.0f);
+            vertices.push_back(1.0f);
+
+            // Texture coordinates
+            vertices.push_back((float)j / segments);
+            vertices.push_back((float)i / segments);
         }
     }
 
-    for (unsigned int y = 0; y < stacks; ++y) {
-        for (unsigned int x = 0; x < sectors; ++x) {
-            unsigned int first = (y * (sectors + 1)) + x;
-            unsigned int second = first + sectors + 1;
+    // Generate indices
+    for (int i = 0; i < segments; ++i) {
+        for (int j = 0; j < segments; ++j) {
+            int first = i * (segments + 1) + j;
+            int second = first + segments + 1;
 
-            // First triangle (CCW)
             indices.push_back(first);
             indices.push_back(second);
             indices.push_back(first + 1);
 
-            // Second triangle (CCW)
             indices.push_back(second);
             indices.push_back(second + 1);
             indices.push_back(first + 1);
@@ -303,188 +242,33 @@ MeshComponent CreateSphere() {
     return CreateMesh(vertices.data(), vertices.size() * sizeof(GLfloat), indices.data(), indices.size(), true, true);
 }
 
-// ModelComponent
-void SetupMesh(Mesh& mesh) {
-    glGenVertexArrays(1, &mesh.VAO);
-    glGenBuffers(1, &mesh.VBO);
-    glGenBuffers(1, &mesh.EBO);
-
-    glBindVertexArray(mesh.VAO);
-
-    glBindBuffer(GL_ARRAY_BUFFER, mesh.VBO);
-    glBufferData(GL_ARRAY_BUFFER, mesh.vertices.size() * sizeof(Vertex), mesh.vertices.data(), GL_STATIC_DRAW);
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.EBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, mesh.indices.size() * sizeof(unsigned int), mesh.indices.data(), GL_STATIC_DRAW);
-
-    // Position
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
-    glEnableVertexAttribArray(0);
-
-    // Normal
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, Normal));
-    glEnableVertexAttribArray(1);
-
-    // Color (only enable if color data exists)
-    if (!mesh.vertices.empty() && mesh.vertices[0].Color != glm::vec3(0.0f)) { // Check if color data is non-zero
-        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, Color));
-        glEnableVertexAttribArray(2);
-    }
-
-    // Texture coords
-    glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, TexCoords));
-    glEnableVertexAttribArray(3);
-
-    glBindVertexArray(0);
+// Static factory methods
+MeshComponent MeshComponent::CreateCube() {
+    return CreateCubeMesh();
 }
 
-// ProcessMesh function to handle mesh
-Mesh ProcessMesh(aiMesh* mesh, const aiScene* scene, const std::string& directory, std::vector<Texture>& textures_loaded) {
-    Mesh newMesh;
-
-    // Process vertices
-    for (unsigned int i = 0; i < mesh->mNumVertices; i++) {
-        Vertex vertex;
-        vertex.Position = { mesh->mVertices[i].x, mesh->mVertices[i].y, mesh->mVertices[i].z };
-        vertex.Normal   = { mesh->mNormals[i].x, mesh->mNormals[i].y, mesh->mNormals[i].z };
-
-        if (mesh->HasVertexColors(0)) {
-            vertex.Color = { mesh->mColors[0][i].r, mesh->mColors[0][i].g, mesh->mColors[0][i].b };
-        } else {
-            vertex.Color = { 0.0f, 0.0f, 0.0f };
-        }
-
-        if (mesh->mTextureCoords[0]) {
-            vertex.TexCoords = { mesh->mTextureCoords[0][i].x, mesh->mTextureCoords[0][i].y };
-        } else {
-            vertex.TexCoords = { 0.0f, 0.0f };
-        }
-
-        newMesh.vertices.push_back(vertex);
-    }
-
-    // Process indices
-    for (unsigned int i = 0; i < mesh->mNumFaces; i++) {
-        aiFace face = mesh->mFaces[i];
-        for (unsigned int j = 0; j < face.mNumIndices; j++) {
-            newMesh.indices.push_back(face.mIndices[j]);
-        }
-    }
-
-    // **Fix winding order to CCW**
-    for (size_t i = 0; i < newMesh.indices.size(); i += 3) {
-        auto& v0 = newMesh.vertices[newMesh.indices[i + 0]];
-        auto& v1 = newMesh.vertices[newMesh.indices[i + 1]];
-        auto& v2 = newMesh.vertices[newMesh.indices[i + 2]];
-
-        glm::vec3 edge1 = v1.Position - v0.Position;
-        glm::vec3 edge2 = v2.Position - v0.Position;
-        glm::vec3 normal = glm::cross(edge1, edge2);
-
-        // If normal is pointing away from vertex normal, flip
-        if (glm::dot(normal, v0.Normal) < 0.0f) {
-            std::swap(newMesh.indices[i + 1], newMesh.indices[i + 2]);
-        }
-    }
-
-    // Process material (same as your existing code) ...
-    if (mesh->mMaterialIndex >= 0) {
-        aiMaterial* material = scene->mMaterials[mesh->mMaterialIndex];
-        auto loadMaterialTextures = [&](aiTextureType type, const std::string& typeName) {
-            std::vector<Texture> textures;
-            for (unsigned int i = 0; i < material->GetTextureCount(type); i++) {
-                aiString str;
-                material->GetTexture(type, i, &str);
-                std::string filename = str.C_Str();
-                bool skip = false;
-                for (const auto& loadedTex : textures_loaded) {
-                    if (loadedTex.path == filename) {
-                        textures.push_back(loadedTex);
-                        skip = true;
-                        break;
-                    }
-                }
-                if (!skip) {
-                    GLuint textureID = LoadTextureFromFile(filename, directory);
-                    Texture texture = { textureID, typeName, filename };
-                    textures.push_back(texture);
-                    textures_loaded.push_back(texture);
-                }
-            }
-            return textures;
-        };
-
-        std::vector<Texture> diffuseMaps = loadMaterialTextures(aiTextureType_DIFFUSE, "texture_diffuse");
-        newMesh.textures.insert(newMesh.textures.end(), diffuseMaps.begin(), diffuseMaps.end());
-
-        std::vector<Texture> specularMaps = loadMaterialTextures(aiTextureType_SPECULAR, "texture_specular");
-        newMesh.textures.insert(newMesh.textures.end(), specularMaps.begin(), specularMaps.end());
-    }
-
-    SetupMesh(newMesh);
-    return newMesh;
+MeshComponent MeshComponent::CreatePlane() {
+    return CreatePlaneMesh();
 }
 
-
-// ProcessNode function to recursively process nodes
-void ProcessNode(aiNode* node, const aiScene* scene, ModelComponent& model, std::vector<Texture>& textures_loaded) {
-    for (unsigned int i = 0; i < node->mNumMeshes; i++) {
-        aiMesh* mesh = scene->mMeshes[node->mMeshes[i]];
-        model.meshes.push_back(ProcessMesh(mesh, scene, model.directory, textures_loaded));
-    }
-    for (unsigned int i = 0; i < node->mNumChildren; i++) {
-        ProcessNode(node->mChildren[i], scene, model, textures_loaded);
-    }
+MeshComponent MeshComponent::CreateSphere(int segments) {
+    return CreateSphereMesh(segments);
 }
 
-ModelComponent* LoadModel(const std::string& path) {
-    Assimp::Importer importer;
-    const aiScene* scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_CalcTangentSpace);
-
-    if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
-        std::cerr << "ERROR::ASSIMP::" << importer.GetErrorString() << std::endl;
-        return nullptr;
-    }
-
-    ModelComponent* model = new ModelComponent();
-    model->directory = path.substr(0, path.find_last_of('/'));
-
-    // Vector to track loaded textures and avoid duplication
-    std::vector<Texture> textures_loaded;
-
-    ProcessNode(scene->mRootNode, scene, *model, textures_loaded);
-
-    // Save loaded textures to model
-    model->textures_loaded = std::move(textures_loaded);
-
-    return model;
+MeshComponent MeshComponent::CreateMesh(const GLfloat* vertices, size_t vertexSize, const GLuint* indices, size_t indexCount, bool WithColor, bool WithTexture) {
+    return ::CreateMesh(vertices, vertexSize, indices, indexCount, WithColor, WithTexture);
 }
 
-// Texture loading
+// Utility functions
+MeshComponent CreateQuad() {
+    return CreatePlaneMesh();
+}
+
+MeshComponent CreateTemple() {
+    return CreateCubeMesh(); // Temporary replacement
+}
+
 GLuint LoadTextureFromFile(const std::string& filename, const std::string& directory) {
-    std::string filepath = directory + "/" + filename;
-    filepath = NormalizePath(filepath);
-
-    int width, height, channels;
-    unsigned char* data = LoadTexture(filepath, width, height, channels);
-
-    if (!data) {
-        std::cerr << "Failed to load texture at path: " << filepath << std::endl;
-        return 0;
-    }
-
-    GLuint textureID = CreateTexture(data, width, height, channels);
-
-    // Free image data if needed
-    // stbi_image_free(data); // if stb_image
-
-    return textureID;
+    // Placeholder implementation
+    return 0;
 }
-
-std::string NormalizePath(const std::string& path) {
-    std::string normalized = path;
-    std::replace(normalized.begin(), normalized.end(), '\\', '/');
-    return normalized;
-}
-
-} // namespace C6GE

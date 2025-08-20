@@ -1,8 +1,9 @@
 #include "Texture.h"
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
+#include "../../Components/MeshComponent.h" // Include for OpenGL definitions
 
-#include <glad/glad.h>
+// GLAD include removed - using bgfx for OpenGL context management
 #include <cstring>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>

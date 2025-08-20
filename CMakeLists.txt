@@ -1,5 +1,9 @@
-cmake_minimum_required(VERSION 3.10...3.28)
+cmake_minimum_required(VERSION 3.16...3.28)
 project(C6GE)
+
+# Set CMake policies
+cmake_policy(SET CMP0079 NEW)
+
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
@@ -60,14 +64,6 @@ set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(glfw)
 
-# Fetch GLAD
-FetchContent_Declare(
-    glad
-    GIT_REPOSITORY https://github.com/Dav1dde/glad.git
-    GIT_TAG v0.1.36
-)
-FetchContent_MakeAvailable(glad)
-
 # Fetch EnTT
 FetchContent_Declare(
     entt
@@ -106,29 +102,8 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(stb)
 
-# Fetch bx (bgfx dependency)
-FetchContent_Declare(
-    bx
-    GIT_REPOSITORY https://github.com/bkaradzic/bx.git
-    GIT_TAG master
-)
-FetchContent_MakeAvailable(bx)
-
-# Fetch bimg (bgfx dependency)
-FetchContent_Declare(
-    bimg
-    GIT_REPOSITORY https://github.com/bkaradzic/bimg.git
-    GIT_TAG master
-)
-FetchContent_MakeAvailable(bimg)
-
-# Fetch bgfx itself
-FetchContent_Declare(
-    bgfx
-    GIT_REPOSITORY https://github.com/bkaradzic/bgfx.cmake.git
-    GIT_TAG master
-)
-set(BGFX_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+# Configure bgfx.cmake options before fetching
+set(BGFX_BUILD_TOOLS ON CACHE BOOL "" FORCE)
 set(BGFX_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(BGFX_INSTALL OFF CACHE BOOL "" FORCE)
 set(BGFX_AMALGAMATED OFF CACHE BOOL "" FORCE)
@@ -144,7 +119,14 @@ if(APPLE)
     set(BGFX_CONFIG_RENDERER_DIRECT3D12 OFF CACHE BOOL "" FORCE)
 endif()
 
-FetchContent_MakeAvailable(bgfx)
+# Fetch and configure bgfx.cmake
+FetchContent_Declare(
+    bgfx_cmake
+    GIT_REPOSITORY https://github.com/bkaradzic/bgfx.cmake.git
+    GIT_TAG master
+)
+
+FetchContent_MakeAvailable(bgfx_cmake)
 
 # Find OpenGL
 find_package(OpenGL REQUIRED)
@@ -152,32 +134,59 @@ find_package(OpenGL REQUIRED)
 # Executable
 add_executable(C6GE ${SOURCES} ${HEADERS})
 
-# Ensure bgfx is built before linking
-add_dependencies(C6GE bgfx bx bimg)
-
+# Link libraries
 target_link_libraries(C6GE PRIVATE 
     glfw 
-    glad 
     EnTT::EnTT 
     OpenGL::GL 
     assimp::assimp 
-    bgfx 
-    bx 
-    bimg
+    bgfx
 )
+
+# If bgfx tools are built, add a custom command to compile shaders
+find_program(BGFX_SHADERC_EXECUTABLE NAMES shaderc HINTS
+    ${bgfx_cmake_SOURCE_DIR}/.build/win64_vs2022/bin
+    ${bgfx_cmake_SOURCE_DIR}/.build/win64_vs2019/bin
+    ${bgfx_cmake_BINARY_DIR}
+    ${bgfx_cmake_BINARY_DIR}/bin
+)
+
+if(BGFX_SHADERC_EXECUTABLE)
+    message(STATUS "Found bgfx shaderc: ${BGFX_SHADERC_EXECUTABLE}")
+    add_custom_command(TARGET C6GE POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:C6GE>/Assets/shaders"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/C6GE/src/Assets/shaders"
+            "$<TARGET_FILE_DIR:C6GE>/Assets/shaders"
+        # Compile vertex shader
+        COMMAND ${BGFX_SHADERC_EXECUTABLE}
+            --platform windows
+            --type vertex
+            --varyingdef "$<TARGET_FILE_DIR:C6GE>/Assets/shaders/varying.def.sc"
+            --profile vs_5_0
+            -f "$<TARGET_FILE_DIR:C6GE>/Assets/shaders/test.sc"
+            -o "$<TARGET_FILE_DIR:C6GE>/Assets/shaders/test.vs.bin"
+        # Compile fragment shader
+        COMMAND ${BGFX_SHADERC_EXECUTABLE}
+            --platform windows
+            --type fragment
+            --varyingdef "$<TARGET_FILE_DIR:C6GE>/Assets/shaders/varying.def.sc"
+            --profile ps_5_0
+            -f "$<TARGET_FILE_DIR:C6GE>/Assets/shaders/test_fs.sc"
+            -o "$<TARGET_FILE_DIR:C6GE>/Assets/shaders/test.fs.bin"
+        VERBATIM
+    )
+else()
+    message(WARNING "bgfx shaderc not found; shaders will not be compiled.")
+endif()
 
 # Include directories for all dependencies
 target_include_directories(C6GE PRIVATE 
-    ${glad_BINARY_DIR}/include 
     ${glm_SOURCE_DIR} 
     ${stb_SOURCE_DIR} 
     ${glfw_SOURCE_DIR}/include 
     ${assimp_SOURCE_DIR}/include 
     ${assimp_BINARY_DIR}
-    ${bgfx_SOURCE_DIR}/include
-    ${bx_SOURCE_DIR}/include
-    ${bimg_SOURCE_DIR}/include
-    ${bgfx_SOURCE_DIR}/3rdparty
 )
 
 # For macOS, link necessary frameworks and add bgfx-specific settings

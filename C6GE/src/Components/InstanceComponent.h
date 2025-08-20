@@ -2,7 +2,9 @@
 
 #include <vector>
 #include <glm/glm.hpp>
-#include <glad/glad.h>
+// GLAD include removed - using bgfx for OpenGL context management
+// OpenGL type definitions
+using GLuint = unsigned int;
 
 struct InstanceComponent {
     std::vector<glm::mat4> instances;

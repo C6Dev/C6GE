@@ -1,6 +1,8 @@
-#include <glad/glad.h>
+// GLAD include removed - using bgfx for OpenGL context management
+#include "../Components/MeshComponent.h" // Include for OpenGL definitions
 #include "Window.h"
 #include "../Logging/Log.h"
+#include "../Render/Render.h" // Include for WindowResizeCallback
 
 namespace C6GE {
 
@@ -52,13 +54,8 @@ glm::mat4 GetProjectionMatrix() {
 bool CreateWindow(int width, int height, const char* title) {
     if (!glfwInit()) return false;
 
-    // Set OpenGL version to 3.3
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-#ifdef __APPLE__
-    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
-#endif
+    // For BGFX, we don't create an OpenGL context - BGFX will manage its own
+    // But we don't explicitly disable it either, as BGFX might need it for OpenGL renderer
     glfwWindowHint(GLFW_DEPTH_BITS, 24);
     window = glfwCreateWindow(width, height, title, nullptr, nullptr);
 
@@ -68,7 +65,10 @@ bool CreateWindow(int width, int height, const char* title) {
         return false;
     }
 
-    glfwMakeContextCurrent(window);
+    // Set up window resize callback for BGFX
+    glfwSetWindowSizeCallback(window, WindowResizeCallback);
+
+    // Don't make context current - BGFX will manage its own context
     glfwSwapInterval(0);
     return true;
 }

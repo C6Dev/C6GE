@@ -18,6 +18,7 @@ namespace C6GE {
 	};
 
 	bool InitRender(unsigned int width, unsigned int height, RendererType renderer);
+	RendererType GetCurrentRenderer();
 	void Clear(float r, float g, float b, float a);
 	void BindNormalFramebuffer();
 	void UnbindNormalFramebuffer();
@@ -30,6 +31,10 @@ namespace C6GE {
 	void ClearInstances(const std::string& name);
 
 	bool InitBGFX();
+	void ClearBGFX(float r, float g, float b, float a);
+	void PresentBGFX();
+	void UpdateBGFXViewport();
+	void WindowResizeCallback(GLFWwindow* window, int width, int height);
 	
 #ifdef __APPLE__
 	bool InitBGFX_macOS(void* windowPtr);

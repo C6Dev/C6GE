@@ -2,13 +2,35 @@
 #define NOMINMAX
 #ifdef _WIN32
 #include <windows.h>
+#define GLFW_EXPOSE_NATIVE_WIN32
 #endif
 #include <bgfx/bgfx.h>
 #include <bgfx/platform.h>
-#include <glad/glad.h>
-#define GLFW_EXPOSE_NATIVE_COCOA
+// OpenGL headers for OpenGL renderer
+#include <GL/gl.h>
 #include <GLFW/glfw3.h>
+#ifdef __APPLE__
+#define GLFW_EXPOSE_NATIVE_COCOA
+#endif
+#ifdef _WIN32
+#define GLFW_EXPOSE_NATIVE_WIN32
+#endif
 #include <GLFW/glfw3native.h>
+
+// OpenGL constants that might not be defined in basic headers
+#ifndef GL_TEXTURE1
+#define GL_TEXTURE1 0x84C1
+#endif
+#ifndef GL_TEXTURE2
+#define GL_TEXTURE2 0x84C2
+#endif
+#ifndef GL_TEXTURE3
+#define GL_TEXTURE3 0x84C3
+#endif
+#ifndef GL_DYNAMIC_DRAW
+#define GL_DYNAMIC_DRAW 0x88E8
+#endif
+
 #include "Render.h"
 #include "../Window/Window.h"
 #include "../ECS/Object/Object.h"
@@ -22,8 +44,111 @@
 #include <string>
 #include <algorithm>
 #include <iostream>
+#include <cstring>
+#include <cstdio>
 #include "../Components/InstanceComponent.h"
 #include "../Logging/Log.h"
+#include "../Window/Window.h"
+
+// BGFX vertex structure
+struct BGFXVertex {
+    float x, y, z;    // position
+    float nx, ny, nz; // normal
+    float r, g, b;    // color
+    float u, v;       // texture coordinates
+};
+
+// BGFX vertex layout
+bgfx::VertexLayout bgfxVertexLayout;
+
+// Simple triangle vertices for BGFX (position only) - larger triangle
+static float s_triangleVertices[] = {
+     0.0f,  0.8f, 0.0f,  // top
+    -0.8f, -0.8f, 0.0f,  // bottom left
+     0.8f, -0.8f, 0.0f   // bottom right
+};
+
+static const uint16_t s_triangleIndices[] = {
+    0, 1, 2  // single triangle
+};
+
+// BGFX resources
+bgfx::VertexBufferHandle bgfxVertexBuffer = BGFX_INVALID_HANDLE;
+bgfx::IndexBufferHandle bgfxIndexBuffer = BGFX_INVALID_HANDLE;
+bgfx::ProgramHandle bgfxSimpleProgram = BGFX_INVALID_HANDLE;
+
+// Forward declarations
+namespace C6GE {
+    void InitBGFXResources();
+    void RenderBGFXCube();
+    bgfx::ShaderHandle CreateShaderFromBinary(const uint8_t* data, uint32_t size, const char* name);
+}
+
+// Pre-compiled BGFX shaders for solid color rendering
+// These are minimal shaders compiled for DirectX11/OpenGL
+
+// Simple vertex shader (pre-compiled for DX11)
+static const uint8_t s_vertexShaderDX11[] = {
+    0x56, 0x53, 0x48, 0x0b, 0x00, 0x00, 0x00, 0x00, 0x01, 0x83, 0xf2, 0xe1, 0x01, 0x00, 0x0f, 0x75,
+    0x5f, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x56, 0x69, 0x65, 0x77, 0x50, 0x72, 0x6f, 0x6a, 0x09, 0x01,
+    0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf8, 0x02, 0x00, 0x00, 0x44, 0x58, 0x42, 0x43,
+    0x26, 0xb0, 0x69, 0x8d, 0x39, 0x3c, 0x9a, 0x36, 0x81, 0x14, 0x89, 0x85, 0x3c, 0x1d, 0x68, 0x54,
+    0x01, 0x00, 0x00, 0x00, 0xf8, 0x02, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x2c, 0x00, 0x00, 0x00,
+    0x60, 0x00, 0x00, 0x00, 0x94, 0x00, 0x00, 0x00, 0x49, 0x53, 0x47, 0x4e, 0x2c, 0x00, 0x00, 0x00,
+    0x01, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, 0x07, 0x00, 0x00,
+    0x50, 0x4f, 0x53, 0x49, 0x54, 0x49, 0x4f, 0x4e, 0x00, 0xab, 0xab, 0xab, 0x4f, 0x53, 0x47, 0x4e,
+    0x2c, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x0f, 0x00, 0x00, 0x00, 0x53, 0x56, 0x5f, 0x50, 0x4f, 0x53, 0x49, 0x54, 0x49, 0x4f, 0x4e, 0x00,
+    0x53, 0x48, 0x44, 0x52, 0x5c, 0x02, 0x00, 0x00, 0x40, 0x00, 0x01, 0x00, 0x97, 0x00, 0x00, 0x00,
+    0x59, 0x00, 0x00, 0x04, 0x46, 0x8e, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00,
+    0x5f, 0x00, 0x00, 0x03, 0x72, 0x10, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x67, 0x00, 0x00, 0x04,
+    0xf2, 0x20, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x68, 0x00, 0x00, 0x02,
+    0x01, 0x00, 0x00, 0x00, 0x38, 0x00, 0x00, 0x08, 0x72, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x56, 0x15, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46, 0x82, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x01, 0x00, 0x00, 0x00, 0x32, 0x00, 0x00, 0x0a, 0x72, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x46, 0x82, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x10, 0x10, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x46, 0x02, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x32, 0x00, 0x00, 0x0a,
+    0x72, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46, 0x82, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x02, 0x00, 0x00, 0x00, 0xa6, 0x1a, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46, 0x02, 0x10, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x72, 0x20, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x46, 0x02, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46, 0x82, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x03, 0x00, 0x00, 0x00, 0x36, 0x00, 0x00, 0x08, 0x82, 0x20, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x3a, 0x82, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x3e, 0x00, 0x00, 0x01,
+    0x00, 0x00, 0x00, 0x00
+};
+
+// Simple fragment shader (pre-compiled for DX11)
+static const uint8_t s_fragmentShaderDX11[] = {
+    0x46, 0x53, 0x48, 0x0b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0xbc, 0x01, 0x00, 0x00, 0x44, 0x58, 0x42, 0x43, 0x5d, 0x4a, 0x52, 0x44, 0x42, 0x58,
+    0x2e, 0x74, 0xaa, 0xb4, 0xd1, 0x67, 0xb8, 0x1e, 0x78, 0xc8, 0x01, 0x00, 0x00, 0x00, 0xbc, 0x01,
+    0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x2c, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0xb4, 0x00,
+    0x00, 0x00, 0x49, 0x53, 0x47, 0x4e, 0x4c, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x08, 0x00,
+    0x00, 0x00, 0x38, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x03, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x00, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x07, 0x07,
+    0x00, 0x00, 0x53, 0x56, 0x5f, 0x50, 0x4f, 0x53, 0x49, 0x54, 0x49, 0x4f, 0x4e, 0x00, 0x43, 0x4f,
+    0x4c, 0x4f, 0x52, 0x00, 0xab, 0xab, 0x4f, 0x53, 0x47, 0x4e, 0x2c, 0x00, 0x00, 0x00, 0x01, 0x00,
+    0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x00, 0x53, 0x56,
+    0x5f, 0x54, 0x41, 0x52, 0x47, 0x45, 0x54, 0x00, 0xab, 0xab, 0x53, 0x48, 0x44, 0x52, 0x00, 0x01,
+    0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x62, 0x10, 0x00, 0x03, 0x72, 0x10,
+    0x10, 0x00, 0x01, 0x00, 0x00, 0x00, 0x65, 0x00, 0x00, 0x03, 0xf2, 0x20, 0x10, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x36, 0x00, 0x00, 0x05, 0x72, 0x20, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46, 0x12,
+    0x10, 0x00, 0x01, 0x00, 0x00, 0x00, 0x36, 0x00, 0x00, 0x05, 0x82, 0x20, 0x10, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x01, 0x40, 0x00, 0x00, 0x00, 0x00, 0x80, 0x3f, 0x3e, 0x00, 0x00, 0x01, 0x00, 0x00,
+    0x00, 0x00
+};
+
+// BGFX shader handles
+bgfx::ShaderHandle s_vertexShader = BGFX_INVALID_HANDLE;
+bgfx::ShaderHandle s_fragmentShader = BGFX_INVALID_HANDLE;
+
+#ifdef __APPLE__
+extern "C" void* setupMetalLayer(void* nwh);
+#endif
 
 GLuint multisampleFBO, resolveFBO, colorTextureMS, colorTextureResolve, depthStencilRBOMS, quadVAO = 0, quadVBO = 0;
 extern GLuint postShader;
@@ -41,17 +166,17 @@ float quadVertices[] = {
 namespace C6GE {
 
 unsigned int samples = 1; // default (no MSAA)
+RendererType currentRenderer = RendererType::OpenGL; // Track current renderer
 
 bool InitRender(unsigned int width, unsigned int height, RendererType render) {
+    currentRenderer = render; // Store the renderer type
+    
     if (render == RendererType::BGFX) {
-		InitBGFX();
-        return true;
+		return InitBGFX();
     } 
     else { // Default: OpenGL
-        if (!gladLoadGL()) {
-            Log(LogLevel::error, "Failed to initialize GLAD");
-            return false;
-        }
+        // OpenGL context should already be available from GLFW
+        // No need for GLAD initialization
 
         GLint maxSamples = 0;
         glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
@@ -130,8 +255,12 @@ bool InitRender(unsigned int width, unsigned int height, RendererType render) {
 
 	// Clear the screen with a specified color
 	void Clear(float r, float g, float b, float a) {
-		glClearColor(r, g, b, a);
-		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+		if (currentRenderer == RendererType::BGFX) {
+			ClearBGFX(r, g, b, a);
+		} else {
+			glClearColor(r, g, b, a);
+			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+		}
 	}
 
 	// Bind the resolve FBO
@@ -156,30 +285,34 @@ bool InitRender(unsigned int width, unsigned int height, RendererType render) {
 
 	// Present the rendered frame to the window
 	void Present() {
-		glBindFramebuffer(GL_READ_FRAMEBUFFER, multisampleFBO);
-		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, resolveFBO);
-		GLint viewport[4];
-		glGetIntegerv(GL_VIEWPORT, viewport);
-		glBlitFramebuffer(0, 0, viewport[2], viewport[3], 0, 0, viewport[2], viewport[3], GL_COLOR_BUFFER_BIT, GL_LINEAR);
+		if (currentRenderer == RendererType::BGFX) {
+			PresentBGFX();
+		} else {
+			glBindFramebuffer(GL_READ_FRAMEBUFFER, multisampleFBO);
+			glBindFramebuffer(GL_DRAW_FRAMEBUFFER, resolveFBO);
+			GLint viewport[4];
+			glGetIntegerv(GL_VIEWPORT, viewport);
+			glBlitFramebuffer(0, 0, viewport[2], viewport[3], 0, 0, viewport[2], viewport[3], GL_COLOR_BUFFER_BIT, GL_LINEAR);
 
-		glBindFramebuffer(GL_FRAMEBUFFER, 0);
-		Clear(0.0f, 0.0f, 0.0f, 1.0f);
+			glBindFramebuffer(GL_FRAMEBUFFER, 0);
+			Clear(0.0f, 0.0f, 0.0f, 1.0f);
 
-		glDisable(GL_DEPTH_TEST);
+			glDisable(GL_DEPTH_TEST);
 
-		glUseProgram(postShader);
+			glUseProgram(postShader);
 
-		glActiveTexture(GL_TEXTURE0);
-		glBindTexture(GL_TEXTURE_2D, colorTextureResolve);
-		glUniform1i(glGetUniformLocation(postShader, "screenTexture"), 0);
+			glActiveTexture(GL_TEXTURE0);
+			glBindTexture(GL_TEXTURE_2D, colorTextureResolve);
+			glUniform1i(glGetUniformLocation(postShader, "screenTexture"), 0);
 
-		glBindVertexArray(quadVAO);
-		glDrawArrays(GL_TRIANGLES, 0, 6);
-		glBindVertexArray(0);
+			glBindVertexArray(quadVAO);
+			glDrawArrays(GL_TRIANGLES, 0, 6);
+			glBindVertexArray(0);
 
-		glEnable(GL_DEPTH_TEST);
+			glEnable(GL_DEPTH_TEST);
 
-		glfwSwapBuffers(glfwGetCurrentContext());
+			glfwSwapBuffers(glfwGetCurrentContext());
+		}
 	}
 
 	void RenderObject(const std::string& name, bool useStencil, bool isOutlinePass) {
@@ -195,6 +328,15 @@ bool InitRender(unsigned int width, unsigned int height, RendererType render) {
     	auto* instComp     = GetComponent<InstanceComponent>(name);
 
     	if (!shaderComp || !meshComp) return;
+
+    	// BGFX rendering path
+    	if (currentRenderer == RendererType::BGFX) {
+    	    // For now, just render a simple cube for any object
+    	    RenderBGFXCube();
+    	    return;
+    	}
+
+    	// OpenGL rendering path continues below...
 
         // Configure stencil operations based on the current pass
         if (useStencil) {
@@ -396,31 +538,63 @@ bool InitRender(unsigned int width, unsigned int height, RendererType render) {
 bool InitBGFX() {
     Log(LogLevel::info, "Initializing BGFX...");
 
-    GLFWwindow* window = glfwGetCurrentContext();
+    // Get the window from the Window module instead of current context
+    GLFWwindow* window = static_cast<GLFWwindow*>(GetWindow());
     if (!window) {
         Log(LogLevel::error, "No GLFW window available for BGFX.");
         return false;
     }
 
+    // Get window dimensions
+    int width, height;
+    glfwGetWindowSize(window, &width, &height);
+    Log(LogLevel::info, "Window size: " + std::to_string(width) + "x" + std::to_string(height));
+
+    // Make sure window is visible
+    glfwShowWindow(window);
+    glfwPollEvents(); // Process any pending events
+
     bgfx::PlatformData pd{};
+    pd.ndt = nullptr;
+    pd.nwh = nullptr;
+    pd.context = nullptr;
+    pd.backBuffer = nullptr;
+    pd.backBufferDS = nullptr;
+    
 #ifdef _WIN32
     pd.nwh = glfwGetWin32Window(window);
 #elif __APPLE__
     pd.nwh = glfwGetCocoaWindow(window); // Cocoa NSWindow*
+    Log(LogLevel::info, "Got Cocoa window handle: " + std::to_string(reinterpret_cast<uintptr_t>(pd.nwh)));
+    
+    // Set up Metal layer to avoid deadlock issues
+    void* metalLayer = setupMetalLayer(pd.nwh);
+    Log(LogLevel::info, "Set up Metal layer: " + std::to_string(reinterpret_cast<uintptr_t>(metalLayer)));
 #elif __linux__
     pd.nwh = (void*)(uintptr_t)glfwGetX11Window(window); // X11
 #endif
-    pd.ndt = nullptr;
+    
+    if (!pd.nwh) {
+        Log(LogLevel::error, "Failed to get native window handle.");
+        return false;
+    }
+    
+    Log(LogLevel::info, "Setting BGFX platform data...");
     bgfx::setPlatformData(pd);
 
+    // Try calling renderFrame before init (some platforms require this)
+    bgfx::renderFrame();
+    
     bgfx::Init init{};
-    init.resolution.width  = 800;  // Temporary test resolution
-    init.resolution.height = 600;
-    init.resolution.reset  = BGFX_RESET_NONE;
+    init.platformData = pd;  // Set platform data directly in init struct
+    init.resolution.width  = static_cast<uint32_t>(width);
+    init.resolution.height = static_cast<uint32_t>(height);
+    init.resolution.reset  = BGFX_RESET_VSYNC;
 
     bool initialized = false;
 
 #ifdef _WIN32
+    // Windows: Prefer DX12 again (as requested), then DX11 -> Vulkan -> OpenGL
     const bgfx::RendererType::Enum renderers[] = {
         bgfx::RendererType::Direct3D12,
         bgfx::RendererType::Direct3D11,
@@ -428,11 +602,13 @@ bool InitBGFX() {
         bgfx::RendererType::OpenGL
     };
 #elif __APPLE__
+    // macOS: Metal -> OpenGL
     const bgfx::RendererType::Enum renderers[] = {
-        bgfx::RendererType::Metal,   // Primary on macOS M-series
-        bgfx::RendererType::OpenGL   // fallback, may fail on Apple Silicon
+        bgfx::RendererType::Metal,
+        bgfx::RendererType::OpenGL
     };
 #else
+    // Linux: Vulkan -> OpenGL
     const bgfx::RendererType::Enum renderers[] = {
         bgfx::RendererType::Vulkan,
         bgfx::RendererType::OpenGL
@@ -441,9 +617,10 @@ bool InitBGFX() {
 
     for (auto r : renderers) {
         init.type = r;
-
+        Log(LogLevel::info, "Attempting to initialize BGFX with renderer: " + std::string(bgfx::getRendererName(r)));
+        
         if (bgfx::init(init)) {
-            Log(LogLevel::info, "BGFX initialized with renderer: " + std::string(bgfx::getRendererName(r)));
+            Log(LogLevel::info, "BGFX initialized successfully with renderer: " + std::string(bgfx::getRendererName(r)));
             initialized = true;
             break;
         } else {
@@ -452,23 +629,254 @@ bool InitBGFX() {
     }
 
     if (!initialized) {
-        Log(LogLevel::error, "BGFX failed to initialize any renderer.");
+        Log(LogLevel::error, "BGFX failed to initialize with any renderer.");
         return false;
     }
+    
+    Log(LogLevel::info, "BGFX initialized with renderer: " + std::string(bgfx::getRendererName(bgfx::getRendererType())));
 
     // Set debug flags (optional)
     bgfx::setDebug(BGFX_DEBUG_TEXT);
+    
+    // Set up view 0 with proper clear settings
     bgfx::setViewClear(0,
         BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH | BGFX_CLEAR_STENCIL,
         0x303030ff, 1.0f, 0);
+    
+    // Set view rect for view 0
+    bgfx::setViewRect(0, 0, 0, static_cast<uint16_t>(width), static_cast<uint16_t>(height));
 
-    // Simple test frame
-    bgfx::touch(0);
-    bgfx::frame();
+    // Initialize BGFX resources
+    InitBGFXResources();
 
-    Log(LogLevel::info, "BGFX test frame rendered successfully. Shutting down...");
-
-    bgfx::shutdown();
+    Log(LogLevel::info, "BGFX initialization complete.");
     return true;
+}
+
+void InitBGFXResources() {
+    // Set up simple vertex layout (position only)
+    bgfxVertexLayout
+        .begin()
+        .add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
+        .end();
+
+    // Create vertex buffer
+    bgfxVertexBuffer = bgfx::createVertexBuffer(
+        bgfx::makeRef(s_triangleVertices, sizeof(s_triangleVertices)),
+        bgfxVertexLayout
+    );
+
+    // Create index buffer
+    bgfxIndexBuffer = bgfx::createIndexBuffer(
+        bgfx::makeRef(s_triangleIndices, sizeof(s_triangleIndices))
+    );
+
+    // Try to load compiled shaders first
+    Log(LogLevel::info, "Attempting to load compiled shaders (.bin)...");
+    
+    // Try to load vertex shader from compiled file
+    FILE* vsFile = fopen("Assets/shaders/test.vs.bin", "rb");
+    if (vsFile) {
+        fseek(vsFile, 0, SEEK_END);
+        long vsSize = ftell(vsFile);
+        fseek(vsFile, 0, SEEK_SET);
+        
+        char* vsSource = new char[vsSize];
+        fread(vsSource, 1, vsSize, vsFile);
+        fclose(vsFile);
+        Log(LogLevel::info, "Loaded vertex shader from file, size: " + std::to_string(vsSize));
+        const bgfx::Memory* vsMem = bgfx::alloc((uint32_t)vsSize);
+        memcpy(vsMem->data, vsSource, vsSize);
+        s_vertexShader = bgfx::createShader(vsMem);
+        
+        delete[] vsSource;
+    } else {
+        Log(LogLevel::warning, "Could not open compiled vertex shader file, will fallback.");
+        
+        // Fallback to embedded shader
+        static const char* vertexShaderSource = R"(
+            attribute vec3 a_position;
+            void main() {
+                gl_Position = vec4(a_position, 1.0);
+            }
+        )";
+        
+        const bgfx::Memory* vsMem = bgfx::alloc(strlen(vertexShaderSource) + 1);
+        strcpy((char*)vsMem->data, vertexShaderSource);
+        s_vertexShader = bgfx::createShader(vsMem);
+    }
+    
+    // Try to load fragment shader from compiled file
+    FILE* fsFile = fopen("Assets/shaders/test.fs.bin", "rb");
+    if (fsFile) {
+        fseek(fsFile, 0, SEEK_END);
+        long fsSize = ftell(fsFile);
+        fseek(fsFile, 0, SEEK_SET);
+        
+        char* fsSource = new char[fsSize];
+        fread(fsSource, 1, fsSize, fsFile);
+        fclose(fsFile);
+        Log(LogLevel::info, "Loaded fragment shader from file, size: " + std::to_string(fsSize));
+        const bgfx::Memory* fsMem = bgfx::alloc((uint32_t)fsSize);
+        memcpy(fsMem->data, fsSource, fsSize);
+        s_fragmentShader = bgfx::createShader(fsMem);
+        
+        delete[] fsSource;
+    } else {
+        Log(LogLevel::warning, "Could not open compiled fragment shader file, will fallback.");
+        
+        // Fallback to embedded shader
+        static const char* fragmentShaderSource = R"(
+            void main() {
+                gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
+            }
+        )";
+        
+        const bgfx::Memory* fsMem = bgfx::alloc(strlen(fragmentShaderSource) + 1);
+        strcpy((char*)fsMem->data, fragmentShaderSource);
+        s_fragmentShader = bgfx::createShader(fsMem);
+    }
+    
+    // Try to create shader program
+    Log(LogLevel::info, "Creating shader program...");
+    Log(LogLevel::info, "Vertex shader handle valid: " + std::string(bgfx::isValid(s_vertexShader) ? "Yes" : "No"));
+    Log(LogLevel::info, "Fragment shader handle valid: " + std::string(bgfx::isValid(s_fragmentShader) ? "Yes" : "No"));
+    
+    if (bgfx::isValid(s_vertexShader) && bgfx::isValid(s_fragmentShader)) {
+        bgfxSimpleProgram = bgfx::createProgram(s_vertexShader, s_fragmentShader, true);
+        Log(LogLevel::info, "BGFX shader program created successfully.");
+        Log(LogLevel::info, "Program valid: " + std::string(bgfx::isValid(bgfxSimpleProgram) ? "Yes" : "No"));
+    } else {
+        Log(LogLevel::error, "Failed to create BGFX shader program.");
+    }
+
+    Log(LogLevel::info, "BGFX resources initialized.");
+}
+
+bgfx::ShaderHandle CreateShaderFromBinary(const uint8_t* data, uint32_t size, const char* name) {
+    // Create a memory reference for the pre-compiled shader binary
+    const bgfx::Memory* mem = bgfx::makeRef(data, size);
+    
+    // Create the shader handle from binary data
+    bgfx::ShaderHandle handle = bgfx::createShader(mem);
+    
+    if (bgfx::isValid(handle)) {
+        Log(LogLevel::info, "Created BGFX shader from binary: " + std::string(name));
+    } else {
+        Log(LogLevel::error, "Failed to create BGFX shader from binary: " + std::string(name));
+    }
+    
+    return handle;
+}
+
+void RenderBGFXCube() {
+    // Clear debug text area first to prevent duplicates on resize
+    bgfx::dbgTextClear();
+    
+    // Basic status info
+    bgfx::dbgTextPrintf(0, 1, 0x0f, "BGFX Status:");
+    bgfx::dbgTextPrintf(0, 2, 0x0f, "VB: %s, IB: %s, Shader: %s", 
+        bgfx::isValid(bgfxVertexBuffer) ? "OK" : "NO",
+        bgfx::isValid(bgfxIndexBuffer) ? "OK" : "NO",
+        bgfx::isValid(bgfxSimpleProgram) ? "OK" : "NO");
+    bgfx::dbgTextPrintf(0, 3, 0x0f, "Renderer: %s", bgfx::getRendererName(bgfx::getRendererType()));
+    
+    // Calculate and display FPS
+    static int frameCount = 0;
+    static float lastTime = 0.0f;
+    frameCount++;
+    
+    float currentTime = static_cast<float>(glfwGetTime());
+    if (currentTime - lastTime >= 1.0f) {
+        float fps = static_cast<float>(frameCount) / (currentTime - lastTime);
+        bgfx::dbgTextPrintf(0, 4, 0x0f, "FPS: %.1f", fps);
+        frameCount = 0;
+        lastTime = currentTime;
+    }
+    
+    // Render a simple triangle if we have valid shaders
+    if (bgfx::isValid(bgfxSimpleProgram)) {
+        bgfx::dbgTextPrintf(0, 6, 0x0a, "RENDERING TRIANGLE:");
+        bgfx::dbgTextPrintf(0, 7, 0x0a, "Shader program is valid!");
+        bgfx::dbgTextPrintf(0, 8, 0x0a, "Drawing red triangle at origin");
+        
+        // Create a dummy vertex buffer with 3 vertices for the draw call
+        static bool bufferCreated = false;
+        static bgfx::VertexBufferHandle dummyVB = BGFX_INVALID_HANDLE;
+        
+        if (!bufferCreated) {
+            // Create a simple vertex buffer with 3 dummy vertices
+            float dummyVertices[] = { 0.0f, 0.0f, 0.0f,  1.0f, 0.0f, 0.0f,  2.0f, 0.0f, 0.0f };
+            bgfx::VertexLayout dummyLayout;
+            dummyLayout.begin()
+                .add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
+                .end();
+            dummyVB = bgfx::createVertexBuffer(bgfx::makeRef(dummyVertices, sizeof(dummyVertices)), dummyLayout);
+            bufferCreated = true;
+        }
+        
+        // Set the dummy vertex buffer (shader will ignore it and use gl_VertexID)
+        bgfx::setVertexBuffer(0, dummyVB);
+        
+        // Set render state (no culling to ensure triangle is visible)
+        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z);
+        
+        // Submit the draw call
+        bgfx::submit(0, bgfxSimpleProgram);
+    } else {
+        bgfx::dbgTextPrintf(0, 6, 0x0c, "SHADER ISSUE:");
+        bgfx::dbgTextPrintf(0, 7, 0x0c, "Shader program is not valid");
+        bgfx::dbgTextPrintf(0, 8, 0x0c, "Cannot render 3D geometry");
+    }
+}
+
+// BGFX-specific rendering functions
+void ClearBGFX(float r, float g, float b, float a) {
+    // Convert float values (0.0-1.0) to RGBA8 format
+    uint32_t rgba = 0;
+    rgba |= (uint32_t)(r * 255.0f) << 24;  // R
+    rgba |= (uint32_t)(g * 255.0f) << 16;  // G
+    rgba |= (uint32_t)(b * 255.0f) << 8;   // B
+    rgba |= (uint32_t)(a * 255.0f);        // A
+    
+    // Set the clear color for view 0
+    bgfx::setViewClear(0, 
+        BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH | BGFX_CLEAR_STENCIL,
+        rgba, 1.0f, 0);
+    
+    // Touch the view to ensure it gets cleared
+    bgfx::touch(0);
+}
+
+void PresentBGFX() {
+    // Submit the frame - this is crucial for proper frame timing
+    bgfx::frame();
+    
+    // Also ensure we're processing events
+    GLFWwindow* window = static_cast<GLFWwindow*>(GetWindow());
+    if (window) {
+        glfwPollEvents();
+    }
+}
+
+void UpdateBGFXViewport() {
+    GLFWwindow* window = glfwGetCurrentContext();
+    if (window) {
+        int width, height;
+        glfwGetWindowSize(window, &width, &height);
+        bgfx::reset(static_cast<uint32_t>(width), static_cast<uint32_t>(height), BGFX_RESET_VSYNC);
+        bgfx::setViewRect(0, 0, 0, static_cast<uint16_t>(width), static_cast<uint16_t>(height));
+    }
+}
+
+void WindowResizeCallback(GLFWwindow* window, int width, int height) {
+    if (currentRenderer == RendererType::BGFX) {
+        bgfx::reset(static_cast<uint32_t>(width), static_cast<uint32_t>(height), BGFX_RESET_VSYNC);
+        bgfx::setViewRect(0, 0, 0, static_cast<uint16_t>(width), static_cast<uint16_t>(height));
+    }
+}
+
+RendererType GetCurrentRenderer() {
+    return currentRenderer;
 }
 }

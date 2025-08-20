@@ -1,7 +1,8 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
-#include <glad/glad.h>
+// GLAD include removed - using bgfx for OpenGL context management
+#include <bgfx/bgfx.h>
 #include "Engine.h"
 #include <utility>
 #include "../Input/Input.h"
@@ -37,7 +38,7 @@ namespace C6GE {
         }
 
         // Initialize rendering system
-        if (!InitRender(width, height, RendererType::OpenGL)) {
+        if (!InitRender(width, height, RendererType::BGFX)) {
             Log(LogLevel::critical, "Failed to initialize rendering.");
             return false;
         }
@@ -162,7 +163,7 @@ namespace C6GE {
         float floorYs[3] = {0.0f, 5.0f, 10.0f};
         for (int i = 0; i < 3; ++i) {
             CreateObject(floors[i]);
-            auto floorMesh = CreateQuad();
+            auto floorMesh = MeshComponent::CreatePlane();
             AddComponent<MeshComponent>(floors[i], std::move(floorMesh));
             AddComponent<ShaderComponent>(floors[i], fogShader);
             AddComponent<TextureComponent>(floors[i], diffuseTexture);
@@ -175,7 +176,7 @@ namespace C6GE {
             // Add shapes on floor
             std::string sqName = "quad" + std::to_string(i+1);
             CreateObject(sqName);
-            auto sqMesh = CreateQuad();
+            auto sqMesh = MeshComponent::CreatePlane();
             AddComponent<MeshComponent>(sqName, std::move(sqMesh));
             AddComponent<ShaderComponent>(sqName, fogShader);
             AddComponent<TextureComponent>(sqName, quadTexture);
@@ -184,7 +185,7 @@ namespace C6GE {
 
             std::string grassName = "quadGrass" + std::to_string(i+1);
             CreateObject(grassName);
-            auto grassMesh = CreateQuad();
+            auto grassMesh = MeshComponent::CreatePlane();
             AddComponent<MeshComponent>(grassName, std::move(grassMesh));
             AddComponent<ShaderComponent>(grassName, fogShader);
             AddComponent<TextureComponent>(grassName, grassTexture);
@@ -193,7 +194,7 @@ namespace C6GE {
 
             std::string tableName = "table" + std::to_string(i+1);
             CreateObject(tableName);
-            auto tableMesh = LoadModel("assets/round_wooden_table_01_4k.fbx");
+            auto tableMesh = MeshComponent::CreateCube(); // Temporary replacement for model loading
             AddComponent<MeshComponent>(tableName, std::move(tableMesh));
             AddComponent<ShaderComponent>(tableName, fogShader); // Corrected to fogShader
             AddComponent<TextureComponent>(tableName, cubeDiffuseTexture);
@@ -204,7 +205,7 @@ namespace C6GE {
 
             std::string tpName = "temple" + std::to_string(i+1);
             CreateObject(tpName);
-            auto tpMesh = CreateTemple();
+            auto tpMesh = MeshComponent::CreateCube(); // Temporary replacement
             AddComponent<MeshComponent>(tpName, std::move(tpMesh));
             AddComponent<ShaderComponent>(tpName, fogShader);
             AddComponent<TextureComponent>(tpName, diffuseTexture);
@@ -215,7 +216,7 @@ namespace C6GE {
         // Add lights for each floor (point for floor1, directional for floor2, spot for floor3)
         // Assuming enum LightType { Point = 0, Directional = 1, Spot = 2 }
         CreateObject("pointLight");
-        auto plMesh = CreateCube();
+        auto plMesh = MeshComponent::CreateCube();
         AddComponent<MeshComponent>("pointLight", std::move(plMesh));
         AddComponent<ShaderComponent>("pointLight", lightShader);
         AddComponent<TransformComponent>("pointLight", glm::vec3(0.0f, 2.0f, 0.0f));
@@ -228,7 +229,7 @@ namespace C6GE {
         plComp.cutoff = 0.0f;
 
         CreateObject("dirLight");
-        auto dlMesh = CreateCube();
+        auto dlMesh = MeshComponent::CreateCube();
         AddComponent<MeshComponent>("dirLight", std::move(dlMesh));
         AddComponent<ShaderComponent>("dirLight", lightShader);
         AddComponent<TransformComponent>("dirLight", glm::vec3(0.0f, 7.0f, 0.0f));
@@ -241,7 +242,7 @@ namespace C6GE {
         dlComp.cutoff = 0.0f;
 
         CreateObject("spotLight");
-        auto slMesh = CreateCube();
+        auto slMesh = MeshComponent::CreateCube();
         AddComponent<MeshComponent>("spotLight", std::move(slMesh));
         AddComponent<ShaderComponent>("spotLight", lightShader);
         AddComponent<TransformComponent>("spotLight", glm::vec3(0.0f, 12.0f, 0.0f));
@@ -255,7 +256,7 @@ namespace C6GE {
 
         // Create cube with cubemap in front of table1
         CreateObject("envCube");
-        auto envMesh = CreateCube();
+        auto envMesh = MeshComponent::CreateCube();
         AddComponent<MeshComponent>("envCube", std::move(envMesh));
         AddComponent<ShaderComponent>("envCube", fogShader);
         AddComponent<CubemapComponent>("envCube", cubemapTexture);
@@ -264,7 +265,7 @@ namespace C6GE {
         GetComponent<ScaleComponent>("envCube")->scale = glm::vec3(0.5f);
 
         CreateObject("skybox");
-        auto skyboxMesh = CreateSphere();
+        auto skyboxMesh = MeshComponent::CreateSphere();
         AddComponent<MeshComponent>("skybox", std::move(skyboxMesh));
         AddComponent<ShaderComponent>("skybox", skyboxShader);
         AddComponent<SkyboxComponent>("skybox", cubemapTexture);
@@ -285,8 +286,12 @@ namespace C6GE {
         while (IsWindowOpen()) {
             UpdateWindow();
             input::Update();
-            BindMultisampleFramebuffer();
-            Clear(0.2f, 0.3f, 0.3f, 1.0f); // Clear the screen with teal color
+            
+            // Update BGFX viewport if needed
+            UpdateBGFXViewport();
+            
+            // Clear the screen with teal color (works for both OpenGL and BGFX)
+            Clear(0.2f, 0.3f, 0.3f, 1.0f);
 
             // Calculate delta time once per frame
             double dt = DeltaTime::deltaTime();
@@ -425,11 +430,8 @@ namespace C6GE {
             static bool lastL = false; // Corrected to false
             if (input::key.l && !lastL) {
                 debugLines = !debugLines;
-                std::cout << "Debug lines toggled to: " << debugLines << std::endl;
             }
             lastL = input::key.l;
-            std::cout << "L key state: " << input::key.l << ", debugLines: " << debugLines << std::endl;
-            std::cout << "W key state: " << input::key.w << std::endl;
 
             // Debug lines pass
             if (debugLines) {
@@ -458,12 +460,15 @@ namespace C6GE {
                 glEnable(GL_DEPTH_TEST);
             }
 
-            UnbindMultisampleFramebuffer();
+            // Present the frame (works for both OpenGL and BGFX)
             Present();
         }
     }
 
     void Shutdown() {
+        // Clean up BGFX
+        bgfx::shutdown();
+        
         // Clean up and close the window
         DestroyWindow();
     }

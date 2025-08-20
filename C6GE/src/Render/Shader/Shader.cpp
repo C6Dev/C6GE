@@ -4,7 +4,8 @@
 #include <windows.h>
 #endif
 
-#include <glad/glad.h>
+// GLAD include removed - using bgfx for OpenGL context management
+#include "../../Components/MeshComponent.h" // Include for OpenGL definitions
 
 namespace C6GE {
 
