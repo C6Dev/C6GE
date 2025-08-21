@@ -1,13 +1,25 @@
-#include "bgfx_shader.sh"
+$input a_position
+$output v_color
+
+#include "../bgfx_shader.sh"
 
 void main()
 {
-    // Triangle vertices in world space (positioned in front of camera)
-    vec3 positions[3];
-    positions[0] = vec3( 0.0,  0.5, -2.0);  // top
-    positions[1] = vec3(-0.5, -0.5, -2.0);  // bottom left
-    positions[2] = vec3( 0.5, -0.5, -2.0);  // bottom right
+    // Use vertex ID to determine position and color
+    int vertexId = gl_VertexID % 3;
     
-    // Transform by view-projection matrix
-    gl_Position = mul(u_viewProj, vec4(positions[gl_VertexID], 1.0));
+    vec3 pos;
+    if (vertexId == 0) {
+        pos = vec3( 0.0,  0.5, 0.0);  // Top vertex
+        v_color = vec4(1.0, 0.0, 0.0, 1.0);  // Red
+    } else if (vertexId == 1) {
+        pos = vec3(-0.5, -0.5, 0.0);  // Bottom left
+        v_color = vec4(0.0, 1.0, 0.0, 1.0);  // Green
+    } else {
+        pos = vec3( 0.5, -0.5, 0.0);  // Bottom right
+        v_color = vec4(0.0, 0.0, 1.0, 1.0);  // Blue
+    }
+    
+    // Apply model-view-projection matrix
+    gl_Position = mul(u_modelViewProj, vec4(pos, 1.0));
 }

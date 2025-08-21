@@ -161,7 +161,6 @@ struct MeshComponent {
     static MeshComponent CreateSphere(int segments = 32);
     static MeshComponent CreateMesh(const GLfloat* vertices, size_t vertexSize, const GLuint* indices, size_t indexCount, bool WithColor = true, bool WithTexture = true);
 };
-
 // Utility functions
 MeshComponent CreateCubeMesh();
 MeshComponent CreatePlaneMesh();
@@ -169,3 +168,4 @@ MeshComponent CreateSphereMesh(int segments = 32);
 MeshComponent CreateQuad(); // Add this function
 MeshComponent CreateTemple(); // Add this function
 GLuint LoadTextureFromFile(const std::string& filename, const std::string& directory);
+

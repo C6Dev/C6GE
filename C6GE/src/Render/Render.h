@@ -35,6 +35,9 @@ namespace C6GE {
 	void PresentBGFX();
 	void UpdateBGFXViewport();
 	void WindowResizeCallback(GLFWwindow* window, int width, int height);
+	void CleanupBGFXResources();
+	void RenderBGFXCube();
+	void CreateCube(const glm::vec3& position, const glm::vec4& color = glm::vec4(1.0f));
 	
 #ifdef __APPLE__
 	bool InitBGFX_macOS(void* windowPtr);

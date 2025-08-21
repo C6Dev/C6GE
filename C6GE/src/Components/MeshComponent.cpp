@@ -266,9 +266,8 @@ MeshComponent CreateQuad() {
 
 MeshComponent CreateTemple() {
     return CreateCubeMesh(); // Temporary replacement
-}
-
-GLuint LoadTextureFromFile(const std::string& filename, const std::string& directory) {
+}GLuint LoadTextureFromFile(const std::string& filename, const std::string& directory) {
     // Placeholder implementation
     return 0;
 }
+

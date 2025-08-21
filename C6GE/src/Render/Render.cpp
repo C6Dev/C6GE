@@ -47,6 +47,7 @@
 #include <cstring>
 #include <cstdio>
 #include "../Components/InstanceComponent.h"
+#include "../Components/CubeComponent.h"
 #include "../Logging/Log.h"
 #include "../Window/Window.h"
 
@@ -77,10 +78,65 @@ bgfx::VertexBufferHandle bgfxVertexBuffer = BGFX_INVALID_HANDLE;
 bgfx::IndexBufferHandle bgfxIndexBuffer = BGFX_INVALID_HANDLE;
 bgfx::ProgramHandle bgfxSimpleProgram = BGFX_INVALID_HANDLE;
 
+// Cube geometry data (from BGFX 01-cubes example)
+struct PosColorVertex {
+    float x, y, z;
+    uint32_t abgr;
+    
+    static void init() {
+        ms_layout
+            .begin()
+            .add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
+            .add(bgfx::Attrib::Color0,   4, bgfx::AttribType::Uint8, true)
+            .end();
+    }
+    
+    static bgfx::VertexLayout ms_layout;
+};
+
+bgfx::VertexLayout PosColorVertex::ms_layout;
+
+static PosColorVertex s_cubeVertices[] = {
+    {-1.0f,  1.0f,  1.0f, 0xff000000 },
+    { 1.0f,  1.0f,  1.0f, 0xff0000ff },
+    {-1.0f, -1.0f,  1.0f, 0xff00ff00 },
+    { 1.0f, -1.0f,  1.0f, 0xff00ffff },
+    {-1.0f,  1.0f, -1.0f, 0xffff0000 },
+    { 1.0f,  1.0f, -1.0f, 0xffff00ff },
+    {-1.0f, -1.0f, -1.0f, 0xffffff00 },
+    { 1.0f, -1.0f, -1.0f, 0xffffffff },
+};
+
+static const uint16_t s_cubeTriList[] = {
+    0, 1, 2, // 0
+    1, 3, 2,
+    4, 6, 5, // 2
+    5, 6, 7,
+    0, 2, 4, // 4
+    4, 2, 6,
+    1, 5, 3, // 6
+    5, 7, 3,
+    0, 4, 1, // 8
+    4, 5, 1,
+    2, 3, 6, // 10
+    6, 3, 7,
+};
+
+// Cube rendering resources
+bgfx::VertexBufferHandle bgfxCubeVertexBuffer = BGFX_INVALID_HANDLE;
+bgfx::IndexBufferHandle bgfxCubeIndexBuffer = BGFX_INVALID_HANDLE;
+bgfx::ProgramHandle bgfxCubeProgram = BGFX_INVALID_HANDLE;
+
+// Cube objects for rendering
+std::vector<C6GE::CubeComponent> g_cubes;
+
 // Forward declarations
 namespace C6GE {
     void InitBGFXResources();
     void RenderBGFXCube();
+    void InitCubeResources();
+    void RenderCubes();
+    void CreateCube(const glm::vec3& position, const glm::vec4& color);
     bgfx::ShaderHandle CreateShaderFromBinary(const uint8_t* data, uint32_t size, const char* name);
 }
 
@@ -151,7 +207,7 @@ extern "C" void* setupMetalLayer(void* nwh);
 #endif
 
 GLuint multisampleFBO, resolveFBO, colorTextureMS, colorTextureResolve, depthStencilRBOMS, quadVAO = 0, quadVBO = 0;
-extern GLuint postShader;
+// postShader removed - no longer needed for BGFX-only rendering
 
 float quadVertices[] = {
     -1.0f,  1.0f,  0.0f, 1.0f,
@@ -297,19 +353,7 @@ bool InitRender(unsigned int width, unsigned int height, RendererType render) {
 			glBindFramebuffer(GL_FRAMEBUFFER, 0);
 			Clear(0.0f, 0.0f, 0.0f, 1.0f);
 
-			glDisable(GL_DEPTH_TEST);
-
-			glUseProgram(postShader);
-
-			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, colorTextureResolve);
-			glUniform1i(glGetUniformLocation(postShader, "screenTexture"), 0);
-
-			glBindVertexArray(quadVAO);
-			glDrawArrays(GL_TRIANGLES, 0, 6);
-			glBindVertexArray(0);
-
-			glEnable(GL_DEPTH_TEST);
+			// Post-processing removed - no longer needed for BGFX-only rendering
 
 			glfwSwapBuffers(glfwGetCurrentContext());
 		}
@@ -646,6 +690,26 @@ bool InitBGFX() {
     // Set view rect for view 0
     bgfx::setViewRect(0, 0, 0, static_cast<uint16_t>(width), static_cast<uint16_t>(height));
 
+    // Set up view and projection matrices using camera component
+    float view[16];
+    float proj[16];
+    
+    // During initialization, use default matrices (camera not created yet)
+    // Create a view matrix that positions camera back a bit to see the cubes
+    glm::mat4 defaultView = glm::lookAt(
+        glm::vec3(0.0f, 0.0f, 5.0f),  // Camera position (back from origin)
+        glm::vec3(0.0f, 0.0f, -5.0f), // Look at point (where cubes are)
+        glm::vec3(0.0f, 1.0f, 0.0f)   // Up vector
+    );
+    memcpy(view, glm::value_ptr(defaultView), sizeof(float) * 16);
+    
+    // Create projection matrix
+    glm::mat4 projMatrix = GetProjectionMatrix();
+    memcpy(proj, glm::value_ptr(projMatrix), sizeof(float) * 16);
+    
+    // Set the view and projection matrices for view 0
+    bgfx::setViewTransform(0, view, proj);
+
     // Initialize BGFX resources
     InitBGFXResources();
 
@@ -691,19 +755,7 @@ void InitBGFXResources() {
         
         delete[] vsSource;
     } else {
-        Log(LogLevel::warning, "Could not open compiled vertex shader file, will fallback.");
-        
-        // Fallback to embedded shader
-        static const char* vertexShaderSource = R"(
-            attribute vec3 a_position;
-            void main() {
-                gl_Position = vec4(a_position, 1.0);
-            }
-        )";
-        
-        const bgfx::Memory* vsMem = bgfx::alloc(strlen(vertexShaderSource) + 1);
-        strcpy((char*)vsMem->data, vertexShaderSource);
-        s_vertexShader = bgfx::createShader(vsMem);
+        Log(LogLevel::error, "Could not open compiled vertex shader file: Assets/shaders/test.vs.bin");
     }
     
     // Try to load fragment shader from compiled file
@@ -723,18 +775,7 @@ void InitBGFXResources() {
         
         delete[] fsSource;
     } else {
-        Log(LogLevel::warning, "Could not open compiled fragment shader file, will fallback.");
-        
-        // Fallback to embedded shader
-        static const char* fragmentShaderSource = R"(
-            void main() {
-                gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
-            }
-        )";
-        
-        const bgfx::Memory* fsMem = bgfx::alloc(strlen(fragmentShaderSource) + 1);
-        strcpy((char*)fsMem->data, fragmentShaderSource);
-        s_fragmentShader = bgfx::createShader(fsMem);
+        Log(LogLevel::error, "Could not open compiled fragment shader file: Assets/shaders/test.fs.bin");
     }
     
     // Try to create shader program
@@ -751,6 +792,9 @@ void InitBGFXResources() {
     }
 
     Log(LogLevel::info, "BGFX resources initialized.");
+    
+    // Initialize cube resources
+    InitCubeResources();
 }
 
 bgfx::ShaderHandle CreateShaderFromBinary(const uint8_t* data, uint32_t size, const char* name) {
@@ -769,17 +813,168 @@ bgfx::ShaderHandle CreateShaderFromBinary(const uint8_t* data, uint32_t size, co
     return handle;
 }
 
+void InitCubeResources() {
+    // Initialize vertex layout for cubes
+    PosColorVertex::init();
+    
+    // Create cube vertex buffer
+    bgfxCubeVertexBuffer = bgfx::createVertexBuffer(
+        bgfx::makeRef(s_cubeVertices, sizeof(s_cubeVertices)),
+        PosColorVertex::ms_layout
+    );
+    
+    // Create cube index buffer
+    bgfxCubeIndexBuffer = bgfx::createIndexBuffer(
+        bgfx::makeRef(s_cubeTriList, sizeof(s_cubeTriList))
+    );
+    
+    // Load cube shaders
+    Log(LogLevel::info, "Loading cube shaders...");
+    
+    // Try to load vertex shader from compiled file
+    FILE* vsFile = fopen("Assets/shaders/cube_vs.bin", "rb");
+    if (vsFile) {
+        fseek(vsFile, 0, SEEK_END);
+        long vsSize = ftell(vsFile);
+        fseek(vsFile, 0, SEEK_SET);
+        
+        char* vsSource = new char[vsSize];
+        fread(vsSource, 1, vsSize, vsFile);
+        fclose(vsFile);
+        Log(LogLevel::info, "Loaded cube vertex shader from file, size: " + std::to_string(vsSize));
+        const bgfx::Memory* vsMem = bgfx::alloc((uint32_t)vsSize);
+        memcpy(vsMem->data, vsSource, vsSize);
+        bgfx::ShaderHandle cubeVertexShader = bgfx::createShader(vsMem);
+        
+        delete[] vsSource;
+        
+        // Try to load fragment shader from compiled file
+        FILE* fsFile = fopen("Assets/shaders/cube_fs.bin", "rb");
+        if (fsFile) {
+            fseek(fsFile, 0, SEEK_END);
+            long fsSize = ftell(fsFile);
+            fseek(fsFile, 0, SEEK_SET);
+            
+            char* fsSource = new char[fsSize];
+            fread(fsSource, 1, fsSize, fsFile);
+            fclose(fsFile);
+            Log(LogLevel::info, "Loaded cube fragment shader from file, size: " + std::to_string(fsSize));
+            const bgfx::Memory* fsMem = bgfx::alloc((uint32_t)fsSize);
+            memcpy(fsMem->data, fsSource, fsSize);
+            bgfx::ShaderHandle cubeFragmentShader = bgfx::createShader(fsMem);
+            
+            delete[] fsSource;
+            
+            // Create cube shader program
+            if (bgfx::isValid(cubeVertexShader) && bgfx::isValid(cubeFragmentShader)) {
+                bgfxCubeProgram = bgfx::createProgram(cubeVertexShader, cubeFragmentShader, true);
+                Log(LogLevel::info, "Cube shader program created successfully.");
+            } else {
+                Log(LogLevel::error, "Failed to create cube shader program.");
+            }
+        } else {
+            Log(LogLevel::error, "Could not open compiled cube fragment shader file: Assets/shaders/cube_fs.bin");
+        }
+    } else {
+        Log(LogLevel::error, "Could not open compiled cube vertex shader file: Assets/shaders/cube_vs.bin");
+    }
+    
+    // Create some default cubes with better spacing
+    CreateCube(glm::vec3(0.0f, 0.0f, -5.0f), glm::vec4(1.0f, 0.0f, 0.0f, 1.0f));
+    CreateCube(glm::vec3(4.0f, 0.0f, -5.0f), glm::vec4(0.0f, 1.0f, 0.0f, 1.0f));
+    CreateCube(glm::vec3(-4.0f, 0.0f, -5.0f), glm::vec4(0.0f, 0.0f, 1.0f, 1.0f));
+    
+    Log(LogLevel::info, "Cube resources initialized.");
+}
+
+void CreateCube(const glm::vec3& position, const glm::vec4& color) {
+    C6GE::CubeComponent cube;
+    cube.position = position;
+    cube.color = color;
+    cube.rotationSpeed = 1.0f;
+    g_cubes.push_back(cube);
+    Log(LogLevel::info, "Created cube at position: " + std::to_string(position.x) + ", " + 
+        std::to_string(position.y) + ", " + std::to_string(position.z));
+}
+
+void RenderCubes() {
+    if (!bgfx::isValid(bgfxCubeProgram)) {
+        bgfx::dbgTextPrintf(0, 8, 0x0c, "Cube shader not available!");
+        return;
+    }
+    
+    // Set render states for cubes - fix face culling for BGFX
+    uint64_t state = 0
+        | BGFX_STATE_WRITE_RGB
+        | BGFX_STATE_WRITE_A
+        | BGFX_STATE_WRITE_Z
+        | BGFX_STATE_DEPTH_TEST_LESS
+        | BGFX_STATE_CULL_CCW  // Changed from CW to CCW for BGFX
+        | BGFX_STATE_MSAA;
+    
+    // Render each cube
+    for (auto& cube : g_cubes) {
+        // Update cube rotation
+        cube.rotation.y += cube.rotationSpeed;
+        
+        // Get transform matrix
+        glm::mat4 modelMatrix = cube.GetTransformMatrix();
+        float mtx[16];
+        memcpy(mtx, glm::value_ptr(modelMatrix), sizeof(float) * 16);
+        
+        // Set transform matrix
+        bgfx::setTransform(mtx);
+        
+        // Set vertex and index buffers for each cube
+        bgfx::setVertexBuffer(0, bgfxCubeVertexBuffer);
+        bgfx::setIndexBuffer(bgfxCubeIndexBuffer);
+        
+        // Set render state
+        bgfx::setState(state);
+        
+        // Submit for rendering
+        bgfx::submit(0, bgfxCubeProgram);
+    }
+}
+
 void RenderBGFXCube() {
     // Clear debug text area first to prevent duplicates on resize
     bgfx::dbgTextClear();
     
+    // Update view matrix based on camera movement
+    auto* camera = GetComponent<CameraComponent>("camera");
+    if (camera) {
+        // Create view matrix from camera component
+        glm::mat4 viewMatrix = GetViewMatrix(*camera);
+        float view[16];
+        memcpy(view, glm::value_ptr(viewMatrix), sizeof(float) * 16);
+        
+        // Create projection matrix
+        glm::mat4 projMatrix = GetProjectionMatrix();
+        float proj[16];
+        memcpy(proj, glm::value_ptr(projMatrix), sizeof(float) * 16);
+        
+        // Update the view and projection matrices for view 0
+        bgfx::setViewTransform(0, view, proj);
+        
+        // Display camera info
+        bgfx::dbgTextPrintf(0, 1, 0x0f, "Camera: %.1f, %.1f, %.1f", 
+            camera->Transform.Position.x, camera->Transform.Position.y, camera->Transform.Position.z);
+        bgfx::dbgTextPrintf(0, 2, 0x0f, "Rotation: %.1f, %.1f, %.1f", 
+            camera->Transform.Rotation.x, camera->Transform.Rotation.y, camera->Transform.Rotation.z);
+    } else {
+        // Camera not available yet, use default view
+        bgfx::dbgTextPrintf(0, 1, 0x0c, "Camera: Not available");
+        bgfx::dbgTextPrintf(0, 2, 0x0c, "Using default view matrix");
+    }
+    
     // Basic status info
-    bgfx::dbgTextPrintf(0, 1, 0x0f, "BGFX Status:");
-    bgfx::dbgTextPrintf(0, 2, 0x0f, "VB: %s, IB: %s, Shader: %s", 
+    bgfx::dbgTextPrintf(0, 4, 0x0f, "BGFX Status:");
+    bgfx::dbgTextPrintf(0, 5, 0x0f, "VB: %s, IB: %s, Shader: %s", 
         bgfx::isValid(bgfxVertexBuffer) ? "OK" : "NO",
         bgfx::isValid(bgfxIndexBuffer) ? "OK" : "NO",
         bgfx::isValid(bgfxSimpleProgram) ? "OK" : "NO");
-    bgfx::dbgTextPrintf(0, 3, 0x0f, "Renderer: %s", bgfx::getRendererName(bgfx::getRendererType()));
+    bgfx::dbgTextPrintf(0, 6, 0x0f, "Renderer: %s", bgfx::getRendererName(bgfx::getRendererType()));
     
     // Calculate and display FPS
     static int frameCount = 0;
@@ -789,45 +984,18 @@ void RenderBGFXCube() {
     float currentTime = static_cast<float>(glfwGetTime());
     if (currentTime - lastTime >= 1.0f) {
         float fps = static_cast<float>(frameCount) / (currentTime - lastTime);
-        bgfx::dbgTextPrintf(0, 4, 0x0f, "FPS: %.1f", fps);
+        bgfx::dbgTextPrintf(0, 7, 0x0f, "FPS: %.1f", fps);
         frameCount = 0;
         lastTime = currentTime;
     }
     
-    // Render a simple triangle if we have valid shaders
-    if (bgfx::isValid(bgfxSimpleProgram)) {
-        bgfx::dbgTextPrintf(0, 6, 0x0a, "RENDERING TRIANGLE:");
-        bgfx::dbgTextPrintf(0, 7, 0x0a, "Shader program is valid!");
-        bgfx::dbgTextPrintf(0, 8, 0x0a, "Drawing red triangle at origin");
-        
-        // Create a dummy vertex buffer with 3 vertices for the draw call
-        static bool bufferCreated = false;
-        static bgfx::VertexBufferHandle dummyVB = BGFX_INVALID_HANDLE;
-        
-        if (!bufferCreated) {
-            // Create a simple vertex buffer with 3 dummy vertices
-            float dummyVertices[] = { 0.0f, 0.0f, 0.0f,  1.0f, 0.0f, 0.0f,  2.0f, 0.0f, 0.0f };
-            bgfx::VertexLayout dummyLayout;
-            dummyLayout.begin()
-                .add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
-                .end();
-            dummyVB = bgfx::createVertexBuffer(bgfx::makeRef(dummyVertices, sizeof(dummyVertices)), dummyLayout);
-            bufferCreated = true;
-        }
-        
-        // Set the dummy vertex buffer (shader will ignore it and use gl_VertexID)
-        bgfx::setVertexBuffer(0, dummyVB);
-        
-        // Set render state (no culling to ensure triangle is visible)
-        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z);
-        
-        // Submit the draw call
-        bgfx::submit(0, bgfxSimpleProgram);
-    } else {
-        bgfx::dbgTextPrintf(0, 6, 0x0c, "SHADER ISSUE:");
-        bgfx::dbgTextPrintf(0, 7, 0x0c, "Shader program is not valid");
-        bgfx::dbgTextPrintf(0, 8, 0x0c, "Cannot render 3D geometry");
-    }
+    // Render cubes
+    RenderCubes();
+    
+    // Display cube info
+    bgfx::dbgTextPrintf(0, 9, 0x0a, "RENDERING CUBES:");
+    bgfx::dbgTextPrintf(0, 10, 0x0a, "Cubes: %d", (int)g_cubes.size());
+    bgfx::dbgTextPrintf(0, 11, 0x0a, "Cube shader: %s", bgfx::isValid(bgfxCubeProgram) ? "OK" : "NO");
 }
 
 // BGFX-specific rendering functions
@@ -878,5 +1046,31 @@ void WindowResizeCallback(GLFWwindow* window, int width, int height) {
 
 RendererType GetCurrentRenderer() {
     return currentRenderer;
+}
+
+void CleanupBGFXResources() {
+    if (currentRenderer == RendererType::BGFX) {
+        // Destroy BGFX resources explicitly
+        if (bgfx::isValid(bgfxVertexBuffer)) {
+            bgfx::destroy(bgfxVertexBuffer);
+            bgfxVertexBuffer = BGFX_INVALID_HANDLE;
+        }
+        if (bgfx::isValid(bgfxIndexBuffer)) {
+            bgfx::destroy(bgfxIndexBuffer);
+            bgfxIndexBuffer = BGFX_INVALID_HANDLE;
+        }
+        if (bgfx::isValid(bgfxSimpleProgram)) {
+            bgfx::destroy(bgfxSimpleProgram);
+            bgfxSimpleProgram = BGFX_INVALID_HANDLE;
+        }
+        if (bgfx::isValid(s_vertexShader)) {
+            bgfx::destroy(s_vertexShader);
+            s_vertexShader = BGFX_INVALID_HANDLE;
+        }
+        if (bgfx::isValid(s_fragmentShader)) {
+            bgfx::destroy(s_fragmentShader);
+            s_fragmentShader = BGFX_INVALID_HANDLE;
+        }
+    }
 }
 }
