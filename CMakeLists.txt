@@ -17,11 +17,15 @@ set(SOURCES
     ${CMAKE_SOURCE_DIR}/C6GE/src/Engine/Engine.cpp
     ${CMAKE_SOURCE_DIR}/C6GE/src/Logging/Log.cpp
     ${CMAKE_SOURCE_DIR}/C6GE/src/Render/Render.cpp
+    ${CMAKE_SOURCE_DIR}/C6GE/src/Render/VertexLayouts.cpp
     ${CMAKE_SOURCE_DIR}/C6GE/src/Window/Window.cpp
     ${CMAKE_SOURCE_DIR}/C6GE/src/ECS/Object/Object.cpp
     ${CMAKE_SOURCE_DIR}/C6GE/src/Render/Shader/Shader.cpp
     ${CMAKE_SOURCE_DIR}/C6GE/src/Components/MeshComponent.cpp
+    ${CMAKE_SOURCE_DIR}/C6GE/src/Components/ModelComponent.cpp
+    ${CMAKE_SOURCE_DIR}/C6GE/src/Components/TransformComponent.cpp
     ${CMAKE_SOURCE_DIR}/C6GE/src/Components/CameraComponent.cpp
+    ${CMAKE_SOURCE_DIR}/C6GE/src/Components/TextureComponent.cpp
     ${CMAKE_SOURCE_DIR}/C6GE/src/Render/Texture/Texture.cpp
     ${CMAKE_SOURCE_DIR}/C6GE/src/Input/Input.cpp
 )

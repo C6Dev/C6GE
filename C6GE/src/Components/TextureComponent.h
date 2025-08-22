@@ -1,16 +1,18 @@
 #pragma once
+#include <string>
+#include <bgfx/bgfx.h>
 
-namespace C6GE {
+class TextureComponent {
+public:
+    std::string diffusePath;
+    bgfx::TextureHandle diffuse = BGFX_INVALID_HANDLE;
+    std::string roughnessPath;
+    bgfx::TextureHandle roughness = BGFX_INVALID_HANDLE;
+    bool loaded = false;
 
-	struct Texture {
-    unsigned int id;          // OpenGL texture ID
-    std::string type;         // diffuse, specular etc.
-    std::string path;         // file path to avoid loading duplicates
-	};
+    TextureComponent() = default;
+    explicit TextureComponent(const std::string& path) : diffusePath(path) {}
 
-    struct TextureComponent {
-	unsigned int Texture;
-	TextureComponent(unsigned int id) : Texture(id) {}
-	};
-
-} // namespace C6GE
+    bool Load();
+    void Cleanup();
+};

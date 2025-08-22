@@ -270,4 +270,3 @@ MeshComponent CreateTemple() {
     // Placeholder implementation
     return 0;
 }
-

@@ -40,16 +40,23 @@
 #include "../Components/CubemapComponent.h"
 #include "../Components/ScaleComponent.h"
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <vector>
 #include <string>
 #include <algorithm>
 #include <iostream>
 #include <cstring>
 #include <cstdio>
+#include <chrono>
+#include <cmath>
+#include <stb_image.h>
 #include "../Components/InstanceComponent.h"
 #include "../Components/CubeComponent.h"
+#include "../Components/MetaballComponent.h"
+#include "VertexLayouts.h"
 #include "../Logging/Log.h"
 #include "../Window/Window.h"
+#include "../Components/TextureComponent.h"
 
 // BGFX vertex structure
 struct BGFXVertex {
@@ -77,6 +84,13 @@ static const uint16_t s_triangleIndices[] = {
 bgfx::VertexBufferHandle bgfxVertexBuffer = BGFX_INVALID_HANDLE;
 bgfx::IndexBufferHandle bgfxIndexBuffer = BGFX_INVALID_HANDLE;
 bgfx::ProgramHandle bgfxSimpleProgram = BGFX_INVALID_HANDLE;
+
+// HDR resources
+static bgfx::ProgramHandle bgfxTonemapProgram = BGFX_INVALID_HANDLE;
+static bgfx::FrameBufferHandle g_hdrFb = BGFX_INVALID_HANDLE;
+static bgfx::TextureHandle g_hdrColor = BGFX_INVALID_HANDLE;
+static bgfx::UniformHandle u_exposure = BGFX_INVALID_HANDLE;
+static uint16_t g_backWidth = 0, g_backHeight = 0;
 
 // Cube geometry data (from BGFX 01-cubes example)
 struct PosColorVertex {
@@ -127,6 +141,94 @@ bgfx::VertexBufferHandle bgfxCubeVertexBuffer = BGFX_INVALID_HANDLE;
 bgfx::IndexBufferHandle bgfxCubeIndexBuffer = BGFX_INVALID_HANDLE;
 bgfx::ProgramHandle bgfxCubeProgram = BGFX_INVALID_HANDLE;
 
+// Metaball rendering resources
+bgfx::ProgramHandle bgfxMetaballProgram = BGFX_INVALID_HANDLE;
+
+// Metaball structures
+struct PosNormalColorVertex
+{
+    float m_pos[3];
+    float m_normal[3];
+    uint32_t m_abgr;
+
+    static void init()
+    {
+        ms_layout
+            .begin()
+            .add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
+            .add(bgfx::Attrib::Normal,   3, bgfx::AttribType::Float)
+            .add(bgfx::Attrib::Color0,   4, bgfx::AttribType::Uint8, true)
+            .end();
+    };
+
+    static bgfx::VertexLayout ms_layout;
+};
+
+bgfx::VertexLayout PosNormalColorVertex::ms_layout;
+
+// Raymarching vertex structure
+struct PosColorTexCoord0Vertex
+{
+    float m_x;
+    float m_y;
+    float m_z;
+    uint32_t m_abgr;
+    float m_u;
+    float m_v;
+
+    static void init()
+    {
+        ms_layout
+            .begin()
+            .add(bgfx::Attrib::Position,  3, bgfx::AttribType::Float)
+            .add(bgfx::Attrib::Color0,    4, bgfx::AttribType::Uint8, true)
+            .add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float)
+            .end();
+    }
+
+    static bgfx::VertexLayout ms_layout;
+};
+
+bgfx::VertexLayout PosColorTexCoord0Vertex::ms_layout;
+
+
+
+struct Grid
+{
+    Grid()
+        : m_val(0.0f)
+    {
+        m_normal[0] = 0.0f;
+        m_normal[1] = 0.0f;
+        m_normal[2] = 0.0f;
+    }
+
+    float m_val;
+    float m_normal[3];
+};
+
+// Metaball constants
+constexpr uint32_t kMaxDims  = 32;
+constexpr float    kMaxDimsF = float(kMaxDims);
+
+// Metaball data
+Grid* g_metaballGrid = nullptr;
+int64_t g_metaballTimeOffset = 0;
+
+// Raymarching resources
+bgfx::ProgramHandle bgfxRaymarchProgram = BGFX_INVALID_HANDLE;
+bgfx::UniformHandle bgfxRaymarchMtx = BGFX_INVALID_HANDLE;
+bgfx::UniformHandle bgfxRaymarchLightDirTime = BGFX_INVALID_HANDLE;
+int64_t g_raymarchTimeOffset = 0;
+
+// Mesh rendering resources
+bgfx::ProgramHandle bgfxMeshProgram = BGFX_INVALID_HANDLE;
+bgfx::UniformHandle bgfxMeshMtx = BGFX_INVALID_HANDLE;
+bgfx::UniformHandle bgfxMeshLightDirTime = BGFX_INVALID_HANDLE;
+int64_t g_meshTimeOffset = 0;
+
+
+
 // Cube objects for rendering
 std::vector<C6GE::CubeComponent> g_cubes;
 
@@ -137,8 +239,86 @@ namespace C6GE {
     void InitCubeResources();
     void RenderCubes();
     void CreateCube(const glm::vec3& position, const glm::vec4& color);
+    void InitMetaballResources();
+    void RenderMetaballs();
+    void InitRaymarchResources();
+    void RenderRaymarch();
+    void InitMeshResources();
+    void RenderMesh();
+    void renderScreenSpaceQuad(uint8_t _view, bgfx::ProgramHandle _program, float _x, float _y, float _width, float _height);
     bgfx::ShaderHandle CreateShaderFromBinary(const uint8_t* data, uint32_t size, const char* name);
 }
+
+// Metaball lookup tables (from BGFX 02-metaballs example)
+static const uint16_t s_edges[256] =
+{
+	0x000, 0x109, 0x203, 0x30a, 0x406, 0x50f, 0x605, 0x70c,
+	0x80c, 0x905, 0xa0f, 0xb06, 0xc0a, 0xd03, 0xe09, 0xf00,
+	0x190, 0x099, 0x393, 0x29a, 0x596, 0x49f, 0x795, 0x69c,
+	0x99c, 0x895, 0xb9f, 0xa96, 0xd9a, 0xc93, 0xf99, 0xe90,
+	0x230, 0x339, 0x033, 0x13a, 0x636, 0x73f, 0x435, 0x53c,
+	0xa3c, 0xb35, 0x83f, 0x936, 0xe3a, 0xf33, 0xc39, 0xd30,
+	0x3a0, 0x2a9, 0x1a3, 0x0aa, 0x7a6, 0x6af, 0x5a5, 0x4ac,
+	0xbac, 0xaa5, 0x9af, 0x8a6, 0xfaa, 0xea3, 0xda9, 0xca0,
+	0x460, 0x569, 0x663, 0x76a, 0x66 , 0x16f, 0x265, 0x36c,
+	0xc6c, 0xd65, 0xe6f, 0xf66, 0x86a, 0x963, 0xa69, 0xb60,
+	0x5f0, 0x4f9, 0x7f3, 0x6fa, 0x1f6, 0x0ff, 0x3f5, 0x2fc,
+	0xdfc, 0xcf5, 0xfff, 0xef6, 0x9fa, 0x8f3, 0xbf9, 0xaf0,
+	0x650, 0x759, 0x453, 0x55a, 0x256, 0x35f, 0x055, 0x15c,
+	0xe5c, 0xf55, 0xc5f, 0xd56, 0xa5a, 0xb53, 0x859, 0x950,
+	0x7c0, 0x6c9, 0x5c3, 0x4ca, 0x3c6, 0x2cf, 0x1c5, 0x0cc,
+	0xfcc, 0xec5, 0xdcf, 0xcc6, 0xbca, 0xac3, 0x9c9, 0x8c0,
+	0x8c0, 0x9c9, 0xac3, 0xbca, 0xcc6, 0xdcf, 0xec5, 0xfcc,
+	0x0cc, 0x1c5, 0x2cf, 0x3c6, 0x4ca, 0x5c3, 0x6c9, 0x7c0,
+	0x950, 0x859, 0xb53, 0xa5a, 0xd56, 0xc5f, 0xf55, 0xe5c,
+	0x15c, 0x55 , 0x35f, 0x256, 0x55a, 0x453, 0x759, 0x650,
+	0xaf0, 0xbf9, 0x8f3, 0x9fa, 0xef6, 0xfff, 0xcf5, 0xdfc,
+	0x2fc, 0x3f5, 0x0ff, 0x1f6, 0x6fa, 0x7f3, 0x4f9, 0x5f0,
+	0xb60, 0xa69, 0x963, 0x86a, 0xf66, 0xe6f, 0xd65, 0xc6c,
+	0x36c, 0x265, 0x16f, 0x066, 0x76a, 0x663, 0x569, 0x460,
+	0xca0, 0xda9, 0xea3, 0xfaa, 0x8a6, 0x9af, 0xaa5, 0xbac,
+	0x4ac, 0x5a5, 0x6af, 0x7a6, 0x0aa, 0x1a3, 0x2a9, 0x3a0,
+	0xd30, 0xc39, 0xf33, 0xe3a, 0x936, 0x83f, 0xb35, 0xa3c,
+	0x53c, 0x435, 0x73f, 0x636, 0x13a, 0x033, 0x339, 0x230,
+	0xe90, 0xf99, 0xc93, 0xd9a, 0xa96, 0xb9f, 0x895, 0x99c,
+	0x69c, 0x795, 0x49f, 0x596, 0x29a, 0x393, 0x099, 0x190,
+	0xf00, 0xe09, 0xd03, 0xc0a, 0xb06, 0xa0f, 0x905, 0x80c,
+	0x70c, 0x605, 0x50f, 0x406, 0x30a, 0x203, 0x109, 0x000,
+};
+
+static const float s_cube[8][3] =
+{
+	{ 0.0f, 1.0f, 1.0f }, // 0
+	{ 1.0f, 1.0f, 1.0f }, // 1
+	{ 1.0f, 1.0f, 0.0f }, // 2
+	{ 0.0f, 1.0f, 0.0f }, // 3
+	{ 0.0f, 0.0f, 1.0f }, // 4
+	{ 1.0f, 0.0f, 1.0f }, // 5
+	{ 1.0f, 0.0f, 0.0f }, // 6
+	{ 0.0f, 0.0f, 0.0f }, // 7
+};
+
+// Metaball triangulation indices (simplified - just the first few cases)
+static const int8_t s_indices[256][16] = {
+	{  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 },
+	{   0,  8,  3, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 },
+	{   0,  1,  9, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 },
+	{   1,  8,  3,  9,  8,  1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 },
+	{   1,  2, 10, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 },
+	{   0,  8,  3,  1,  2, 10, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 },
+	{   9,  2, 10,  0,  2,  9, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 },
+	{   2,  8,  3,  2, 10,  8, 10,  9,  8, -1, -1, -1, -1, -1, -1, -1 },
+	{   3, 11,  2, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 },
+	{   0, 11,  2,  8, 11,  0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 },
+	{   1,  9,  0,  2,  3, 11, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 },
+	{   1, 11,  2,  1,  9, 11,  9,  8, 11, -1, -1, -1, -1, -1, -1, -1 },
+	{   3, 10,  1, 11, 10,  3, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 },
+	{   0, 10,  1,  0,  8, 10,  8, 11, 10, -1, -1, -1, -1, -1, -1, -1 },
+	{   3,  9,  0,  3, 11,  9, 11, 10,  9, -1, -1, -1, -1, -1, -1, -1 },
+	{   9,  8, 10, 10,  8, 11, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 },
+	// ... rest of the array would be filled with the complete triangulation data
+	// For now, just use the first 16 cases and fill the rest with -1
+};
 
 // Pre-compiled BGFX shaders for solid color rendering
 // These are minimal shaders compiled for DirectX11/OpenGL
@@ -409,6 +589,7 @@ bool InitRender(unsigned int width, unsigned int height, RendererType render) {
     	}
 
     	// Texture binding
+#if 0
     	if (textureComp) {
         	glActiveTexture(GL_TEXTURE0);
         	glBindTexture(GL_TEXTURE_2D, textureComp->Texture);
@@ -420,6 +601,7 @@ bool InitRender(unsigned int width, unsigned int height, RendererType render) {
         	glBindTexture(GL_TEXTURE_2D, specularComp->Texture);
         	glUniform1i(glGetUniformLocation(shaderComp->ShaderProgram, "specularMap"), 1);
     	}
+#endif
 		if (cubemapComp) {
     		glActiveTexture(GL_TEXTURE2);
     		glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapComp->Cubemap);
@@ -537,23 +719,7 @@ bool InitRender(unsigned int width, unsigned int height, RendererType render) {
     	    glBindBuffer(GL_ARRAY_BUFFER, 0);
     	}
 
-		if (modelComp) {
-    	    for (auto& mesh : modelComp->meshes) {
-    	        glBindVertexArray(mesh.VAO);
-    	        if (isInstanced) {
-    	            glDrawElementsInstanced(GL_TRIANGLES, static_cast<GLsizei>(mesh.indices.size()), GL_UNSIGNED_INT, 0, static_cast<GLsizei>(instComp->instances.size()));
-    	        } else {
-    	            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(mesh.indices.size()), GL_UNSIGNED_INT, 0);
-    	        }
-    	    }
-		} else if (meshComp) { // Fallback: single mesh
-    	    glBindVertexArray(meshComp->VAO);
-    	    if (isInstanced) {
-    	        glDrawElementsInstanced(GL_TRIANGLES, static_cast<GLsizei>(meshComp->vertexCount), GL_UNSIGNED_INT, 0, static_cast<GLsizei>(instComp->instances.size()));
-    	    } else {
-    	        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(meshComp->vertexCount), GL_UNSIGNED_INT, 0);
-    	    }
-		}
+		// Old OpenGL rendering code removed - now using BGFX component system
 		
     	glBindVertexArray(0);
 
@@ -717,6 +883,119 @@ bool InitBGFX() {
     return true;
 }
 
+// Metaball helper functions (from BGFX 02-metaballs example)
+float vertLerp(float* _result, float _iso, uint32_t _idx0, float _v0, uint32_t _idx1, float _v1)
+{
+	const float* edge0 = s_cube[_idx0];
+	const float* edge1 = s_cube[_idx1];
+
+	if (std::abs(_iso-_v1) < 0.00001f)
+	{
+		_result[0] = edge1[0];
+		_result[1] = edge1[1];
+		_result[2] = edge1[2];
+		return 1.0f;
+	}
+
+	if (std::abs(_iso-_v0) < 0.00001f
+	||  std::abs(_v0-_v1) < 0.00001f)
+	{
+		_result[0] = edge0[0];
+		_result[1] = edge0[1];
+		_result[2] = edge0[2];
+		return 0.0f;
+	}
+
+	float lerp = (_iso - _v0) / (_v1 - _v0);
+	_result[0] = edge0[0] + lerp * (edge1[0] - edge0[0]);
+	_result[1] = edge0[1] + lerp * (edge1[1] - edge0[1]);
+	_result[2] = edge0[2] + lerp * (edge1[2] - edge0[2]);
+
+	return lerp;
+}
+
+uint32_t triangulate(
+	  uint8_t* _result
+	, uint32_t _stride
+	, const float* _rgb
+	, const float* _xyz
+	, const Grid* _val[8]
+	, float _iso
+	, float _scale
+	)
+{
+	uint8_t cubeindex = 0;
+	cubeindex |= (_val[0]->m_val < _iso) ? 0x01 : 0;
+	cubeindex |= (_val[1]->m_val < _iso) ? 0x02 : 0;
+	cubeindex |= (_val[2]->m_val < _iso) ? 0x04 : 0;
+	cubeindex |= (_val[3]->m_val < _iso) ? 0x08 : 0;
+	cubeindex |= (_val[4]->m_val < _iso) ? 0x10 : 0;
+	cubeindex |= (_val[5]->m_val < _iso) ? 0x20 : 0;
+	cubeindex |= (_val[6]->m_val < _iso) ? 0x40 : 0;
+	cubeindex |= (_val[7]->m_val < _iso) ? 0x80 : 0;
+
+	if (0 == s_edges[cubeindex])
+	{
+		return 0;
+	}
+
+	float verts[12][6];
+	uint16_t flags = s_edges[cubeindex];
+
+	for (uint32_t ii = 0; ii < 12; ++ii)
+	{
+		if (flags & (1<<ii) )
+		{
+			uint32_t idx0 = ii&7;
+			uint32_t idx1 = "\x1\x2\x3\x0\x5\x6\x7\x4\x4\x5\x6\x7"[ii];
+			float* vertex = verts[ii];
+			float lerp = vertLerp(vertex, _iso, idx0, _val[idx0]->m_val, idx1, _val[idx1]->m_val);
+
+			const float* na = _val[idx0]->m_normal;
+			const float* nb = _val[idx1]->m_normal;
+			vertex[3] = na[0] + lerp * (nb[0] - na[0]);
+			vertex[4] = na[1] + lerp * (nb[1] - na[1]);
+			vertex[5] = na[2] + lerp * (nb[2] - na[2]);
+		}
+	}
+
+	const float dr = _rgb[3] - _rgb[0];
+	const float dg = _rgb[4] - _rgb[1];
+	const float db = _rgb[5] - _rgb[2];
+
+	uint32_t num = 0;
+	const int8_t* indices = s_indices[cubeindex];
+	for (uint32_t ii = 0; indices[ii] != -1; ++ii)
+	{
+		const float* vertex = verts[uint8_t(indices[ii])];
+
+		float* xyz = (float*)_result;
+		xyz[0] = _xyz[0] + vertex[0]*_scale;
+		xyz[1] = _xyz[1] + vertex[1]*_scale;
+		xyz[2] = _xyz[2] + vertex[2]*_scale;
+
+		xyz[3] = vertex[3]*_scale;
+		xyz[4] = vertex[4]*_scale;
+		xyz[5] = vertex[5]*_scale;
+
+		uint32_t rr = uint8_t( (_rgb[0] + vertex[0]*dr)*255.0f);
+		uint32_t gg = uint8_t( (_rgb[1] + vertex[1]*dg)*255.0f);
+		uint32_t bb = uint8_t( (_rgb[2] + vertex[2]*db)*255.0f);
+
+		uint32_t* abgr = (uint32_t*)&_result[24];
+		*abgr = 0xff000000
+			  | (bb<<16)
+			  | (gg<<8)
+			  | rr
+			  ;
+
+		_result += _stride;
+		++num;
+	}
+
+	return num;
+}
+
 void InitBGFXResources() {
     // Set up simple vertex layout (position only)
     bgfxVertexLayout
@@ -795,6 +1074,15 @@ void InitBGFXResources() {
     
     // Initialize cube resources
     InitCubeResources();
+    
+    // Initialize metaball resources
+    InitMetaballResources();
+    
+    // Initialize raymarch resources
+    InitRaymarchResources();
+    
+    // Initialize mesh resources
+    InitMeshResources();
 }
 
 bgfx::ShaderHandle CreateShaderFromBinary(const uint8_t* data, uint32_t size, const char* name) {
@@ -937,36 +1225,872 @@ void RenderCubes() {
     }
 }
 
-void RenderBGFXCube() {
+void renderScreenSpaceQuad(uint8_t _view, bgfx::ProgramHandle _program, float _x, float _y, float _width, float _height)
+{
+    bgfx::TransientVertexBuffer tvb;
+    bgfx::TransientIndexBuffer tib;
+
+    if (bgfx::allocTransientBuffers(&tvb, PosColorTexCoord0Vertex::ms_layout, 4, &tib, 6) )
+    {
+        PosColorTexCoord0Vertex* vertex = (PosColorTexCoord0Vertex*)tvb.data;
+
+        float zz = 0.0f;
+
+        const float minx = _x;
+        const float maxx = _x + _width;
+        const float miny = _y;
+        const float maxy = _y + _height;
+
+        float minu = -1.0f;
+        float minv = -1.0f;
+        float maxu =  1.0f;
+        float maxv =  1.0f;
+
+        vertex[0].m_x = minx;
+        vertex[0].m_y = miny;
+        vertex[0].m_z = zz;
+        vertex[0].m_abgr = 0xff0000ff;
+        vertex[0].m_u = minu;
+        vertex[0].m_v = minv;
+
+        vertex[1].m_x = maxx;
+        vertex[1].m_y = miny;
+        vertex[1].m_z = zz;
+        vertex[1].m_abgr = 0xff00ff00;
+        vertex[1].m_u = maxu;
+        vertex[1].m_v = minv;
+
+        vertex[2].m_x = maxx;
+        vertex[2].m_y = maxy;
+        vertex[2].m_z = zz;
+        vertex[2].m_abgr = 0xffff0000;
+        vertex[2].m_u = maxu;
+        vertex[2].m_v = maxv;
+
+        vertex[3].m_x = minx;
+        vertex[3].m_y = maxy;
+        vertex[3].m_z = zz;
+        vertex[3].m_abgr = 0xffffffff;
+        vertex[3].m_u = minu;
+        vertex[3].m_v = maxv;
+
+        uint16_t* indices = (uint16_t*)tib.data;
+
+        indices[0] = 0;
+        indices[1] = 2;
+        indices[2] = 1;
+        indices[3] = 0;
+        indices[4] = 3;
+        indices[5] = 2;
+
+        bgfx::setState(BGFX_STATE_DEFAULT);
+        bgfx::setIndexBuffer(&tib);
+        bgfx::setVertexBuffer(0, &tvb);
+        bgfx::submit(_view, _program);
+    }
+}
+
+void InitMetaballResources() {
+    // Initialize metaball vertex layout
+    PosNormalColorVertex::init();
+    
+    // Create metaball shader program
+    bgfx::RendererType::Enum type = bgfx::getRendererType();
+    
+    // Try to load metaball shaders
+    FILE* vsFile = fopen("Assets/shaders/metaball_vs.bin", "rb");
+    FILE* fsFile = fopen("Assets/shaders/metaball_fs.bin", "rb");
+    
+    if (!vsFile) {
+        Log(LogLevel::error, "Could not open metaball vertex shader: Assets/shaders/metaball_vs.bin");
+    }
+    if (!fsFile) {
+        Log(LogLevel::error, "Could not open metaball fragment shader: Assets/shaders/metaball_fs.bin");
+    }
+    
+    bgfx::ShaderHandle vsh = BGFX_INVALID_HANDLE;
+    bgfx::ShaderHandle fsh = BGFX_INVALID_HANDLE;
+    
+    if (vsFile && fsFile) {
+        // Load vertex shader
+        fseek(vsFile, 0, SEEK_END);
+        long vsSize = ftell(vsFile);
+        fseek(vsFile, 0, SEEK_SET);
+        char* vsSource = new char[vsSize];
+        fread(vsSource, 1, vsSize, vsFile);
+        fclose(vsFile);
+        
+        const bgfx::Memory* vsMem = bgfx::alloc((uint32_t)vsSize);
+        memcpy(vsMem->data, vsSource, vsSize);
+        vsh = bgfx::createShader(vsMem);
+        delete[] vsSource;
+        
+        // Load fragment shader
+        fseek(fsFile, 0, SEEK_END);
+        long fsSize = ftell(fsFile);
+        fseek(fsFile, 0, SEEK_SET);
+        char* fsSource = new char[fsSize];
+        fread(fsSource, 1, fsSize, fsFile);
+        fclose(fsFile);
+        
+        const bgfx::Memory* fsMem = bgfx::alloc((uint32_t)fsSize);
+        memcpy(fsMem->data, fsSource, fsSize);
+        fsh = bgfx::createShader(fsMem);
+        delete[] fsSource;
+        
+        // Create program
+        if (bgfx::isValid(vsh) && bgfx::isValid(fsh)) {
+            bgfxMetaballProgram = bgfx::createProgram(vsh, fsh, true);
+            Log(LogLevel::info, "Metaball shaders loaded successfully.");
+        }
+    } else {
+        Log(LogLevel::error, "Could not load metaball shaders, using fallback.");
+        // Use cube shader as fallback
+        bgfxMetaballProgram = bgfxCubeProgram;
+    }
+    
+    // Initialize metaball grid
+    g_metaballGrid = new Grid[kMaxDims*kMaxDims*kMaxDims];
+    if (!g_metaballGrid) {
+        Log(LogLevel::error, "Failed to allocate metaball grid!");
+        return;
+    }
+    
+    // Initialize grid values to zero
+    for (int i = 0; i < kMaxDims*kMaxDims*kMaxDims; ++i) {
+        g_metaballGrid[i].m_val = 0.0f;
+        g_metaballGrid[i].m_normal[0] = 0.0f;
+        g_metaballGrid[i].m_normal[1] = 0.0f;
+        g_metaballGrid[i].m_normal[2] = 0.0f;
+    }
+    
+    g_metaballTimeOffset = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+    
+    Log(LogLevel::info, "Metaball resources initialized.");
+}
+
+void InitRaymarchResources() {
+    Log(LogLevel::info, "Initializing raymarch resources...");
+    
+    // Initialize vertex layout
+    PosColorTexCoord0Vertex::init();
+    
+    // Create raymarch shader program
+    bgfx::RendererType::Enum type = bgfx::getRendererType();
+    
+    // Try to load raymarch shaders
+    FILE* vsFile = fopen("Assets/shaders/raymarch_vs.bin", "rb");
+    FILE* fsFile = fopen("Assets/shaders/raymarch_fs.bin", "rb");
+    
+    if (!vsFile) {
+        Log(LogLevel::error, "Could not open raymarch vertex shader: Assets/shaders/raymarch_vs.bin");
+    }
+    if (!fsFile) {
+        Log(LogLevel::error, "Could not open raymarch fragment shader: Assets/shaders/raymarch_fs.bin");
+    }
+    
+    bgfx::ShaderHandle vsh = BGFX_INVALID_HANDLE;
+    bgfx::ShaderHandle fsh = BGFX_INVALID_HANDLE;
+    
+    if (vsFile && fsFile) {
+        // Load vertex shader
+        fseek(vsFile, 0, SEEK_END);
+        long vsSize = ftell(vsFile);
+        fseek(vsFile, 0, SEEK_SET);
+        char* vsSource = new char[vsSize];
+        fread(vsSource, 1, vsSize, vsFile);
+        fclose(vsFile);
+        
+        const bgfx::Memory* vsMem = bgfx::alloc((uint32_t)vsSize);
+        memcpy(vsMem->data, vsSource, vsSize);
+        vsh = bgfx::createShader(vsMem);
+        delete[] vsSource;
+        
+        // Load fragment shader
+        fseek(fsFile, 0, SEEK_END);
+        long fsSize = ftell(fsFile);
+        fseek(fsFile, 0, SEEK_SET);
+        char* fsSource = new char[fsSize];
+        fread(fsSource, 1, fsSize, fsFile);
+        fclose(fsFile);
+        
+        const bgfx::Memory* fsMem = bgfx::alloc((uint32_t)fsSize);
+        memcpy(fsMem->data, fsSource, fsSize);
+        fsh = bgfx::createShader(fsMem);
+        delete[] fsSource;
+        
+        // Create program
+        if (bgfx::isValid(vsh) && bgfx::isValid(fsh)) {
+            bgfxRaymarchProgram = bgfx::createProgram(vsh, fsh, true);
+            Log(LogLevel::info, "Raymarch shaders loaded successfully.");
+        }
+    } else {
+        Log(LogLevel::error, "Could not load raymarch shaders, using fallback.");
+        // Use metaball shader as fallback
+        bgfxRaymarchProgram = bgfxMetaballProgram;
+    }
+    
+    // Create uniforms
+    bgfxRaymarchMtx = bgfx::createUniform("u_mtx", bgfx::UniformType::Mat4);
+    bgfxRaymarchLightDirTime = bgfx::createUniform("u_lightDirTime", bgfx::UniformType::Vec4);
+    
+    g_raymarchTimeOffset = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+    
+    Log(LogLevel::info, "Raymarch resources initialized.");
+}
+
+void InitMeshResources() {
+    Log(LogLevel::info, "Initializing mesh resources...");
+    
+    // Initialize vertex layout
+    PosNormalTexCoordVertex::init();
+    
+    // Create mesh shader program
+    bgfx::RendererType::Enum type = bgfx::getRendererType();
+    
+    // Try to load mesh shaders
+    FILE* vsFile = fopen("Assets/shaders/mesh_vs.bin", "rb");
+    FILE* fsFile = fopen("Assets/shaders/mesh_fs.bin", "rb");
+    
+    if (!vsFile) {
+        Log(LogLevel::error, "Could not open mesh vertex shader: Assets/shaders/mesh_vs.bin");
+    }
+    if (!fsFile) {
+        Log(LogLevel::error, "Could not open mesh fragment shader: Assets/shaders/mesh_fs.bin");
+    }
+    
+    bgfx::ShaderHandle vsh = BGFX_INVALID_HANDLE;
+    bgfx::ShaderHandle fsh = BGFX_INVALID_HANDLE;
+    
+    if (vsFile && fsFile) {
+        // Load vertex shader
+        fseek(vsFile, 0, SEEK_END);
+        long vsSize = ftell(vsFile);
+        fseek(vsFile, 0, SEEK_SET);
+        char* vsSource = new char[vsSize];
+        fread(vsSource, 1, vsSize, vsFile);
+        fclose(vsFile);
+        
+        const bgfx::Memory* vsMem = bgfx::alloc((uint32_t)vsSize);
+        memcpy(vsMem->data, vsSource, vsSize);
+        vsh = bgfx::createShader(vsMem);
+        delete[] vsSource;
+        
+        // Load fragment shader
+        fseek(fsFile, 0, SEEK_END);
+        long fsSize = ftell(fsFile);
+        fseek(fsFile, 0, SEEK_SET);
+        char* fsSource = new char[fsSize];
+        fread(fsSource, 1, fsSize, fsFile);
+        fclose(fsFile);
+        
+        const bgfx::Memory* fsMem = bgfx::alloc((uint32_t)fsSize);
+        memcpy(fsMem->data, fsSource, fsSize);
+        fsh = bgfx::createShader(fsMem);
+        delete[] fsSource;
+        
+        // Create program
+        if (bgfx::isValid(vsh) && bgfx::isValid(fsh)) {
+            bgfxMeshProgram = bgfx::createProgram(vsh, fsh, true);
+            Log(LogLevel::info, "Mesh shaders loaded successfully.");
+        }
+    } else {
+        Log(LogLevel::error, "Could not load mesh shaders, using fallback.");
+        // Use raymarch shader as fallback
+        bgfxMeshProgram = bgfxRaymarchProgram;
+    }
+    
+    // Create uniforms
+    bgfxMeshMtx = bgfx::createUniform("u_mtx", bgfx::UniformType::Mat4);
+    bgfxMeshLightDirTime = bgfx::createUniform("u_lightDirTime", bgfx::UniformType::Vec4);
+    
+    g_meshTimeOffset = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+    
+    Log(LogLevel::info, "Mesh resources initialized.");
+}
+
+// ---- HDR helpers ----
+static void updateHdrFramebuffer(uint16_t width, uint16_t height) {
+    if (width == 0 || height == 0) return;
+    // Only update if size changed or framebuffer is invalid
+    if (bgfx::isValid(g_hdrFb) && width == g_backWidth && height == g_backHeight) {
+        return;
+    }
+    
+    Log(LogLevel::info, "Updating HDR framebuffer from " + std::to_string(g_backWidth) + "x" + std::to_string(g_backHeight) + " to " + std::to_string(width) + "x" + std::to_string(height));
+    if (bgfx::isValid(g_hdrFb)) {
+        bgfx::destroy(g_hdrFb);
+        g_hdrFb = BGFX_INVALID_HANDLE;
+    }
+    if (bgfx::isValid(g_hdrColor)) {
+        bgfx::destroy(g_hdrColor);
+        g_hdrColor = BGFX_INVALID_HANDLE;
+    }
+    const uint64_t flags = BGFX_TEXTURE_RT | BGFX_SAMPLER_MIN_POINT | BGFX_SAMPLER_MAG_POINT | BGFX_SAMPLER_MIP_POINT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP;
+    g_hdrColor = bgfx::createTexture2D(width, height, false, 1, bgfx::TextureFormat::RGBA16F, flags);
+    
+    if (!bgfx::isValid(g_hdrColor)) {
+        Log(LogLevel::error, "Failed to create HDR color texture");
+        return;
+    }
+    
+    bgfx::Attachment att; att.init(g_hdrColor);
+    g_hdrFb = bgfx::createFrameBuffer(1, &att, true);
+    
+    if (!bgfx::isValid(g_hdrFb)) {
+        Log(LogLevel::error, "Failed to create HDR framebuffer");
+        return;
+    }
+    
+    g_backWidth = width; g_backHeight = height;
+    Log(LogLevel::info, "HDR framebuffer updated to " + std::to_string(width) + "x" + std::to_string(height));
+    if (!bgfx::isValid(u_exposure)) {
+        u_exposure = bgfx::createUniform("u_exposure", bgfx::UniformType::Vec4);
+    }
+    if (!bgfx::isValid(bgfxTonemapProgram)) {
+        FILE* vsFile = fopen("Assets/shaders/hdr_tonemap_vs.bin", "rb");
+        FILE* fsFile = fopen("Assets/shaders/hdr_tonemap_fs.bin", "rb");
+        if (vsFile && fsFile) {
+            fseek(vsFile, 0, SEEK_END); long vsSize = ftell(vsFile); fseek(vsFile, 0, SEEK_SET);
+            char* vsSrc = new char[vsSize]; fread(vsSrc, 1, vsSize, vsFile); fclose(vsFile);
+            const bgfx::Memory* vmem = bgfx::alloc((uint32_t)vsSize); memcpy(vmem->data, vsSrc, vsSize); delete[] vsSrc;
+            bgfx::ShaderHandle vsh = bgfx::createShader(vmem);
+            fseek(fsFile, 0, SEEK_END); long fsSize = ftell(fsFile); fseek(fsFile, 0, SEEK_SET);
+            char* fsSrc = new char[fsSize]; fread(fsSrc, 1, fsSize, fsFile); fclose(fsFile);
+            const bgfx::Memory* fmem = bgfx::alloc((uint32_t)fsSize); memcpy(fmem->data, fsSrc, fsSize); delete[] fsSrc;
+            bgfx::ShaderHandle fsh = bgfx::createShader(fmem);
+            if (bgfx::isValid(vsh) && bgfx::isValid(fsh)) {
+                bgfxTonemapProgram = bgfx::createProgram(vsh, fsh, true);
+            }
+        }
+    }
+}
+
+void BeginHDR() {
+    GLFWwindow* window = glfwGetCurrentContext();
+    int ww = 0, hh = 0; if (window) glfwGetWindowSize(window, &ww, &hh);
+    updateHdrFramebuffer((uint16_t)ww, (uint16_t)hh);
+    // Render the scene into view 0 bound to HDR framebuffer
+    if (bgfx::isValid(g_hdrFb)) {
+        bgfx::setViewFrameBuffer(0, g_hdrFb);
+        bgfx::setViewRect(0, 0, 0, (uint16_t)ww, (uint16_t)hh);
+        bgfx::setViewClear(0, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x00000000, 1.0f, 0);
+        bgfx::touch(0);
+    }
+}
+
+void EndHDRAndTonemap() {
+    if (!bgfx::isValid(bgfxTonemapProgram) || !bgfx::isValid(g_hdrColor)) return;
+    static bgfx::UniformHandle s_hdrColor = BGFX_INVALID_HANDLE;
+    if (!bgfx::isValid(s_hdrColor)) {
+        s_hdrColor = bgfx::createUniform("s_hdrColor", bgfx::UniformType::Sampler);
+    }
+    GLFWwindow* window = glfwGetCurrentContext(); int ww=0, hh=0; if (window) glfwGetWindowSize(window, &ww, &hh);
+    
+    // Set view 2 to render to the backbuffer (not the HDR framebuffer)
+    bgfx::setViewFrameBuffer(2, BGFX_INVALID_HANDLE);
+    bgfx::setViewRect(2, 0, 0, (uint16_t)ww, (uint16_t)hh);
+    bgfx::setViewClear(2, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x303030ff, 1.0f, 0);
+    bgfx::touch(2);
+    const float exposure[4] = {1.2f,0,0,0};
+    bgfx::setUniform(u_exposure, exposure);
+    bgfx::setTexture(0, s_hdrColor, g_hdrColor);
+    renderScreenSpaceQuad(2, bgfxTonemapProgram, 0.0f, 0.0f, (float)ww, (float)hh);
+}
+
+void RenderMetaballs() {
+    Log(LogLevel::info, "RenderMetaballs: Starting...");
+    
+    if (!bgfx::isValid(bgfxMetaballProgram)) {
+        Log(LogLevel::error, "RenderMetaballs: Metaball shader not available!");
+        bgfx::dbgTextPrintf(0, 12, 0x0c, "Metaball shader not available!");
+        return;
+    }
+    
+    Log(LogLevel::info, "RenderMetaballs: Shader is valid, proceeding...");
+    
+    const uint32_t ypitch = kMaxDims;
+    const uint32_t zpitch = kMaxDims*kMaxDims;
+    
+    Log(LogLevel::info, "RenderMetaballs: Setting up matrices...");
+    
+    // Get camera component for view matrix
+    auto* camera = GetComponent<CameraComponent>("camera");
+    if (!camera) {
+        Log(LogLevel::error, "RenderMetaballs: Camera component not found!");
+        return;
+    }
+    
+    // Set view and projection matrices using camera
+        glm::mat4 viewMatrix = GetViewMatrix(*camera);
+    float aspectRatio = GetWindowAspectRatio();
+    glm::mat4 projMatrix = glm::perspective(glm::radians(60.0f), aspectRatio, 0.1f, 100.0f);
+    
+        float view[16];
+    float proj[16];
+        memcpy(view, glm::value_ptr(viewMatrix), sizeof(float) * 16);
+    memcpy(proj, glm::value_ptr(projMatrix), sizeof(float) * 16);
+    bgfx::setViewTransform(0, view, proj);
+    
+    // Set model matrix (identity)
+    float model[16];
+    glm::mat4 modelMatrix = glm::mat4(1.0f);
+    memcpy(model, glm::value_ptr(modelMatrix), sizeof(float) * 16);
+    
+    // Set uniforms for metaball shader - use existing uniforms from BGFX
+    // The shader should use the view/projection matrices set via setViewTransform
+    // and we'll set the model matrix as identity
+    
+    Log(LogLevel::info, "RenderMetaballs: Matrices set successfully...");
+    
+    Log(LogLevel::info, "RenderMetaballs: Calculating time...");
+    
+    // Get time
+    auto now = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+    float time = (float)((now - g_metaballTimeOffset) / 1000000000.0); // Convert to seconds
+    
+    Log(LogLevel::info, "RenderMetaballs: Creating animated spheres...");
+    
+    // Create animated spheres
+    const uint32_t numSpheres = 16;
+    float sphere[numSpheres][4];
+    for (uint32_t ii = 0; ii < numSpheres; ++ii)
+    {
+        sphere[ii][0] = std::sin(time*(ii*0.21f)+ii*0.37f) * (kMaxDimsF * 0.5f - 8.0f);
+        sphere[ii][1] = std::sin(time*(ii*0.37f)+ii*0.67f) * (kMaxDimsF * 0.5f - 8.0f);
+        sphere[ii][2] = std::cos(time*(ii*0.11f)+ii*0.13f) * (kMaxDimsF * 0.5f - 8.0f);
+        sphere[ii][3] = 1.0f/(3.0f + (std::sin(time*(ii*0.13f) )*0.5f+0.5f)*0.9f );
+    }
+    
+    Log(LogLevel::info, "RenderMetaballs: Spheres created successfully...");
+    
+    Log(LogLevel::info, "RenderMetaballs: Starting metaball field update...");
+    
+    // Check if grid is valid
+    if (!g_metaballGrid) {
+        Log(LogLevel::error, "RenderMetaballs: Metaball grid is null!");
+        return;
+    }
+    
+    // Update metaball field - use smaller resolution for better performance
+    uint32_t numDims = 16; // Reduced from kMaxDims for better performance
+    const float numDimsF = float(numDims);
+    const float scale    = kMaxDimsF/numDimsF;
+    
+    for (uint32_t zz = 0; zz < numDims; ++zz)
+    {
+        for (uint32_t yy = 0; yy < numDims; ++yy)
+        {
+            uint32_t offset = (zz*kMaxDims+yy)*kMaxDims;
+            
+            for (uint32_t xx = 0; xx < numDims; ++xx)
+            {
+                uint32_t xoffset = offset + xx;
+                
+                float dist = 0.0f;
+                float prod = 1.0f;
+                for (uint32_t ii = 0; ii < numSpheres; ++ii)
+                {
+                    const float* pos = sphere[ii];
+                    float dx   = pos[0] - (-kMaxDimsF*0.5f + float(xx)*scale);
+                    float dy   = pos[1] - (-kMaxDimsF*0.5f + float(yy)*scale);
+                    float dz   = pos[2] - (-kMaxDimsF*0.5f + float(zz)*scale);
+                    float invR = pos[3];
+                    float dot  = dx*dx + dy*dy + dz*dz;
+                    dot *= invR * invR;
+                    
+                    dist *= dot;
+                    dist += prod;
+                    prod *= dot;
+                }
+                
+                g_metaballGrid[xoffset].m_val = dist / prod - 1.0f;
+            }
+        }
+    }
+    
+    // Calculate normals
+    for (uint32_t zz = 1; zz < numDims-1; ++zz)
+    {
+        for (uint32_t yy = 1; yy < numDims-1; ++yy)
+        {
+            uint32_t offset = (zz*kMaxDims+yy)*kMaxDims;
+            
+            for (uint32_t xx = 1; xx < numDims-1; ++xx)
+            {
+                uint32_t xoffset = offset + xx;
+                
+                Grid* grid = g_metaballGrid;
+                glm::vec3 normal(
+                    grid[xoffset-1     ].m_val - grid[xoffset+1     ].m_val,
+                    grid[xoffset-ypitch].m_val - grid[xoffset+ypitch].m_val,
+                    grid[xoffset-zpitch].m_val - grid[xoffset+zpitch].m_val
+                );
+                
+                normal = glm::normalize(normal);
+                grid[xoffset].m_normal[0] = normal.x;
+                grid[xoffset].m_normal[1] = normal.y;
+                grid[xoffset].m_normal[2] = normal.z;
+            }
+        }
+    }
+    
+    Log(LogLevel::info, "RenderMetaballs: Allocating transient vertex buffer...");
+    
+    // Allocate transient vertex buffer
+    uint32_t maxVertices = (32<<10);
+    bgfx::TransientVertexBuffer tvb;
+    bgfx::allocTransientVertexBuffer(&tvb, maxVertices, PosNormalColorVertex::ms_layout);
+    
+    Log(LogLevel::info, "RenderMetaballs: Vertex buffer allocated...");
+    
+    PosNormalColorVertex* vertex = (PosNormalColorVertex*)tvb.data;
+    uint32_t numVertices = 0;
+    const float invDim = 1.0f/(numDimsF-1.0f);
+    
+    // Simple fallback: render a basic sphere if triangulation fails
+    bool triangulationSuccess = false;
+    
+    // Simple metaball rendering - render animated spheres
+    Log(LogLevel::info, "RenderMetaballs: Using simple sphere rendering...");
+    
+    // Create animated spheres based on the metaball field
+    for (uint32_t ii = 0; ii < 16 && numVertices + 36 < maxVertices; ++ii) {
+        float x = sphere[ii][0];
+        float y = sphere[ii][1];
+        float z = sphere[ii][2];
+        float radius = 1.0f / sphere[ii][3];
+        
+        // Create a simple sphere mesh for each metaball
+        const uint32_t segments = 8;
+        const uint32_t rings = 6;
+        
+        for (uint32_t ring = 0; ring < rings - 1; ++ring) {
+            for (uint32_t segment = 0; segment < segments; ++segment) {
+                if (numVertices + 6 >= maxVertices) break;
+                
+                float phi1 = (float(ring) / float(rings - 1)) * 3.14159f;
+                float phi2 = (float(ring + 1) / float(rings - 1)) * 3.14159f;
+                float theta1 = (float(segment) / float(segments)) * 2.0f * 3.14159f;
+                float theta2 = (float(segment + 1) / float(segments)) * 2.0f * 3.14159f;
+                
+                // Create two triangles for this quad
+                for (int tri = 0; tri < 2; ++tri) {
+                    float phi[3], theta[3];
+                    if (tri == 0) {
+                        phi[0] = phi1; theta[0] = theta1;
+                        phi[1] = phi2; theta[1] = theta1;
+                        phi[2] = phi1; theta[2] = theta2;
+                    } else {
+                        phi[0] = phi2; theta[0] = theta1;
+                        phi[1] = phi2; theta[1] = theta2;
+                        phi[2] = phi1; theta[2] = theta2;
+                    }
+                    
+                    for (int i = 0; i < 3; ++i) {
+                        float nx = std::sin(phi[i]) * std::cos(theta[i]);
+                        float ny = std::sin(phi[i]) * std::sin(theta[i]);
+                        float nz = std::cos(phi[i]);
+                        
+                        vertex->m_pos[0] = x + nx * radius;
+                        vertex->m_pos[1] = y + ny * radius;
+                        vertex->m_pos[2] = z + nz * radius;
+                        vertex->m_normal[0] = nx;
+                        vertex->m_normal[1] = ny;
+                        vertex->m_normal[2] = nz;
+                        vertex->m_abgr = 0xff0000ff; // Red color
+                        vertex++;
+                        numVertices++;
+                    }
+                }
+            }
+        }
+    }
+    
+    Log(LogLevel::info, "RenderMetaballs: Setting render states...");
+    
+    // Set render states
+    bgfx::setState(BGFX_STATE_DEFAULT);
+    
+    Log(LogLevel::info, "RenderMetaballs: Setting vertex buffer...");
+    
+    // Set vertex buffer
+    bgfx::setVertexBuffer(0, &tvb, 0, numVertices);
+    
+    Log(LogLevel::info, "RenderMetaballs: Submitting for rendering...");
+    
+    // Submit for rendering
+    if (numVertices > 0) {
+        bgfx::submit(0, bgfxMetaballProgram);
+        Log(LogLevel::info, "RenderMetaballs: Metaballs rendered successfully!");
+    } else {
+        Log(LogLevel::warning, "RenderMetaballs: No vertices generated, skipping render");
+    }
+    
+    Log(LogLevel::info, "RenderMetaballs: Rendering completed successfully!");
+    }
+
+void RenderRaymarch() {
+    Log(LogLevel::info, "RenderRaymarch: Starting...");
+    
+    if (!bgfx::isValid(bgfxRaymarchProgram)) {
+        Log(LogLevel::error, "RenderRaymarch: Raymarch shader not available!");
+        bgfx::dbgTextPrintf(0, 14, 0x0c, "Raymarch shader not available!");
+        return;
+    }
+    
+    Log(LogLevel::info, "RenderRaymarch: Shader is valid, proceeding...");
+    
+    // Get camera component for view matrix
+    auto* camera = GetComponent<CameraComponent>("camera");
+    if (!camera) {
+        Log(LogLevel::error, "RenderRaymarch: Camera component not found!");
+        return;
+    }
+    
+    // Set view and projection matrices using camera
+    glm::mat4 viewMatrix = GetViewMatrix(*camera);
+    float aspectRatio = GetWindowAspectRatio();
+    glm::mat4 projMatrix = glm::perspective(glm::radians(60.0f), aspectRatio, 0.1f, 100.0f);
+    
+    float view[16];
+        float proj[16];
+    memcpy(view, glm::value_ptr(viewMatrix), sizeof(float) * 16);
+        memcpy(proj, glm::value_ptr(projMatrix), sizeof(float) * 16);
+        
+    // Set view and projection matrix for view 0
+        bgfx::setViewTransform(0, view, proj);
+        
+    // Create orthographic projection for screen space quad
+    const bgfx::Caps* caps = bgfx::getCaps();
+    float ortho[16];
+    GLFWwindow* window = glfwGetCurrentContext();
+    int width = 1280, height = 720;
+    if (window) {
+        glfwGetWindowSize(window, &width, &height);
+    }
+    glm::mat4 orthoMatrix = glm::ortho(0.0f, static_cast<float>(width), static_cast<float>(height), 0.0f, 0.0f, 100.0f);
+    memcpy(ortho, glm::value_ptr(orthoMatrix), sizeof(float) * 16);
+    
+    // Set view and projection matrix for view 1
+    bgfx::setViewTransform(1, NULL, ortho);
+    
+    // Calculate time
+    auto now = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+    float time = (float)((now - g_raymarchTimeOffset) / 1000000000.0); // Convert to seconds
+    
+    // Calculate matrices
+    float vp[16];
+    glm::mat4 vpMatrix = projMatrix * viewMatrix;
+    memcpy(vp, glm::value_ptr(vpMatrix), sizeof(float) * 16);
+    
+    // Create rotation matrix
+    float mtx[16];
+    glm::mat4 rotMatrix = glm::rotate(glm::mat4(1.0f), time, glm::vec3(1.0f, 0.0f, 0.0f)) * 
+                          glm::rotate(glm::mat4(1.0f), time * 0.37f, glm::vec3(0.0f, 1.0f, 0.0f));
+    memcpy(mtx, glm::value_ptr(rotMatrix), sizeof(float) * 16);
+    
+    // Calculate inverse matrices
+    float mtxInv[16];
+    glm::mat4 mtxInvMatrix = glm::inverse(rotMatrix);
+    memcpy(mtxInv, glm::value_ptr(mtxInvMatrix), sizeof(float) * 16);
+    
+    // Calculate light direction
+    float lightDirTime[4];
+    glm::vec3 lightDirModelN = glm::normalize(glm::vec3(-0.4f, -0.5f, -1.0f));
+    glm::vec3 lightDirWorld = mtxInvMatrix * glm::vec4(lightDirModelN, 0.0f);
+    lightDirTime[0] = lightDirWorld.x;
+    lightDirTime[1] = lightDirWorld.y;
+    lightDirTime[2] = lightDirWorld.z;
+    lightDirTime[3] = time;
+    bgfx::setUniform(bgfxRaymarchLightDirTime, lightDirTime);
+    
+    // Calculate MVP and inverse
+    float mvp[16];
+    glm::mat4 mvpMatrix = rotMatrix * vpMatrix;
+    memcpy(mvp, glm::value_ptr(mvpMatrix), sizeof(float) * 16);
+    
+    float invMvp[16];
+    glm::mat4 invMvpMatrix = glm::inverse(mvpMatrix);
+    memcpy(invMvp, glm::value_ptr(invMvpMatrix), sizeof(float) * 16);
+    bgfx::setUniform(bgfxRaymarchMtx, invMvp);
+    
+    // Render screen space quad
+    renderScreenSpaceQuad(1, bgfxRaymarchProgram, 0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height));
+    
+    Log(LogLevel::info, "RenderRaymarch: Rendering completed successfully!");
+}
+
+void RenderMesh() {
+    Log(LogLevel::info, "RenderMesh: This function is deprecated - use RenderBGFXObject instead");
+}
+
+void RenderBGFXObject(const std::string& objectName) {
+    Log(LogLevel::info, "RenderBGFXObject: Rendering object '" + objectName + "'");
+    
+    if (!bgfx::isValid(bgfxMeshProgram)) {
+        Log(LogLevel::error, "RenderBGFXObject: Mesh shader not available!");
+        return;
+    }
+    
+    // Get the model component for this object
+    auto* modelComponent = GetComponent<ModelComponent>(objectName);
+    if (!modelComponent) {
+        Log(LogLevel::error, "RenderBGFXObject: ModelComponent not found for object '" + objectName + "'");
+        return;
+    }
+    
+    if (!modelComponent->loaded || !modelComponent->mesh.loaded) {
+        Log(LogLevel::error, "RenderBGFXObject: Model not loaded for object '" + objectName + "'");
+        return;
+    }
+    
+    // Get camera component for view matrix
+    auto* camera = GetComponent<CameraComponent>("camera");
+    if (!camera) {
+        Log(LogLevel::error, "RenderBGFXObject: Camera component not found!");
+        return;
+    }
+    
+    // Get view and projection matrices using camera
+    glm::mat4 viewMatrix = GetViewMatrix(*camera);
+    float aspectRatio = GetWindowAspectRatio();
+    glm::mat4 projMatrix = glm::perspective(glm::radians(60.0f), aspectRatio, 0.1f, 100.0f);
+    
+    // Get transform component for this object
+    auto* transformComponent = GetComponent<TransformComponent>(objectName);
+    glm::mat4 modelMatrix;
+    
+    if (transformComponent) {
+        // Use the transform component to create the model matrix
+        modelMatrix = transformComponent->GetModelMatrix();
+        
+        // Debug: Log the transform values
+        Log(LogLevel::info, "RenderBGFXObject: Transform - Pos(" + 
+            std::to_string(transformComponent->Position.x) + ", " +
+            std::to_string(transformComponent->Position.y) + ", " +
+            std::to_string(transformComponent->Position.z) + ") Rot(" +
+            std::to_string(transformComponent->Rotation.x) + ", " +
+            std::to_string(transformComponent->Rotation.y) + ", " +
+            std::to_string(transformComponent->Rotation.z) + ") Scale(" +
+            std::to_string(transformComponent->Scale.x) + ", " +
+            std::to_string(transformComponent->Scale.y) + ", " +
+            std::to_string(transformComponent->Scale.z) + ")");
+    } else {
+        // Fallback to identity matrix if no transform component
+        Log(LogLevel::warning, "RenderBGFXObject: No TransformComponent found for object '" + objectName + "', using identity matrix");
+        modelMatrix = glm::mat4(1.0f);
+    }
+    
+    // Set BGFX view/projection and model transforms so shader receives u_modelViewProj
+    float view[16];
+    float proj[16];
+    float model[16];
+    memcpy(view, glm::value_ptr(viewMatrix), sizeof(float) * 16);
+    memcpy(proj, glm::value_ptr(projMatrix), sizeof(float) * 16);
+    memcpy(model, glm::value_ptr(modelMatrix), sizeof(float) * 16);
+    bgfx::setViewTransform(0, view, proj);
+    bgfx::setTransform(model);
+    
+    // Set light direction and time
+    auto now = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+    float meshTime = (float)((now - g_meshTimeOffset) / 1000000000.0); // Convert to seconds
+    glm::vec4 lightDirTime(0.0f, 0.0f, -1.0f, meshTime);
+    bgfx::setUniform(bgfxMeshLightDirTime, glm::value_ptr(lightDirTime));
+    
+    // Set render states - disable face culling to show all faces
+    bgfx::setState(BGFX_STATE_DEFAULT & ~BGFX_STATE_CULL_MASK);
+    
+    // Bind diffuse texture from TextureComponent if present
+    static bgfx::UniformHandle s_diffuse = BGFX_INVALID_HANDLE;
+    static bgfx::UniformHandle s_roughness = BGFX_INVALID_HANDLE;
+    if (!bgfx::isValid(s_diffuse)) {
+        s_diffuse = bgfx::createUniform("s_diffuse", bgfx::UniformType::Sampler);
+    }
+    if (!bgfx::isValid(s_roughness)) {
+        s_roughness = bgfx::createUniform("s_roughness", bgfx::UniformType::Sampler);
+    }
+    if (auto* tex = GetComponent<TextureComponent>(objectName)) {
+        if (!tex->loaded) tex->Load();
+        if (tex->loaded && bgfx::isValid(tex->diffuse)) {
+            bgfx::setTexture(0, s_diffuse, tex->diffuse);
+        }
+        if (tex->loaded && bgfx::isValid(tex->roughness)) {
+            bgfx::setTexture(1, s_roughness, tex->roughness);
+        }
+    } else {
+        // Clear texture bindings for objects without textures
+        bgfx::setTexture(0, s_diffuse, BGFX_INVALID_HANDLE);
+        bgfx::setTexture(1, s_roughness, BGFX_INVALID_HANDLE);
+    }
+
+    // Submit mesh for rendering
+    bgfx::setVertexBuffer(0, modelComponent->mesh.vb);
+    bgfx::setIndexBuffer(modelComponent->mesh.ib);
+    bgfx::submit(0, bgfxMeshProgram);
+    
+    Log(LogLevel::info, "RenderBGFXObject: Object '" + objectName + "' rendered successfully!");
+}
+
+void RenderBGFXObjectsInstanced(const std::vector<std::string>& objectNames) {
+    if (!bgfx::isValid(bgfxMeshProgram) || objectNames.empty()) return;
+
+    // Assume all objects share the same model buffers (table model)
+    auto* firstModel = GetComponent<ModelComponent>(objectNames[0]);
+    if (!firstModel || !firstModel->loaded || !firstModel->mesh.loaded) return;
+
+    // Gather instance transforms
+    const uint32_t requested = static_cast<uint32_t>(objectNames.size());
+
+    std::vector<float> instanceData;
+    instanceData.reserve(requested * 4); // 4 floats per instance (x,y,z,w)
+
+    for (uint32_t i = 0; i < requested; ++i) {
+        auto* tr = GetComponent<TransformComponent>(objectNames[i]);
+        glm::vec3 pos = tr ? tr->Position : glm::vec3(0.0f);
+        instanceData.push_back(pos.x);
+        instanceData.push_back(pos.y);
+        instanceData.push_back(pos.z);
+        instanceData.push_back(1.0f); // w component
+    }
+
+    // Upload instance data as vec4 per instance
+    const uint32_t stride = sizeof(float) * 4;
+    const uint32_t avail = bgfx::getAvailInstanceDataBuffer(requested, stride);
+    if (avail == 0) return;
+    bgfx::InstanceDataBuffer idb;
+    bgfx::allocInstanceDataBuffer(&idb, avail, stride);
+    memcpy(idb.data, instanceData.data(), avail * stride);
+
+        // Set shared view/proj from camera
+        auto* camera = GetComponent<CameraComponent>("camera");
+        if (!camera) return;
+        glm::mat4 viewMatrix = GetViewMatrix(*camera);
+        float aspectRatio = GetWindowAspectRatio();
+        glm::mat4 projMatrix = glm::perspective(glm::radians(60.0f), aspectRatio, 0.1f, 100.0f);
+        float view[16]; float proj[16];
+        memcpy(view, glm::value_ptr(viewMatrix), sizeof(float) * 16);
+        memcpy(proj, glm::value_ptr(projMatrix), sizeof(float) * 16);
+        bgfx::setViewTransform(0, view, proj);
+
+        // Bind geometry and instance data
+        bgfx::setVertexBuffer(0, firstModel->mesh.vb);
+        bgfx::setIndexBuffer(firstModel->mesh.ib);
+        bgfx::setInstanceDataBuffer(&idb);
+
+        // State and submit
+        bgfx::setState(BGFX_STATE_DEFAULT);
+        bgfx::submit(0, bgfxMeshProgram);
+    }
+}
+
+void C6GE::RenderBGFXCube() {
     // Clear debug text area first to prevent duplicates on resize
     bgfx::dbgTextClear();
     
-    // Update view matrix based on camera movement
-    auto* camera = GetComponent<CameraComponent>("camera");
-    if (camera) {
-        // Create view matrix from camera component
-        glm::mat4 viewMatrix = GetViewMatrix(*camera);
-        float view[16];
-        memcpy(view, glm::value_ptr(viewMatrix), sizeof(float) * 16);
-        
-        // Create projection matrix
-        glm::mat4 projMatrix = GetProjectionMatrix();
-        float proj[16];
-        memcpy(proj, glm::value_ptr(projMatrix), sizeof(float) * 16);
-        
-        // Update the view and projection matrices for view 0
-        bgfx::setViewTransform(0, view, proj);
-        
-        // Display camera info
-        bgfx::dbgTextPrintf(0, 1, 0x0f, "Camera: %.1f, %.1f, %.1f", 
-            camera->Transform.Position.x, camera->Transform.Position.y, camera->Transform.Position.z);
-        bgfx::dbgTextPrintf(0, 2, 0x0f, "Rotation: %.1f, %.1f, %.1f", 
-            camera->Transform.Rotation.x, camera->Transform.Rotation.y, camera->Transform.Rotation.z);
-    } else {
-        // Camera not available yet, use default view
-        bgfx::dbgTextPrintf(0, 1, 0x0c, "Camera: Not available");
-        bgfx::dbgTextPrintf(0, 2, 0x0c, "Using default view matrix");
-    }
+    // Use default view for metaballs
+    bgfx::dbgTextPrintf(0, 1, 0x0f, "Rendering System Active");
+    bgfx::dbgTextPrintf(0, 2, 0x0f, "Using default view matrix");
     
     // Basic status info
     bgfx::dbgTextPrintf(0, 4, 0x0f, "BGFX Status:");
@@ -975,6 +2099,30 @@ void RenderBGFXCube() {
         bgfx::isValid(bgfxIndexBuffer) ? "OK" : "NO",
         bgfx::isValid(bgfxSimpleProgram) ? "OK" : "NO");
     bgfx::dbgTextPrintf(0, 6, 0x0f, "Renderer: %s", bgfx::getRendererName(bgfx::getRendererType()));
+    
+    // Display transform info for all objects with TransformComponent
+    std::vector<std::string> transformObjects = GetAllObjectsWithComponent<TransformComponent>();
+    int debugLine = 8;
+    for (const auto& objName : transformObjects) {
+        auto* transform = GetComponent<TransformComponent>(objName);
+        if (transform && debugLine < 20) { // Limit to prevent overflow
+            bgfx::dbgTextPrintf(0, debugLine++, 0x0f, "%s Transform:", objName.c_str());
+            bgfx::dbgTextPrintf(0, debugLine++, 0x0f, "Pos: %.2f, %.2f, %.2f", 
+                transform->Position.x, transform->Position.y, transform->Position.z);
+            bgfx::dbgTextPrintf(0, debugLine++, 0x0f, "Rot: %.2f, %.2f, %.2f", 
+                transform->Rotation.x, transform->Rotation.y, transform->Rotation.z);
+            bgfx::dbgTextPrintf(0, debugLine++, 0x0f, "Scale: %.2f, %.2f, %.2f", 
+                transform->Scale.x, transform->Scale.y, transform->Scale.z);
+            debugLine++; // Add space between objects
+        }
+    }
+    
+    // Display controls info
+    bgfx::dbgTextPrintf(0, debugLine++, 0x0f, "Camera Controls:");
+    bgfx::dbgTextPrintf(0, debugLine++, 0x0f, "WASD: Move, Mouse: Look");
+    bgfx::dbgTextPrintf(0, debugLine++, 0x0f, "Table Controls:");
+    bgfx::dbgTextPrintf(0, debugLine++, 0x0f, "IJKL: Move, Arrow Keys: Rotate");
+    bgfx::dbgTextPrintf(0, debugLine++, 0x0f, "UO: Forward/Back, +/-: Scale, R: Reset");
     
     // Calculate and display FPS
     static int frameCount = 0;
@@ -989,17 +2137,28 @@ void RenderBGFXCube() {
         lastTime = currentTime;
     }
     
-    // Render cubes
-    RenderCubes();
+    // Render metaballs only (DISABLED)
+    // C6GE::RenderMetaballs();
     
-    // Display cube info
-    bgfx::dbgTextPrintf(0, 9, 0x0a, "RENDERING CUBES:");
-    bgfx::dbgTextPrintf(0, 10, 0x0a, "Cubes: %d", (int)g_cubes.size());
-    bgfx::dbgTextPrintf(0, 11, 0x0a, "Cube shader: %s", bgfx::isValid(bgfxCubeProgram) ? "OK" : "NO");
+    // Render raymarching
+    C6GE::RenderRaymarch();
+    
+    // Display metaball info (DISABLED)
+    bgfx::dbgTextPrintf(0, 9, 0x0b, "METABALLS: DISABLED");
+    bgfx::dbgTextPrintf(0, 10, 0x0b, "Metaball shader: %s", bgfx::isValid(bgfxMetaballProgram) ? "OK" : "NO");
+    bgfx::dbgTextPrintf(0, 11, 0x0b, "Grid size: %dx%dx%d", kMaxDims, kMaxDims, kMaxDims);
+    
+    // Display raymarch info
+    bgfx::dbgTextPrintf(0, 13, 0x0e, "RENDERING RAYMARCH:");
+    bgfx::dbgTextPrintf(0, 14, 0x0e, "Raymarch shader: %s", bgfx::isValid(bgfxRaymarchProgram) ? "OK" : "NO");
+    
+    // Display mesh info
+    bgfx::dbgTextPrintf(0, 16, 0x0d, "RENDERING MESH:");
+    bgfx::dbgTextPrintf(0, 17, 0x0d, "Mesh shader: %s", bgfx::isValid(bgfxMeshProgram) ? "OK" : "NO");
 }
 
 // BGFX-specific rendering functions
-void ClearBGFX(float r, float g, float b, float a) {
+void C6GE::ClearBGFX(float r, float g, float b, float a) {
     // Convert float values (0.0-1.0) to RGBA8 format
     uint32_t rgba = 0;
     rgba |= (uint32_t)(r * 255.0f) << 24;  // R
@@ -1016,40 +2175,56 @@ void ClearBGFX(float r, float g, float b, float a) {
     bgfx::touch(0);
 }
 
-void PresentBGFX() {
+void C6GE::PresentBGFX() {
     // Submit the frame - this is crucial for proper frame timing
     bgfx::frame();
     
     // Also ensure we're processing events
-    GLFWwindow* window = static_cast<GLFWwindow*>(GetWindow());
+    GLFWwindow* window = glfwGetCurrentContext();
     if (window) {
         glfwPollEvents();
     }
 }
 
-void UpdateBGFXViewport() {
+void C6GE::UpdateBGFXViewport() {
     GLFWwindow* window = glfwGetCurrentContext();
     if (window) {
         int width, height;
         glfwGetWindowSize(window, &width, &height);
         bgfx::reset(static_cast<uint32_t>(width), static_cast<uint32_t>(height), BGFX_RESET_VSYNC);
         bgfx::setViewRect(0, 0, 0, static_cast<uint16_t>(width), static_cast<uint16_t>(height));
+        
+        // Note: HDR framebuffer will be updated in BeginHDR() on next frame
     }
 }
 
-void WindowResizeCallback(GLFWwindow* window, int width, int height) {
-    if (currentRenderer == RendererType::BGFX) {
+float C6GE::GetWindowAspectRatio() {
+    GLFWwindow* window = glfwGetCurrentContext();
+    if (window) {
+        int width, height;
+        glfwGetWindowSize(window, &width, &height);
+        if (height > 0) {
+            return static_cast<float>(width) / static_cast<float>(height);
+        }
+    }
+    return 1.0f; // Default aspect ratio if window not available
+}
+
+void C6GE::WindowResizeCallback(GLFWwindow* window, int width, int height) {
+    if (currentRenderer == C6GE::RendererType::BGFX) {
         bgfx::reset(static_cast<uint32_t>(width), static_cast<uint32_t>(height), BGFX_RESET_VSYNC);
         bgfx::setViewRect(0, 0, 0, static_cast<uint16_t>(width), static_cast<uint16_t>(height));
+        
+        // Note: HDR framebuffer will be updated in BeginHDR() on next frame
     }
 }
 
-RendererType GetCurrentRenderer() {
+C6GE::RendererType C6GE::GetCurrentRenderer() {
     return currentRenderer;
 }
 
-void CleanupBGFXResources() {
-    if (currentRenderer == RendererType::BGFX) {
+void C6GE::CleanupBGFXResources() {
+    if (currentRenderer == C6GE::RendererType::BGFX) {
         // Destroy BGFX resources explicitly
         if (bgfx::isValid(bgfxVertexBuffer)) {
             bgfx::destroy(bgfxVertexBuffer);
@@ -1070,7 +2245,6 @@ void CleanupBGFXResources() {
         if (bgfx::isValid(s_fragmentShader)) {
             bgfx::destroy(s_fragmentShader);
             s_fragmentShader = BGFX_INVALID_HANDLE;
-        }
     }
 }
 }
