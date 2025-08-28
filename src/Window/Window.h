@@ -36,5 +36,9 @@ namespace C6GE {
             void SetWindowShouldClose(bool value);
             int GetWindowAttrib(int attrib);
             void DestroyWindow();
+            int GetWindowWidth();
+            int GetWindowHeight();
+            int GetFramebufferWidth();
+            int GetFramebufferHeight();
     };
 }

@@ -42,11 +42,19 @@ namespace C6GE {
     void* Window::GetWin32Window(){
         return glfwGetWin32Window(m_window);
     }
+    #else
+    void* Window::GetWin32Window(){
+        return nullptr;
+    }
     #endif
 
     #if defined(__APPLE__)
     void* Window::GetCocoaWindow(){
         return glfwGetCocoaWindow(m_window);
+    }
+    #else
+    void* Window::GetCocoaWindow(){
+        return nullptr;
     }
     #endif
 
@@ -57,6 +65,14 @@ namespace C6GE {
 
     void* Window::GetX11Display(){
         return glfwGetX11Display();
+    }
+    #else
+    void* Window::GetX11Window(){
+        return nullptr;
+    }
+
+    void* Window::GetX11Display(){
+        return nullptr;
     }
     #endif
 
@@ -75,5 +91,31 @@ namespace C6GE {
     void Window::DestroyWindow(){
         glfwDestroyWindow(m_window);
         glfwTerminate();
+    }
+
+    // make a function to get the window width and height
+    int Window::GetWindowWidth(){
+        int width, height;
+        glfwGetWindowSize(m_window, &width, nullptr);
+        return width;
+    }
+
+    int Window::GetWindowHeight(){
+        int width, height;
+        glfwGetWindowSize(m_window, nullptr, &height);
+        return height;
+    }
+    
+    // make a function to get the framebuffer width and height
+    int Window::GetFramebufferWidth(){
+        int width, height;
+        glfwGetFramebufferSize(m_window, &width, nullptr);
+        return width;
+    }
+
+    int Window::GetFramebufferHeight(){
+        int width, height;
+        glfwGetFramebufferSize(m_window, nullptr, &height);
+        return height;
     }
 }

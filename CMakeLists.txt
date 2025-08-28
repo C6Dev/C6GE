@@ -16,7 +16,7 @@ set(BGFX_SHADER_INCLUDE_DIRS
 
 bgfx_compile_shaders(
   TYPE VERTEX
-  SHADERS ${SHADER_DIR}/vs_cubes.sc
+  SHADERS ${SHADER_DIR}/vs_metaballs.sc
   VARYING_DEF ${SHADER_DIR}/varying.def.sc
   OUTPUT_DIR ${SHADER_OUT_DIR}
   AS_HEADERS
@@ -26,7 +26,7 @@ bgfx_compile_shaders(
 )
 bgfx_compile_shaders(
   TYPE FRAGMENT
-  SHADERS ${SHADER_DIR}/fs_cubes.sc
+  SHADERS ${SHADER_DIR}/fs_metaballs.sc
   VARYING_DEF ${SHADER_DIR}/varying.def.sc
   OUTPUT_DIR ${SHADER_OUT_DIR}
   AS_HEADERS
@@ -78,10 +78,12 @@ add_executable(C6GE
     src/main.cpp
     src/Engine/Engine.cpp
     src/Engine/Engine.h
+    src/Render/Render.cpp
+    src/Render/Render.h
     src/Window/Window.cpp
     src/Window/Window.h
-    src/vs_cubes.sc
-    src/fs_cubes.sc
+    src/vs_metaballs.sc
+    src/fs_metaballs.sc
     src/varying.def.sc
     external/bgfx.cmake/bgfx/examples/common/common.sh
     external/bgfx.cmake/bgfx/src/bgfx_shader.sh
