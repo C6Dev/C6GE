@@ -2,6 +2,12 @@
 cmake_minimum_required(VERSION 3.21)
 project(C6GE)
 
+# Set CMake policies to suppress warnings
+cmake_policy(SET CMP0175 NEW)
+
+# Set bgfx configuration options before adding subdirectory
+set(BX_CONFIG_DEBUG ON CACHE BOOL "Enable debug logging" FORCE)
+set(BGFX_CONFIG_DEBUG_ANNOTATION ON CACHE BOOL "Enable debug annotations" FORCE)
 
 add_subdirectory(external/bgfx.cmake ${CMAKE_BINARY_DIR}/bgfx.cmake-build)
 include(${CMAKE_CURRENT_SOURCE_DIR}/external/bgfx.cmake/cmake/bgfxToolUtils.cmake)
@@ -134,7 +140,11 @@ add_library(imgui
     src/imgui/imgui_impl_bgfx.cpp
 )
 
-target_link_libraries(imgui PUBLIC glfw bgfx bx bimg)
+target_link_libraries(imgui PUBLIC glfw)
+
+target_compile_definitions(imgui PUBLIC
+    BX_CONFIG_DEBUG=1
+)
 
 target_include_directories(imgui PUBLIC
     external/imgui
@@ -166,6 +176,10 @@ add_executable(C6GE
     src/MeshLoader/MeshLoader.cpp
 )
 
+target_compile_definitions(C6GE PRIVATE
+    BX_CONFIG_DEBUG=1
+)
+
 target_link_libraries(C6GE PRIVATE
     bgfx
     bimg
@@ -175,6 +189,31 @@ target_link_libraries(C6GE PRIVATE
     imgui
     meshoptimizer
 )
+
+# Platform-specific linking
+if(APPLE)
+    target_link_libraries(C6GE PRIVATE
+        "-framework Cocoa"
+        "-framework Metal"
+        "-framework QuartzCore"
+        "-framework IOKit"
+        "-framework CoreFoundation"
+        "-framework Foundation"
+    )
+elseif(WIN32)
+    target_link_libraries(C6GE PRIVATE
+        "-lkernel32"
+        "-luser32"
+        "-lgdi32"
+        "-lwinspool"
+        "-lshell32"
+        "-lole32"
+        "-loleaut32"
+        "-luuid"
+        "-lcomdlg32"
+        "-ladvapi32"
+    )
+endif()
 
 target_include_directories(C6GE PRIVATE 
     ${IMGUI_GEN_DIR} 
@@ -188,5 +227,4 @@ target_include_directories(C6GE PRIVATE
 # Copy assets to the same directory as the executable
 add_custom_command(TARGET C6GE POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/src/assets $<TARGET_FILE_DIR:C6GE>/assets
-    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/bgfx.cmake-build/cmake/bgfx/Debug/meshes $<TARGET_FILE_DIR:C6GE>/assets/meshes
 )
