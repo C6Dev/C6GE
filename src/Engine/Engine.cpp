@@ -2,9 +2,11 @@
 
 #include "../Window/Window.h"
 #include "../Render/Render.h"
+#include "../MeshLoader/MeshLoader.h"
 
 #include <bgfx/bgfx.h>
 #include <bgfx/platform.h>
+#include <bgfx_utils.h>
 #include <bgfx/embedded_shader.h>
 #include <bx/math.h>
 #include <bx/timer.h>
@@ -17,119 +19,29 @@
 #include <cstdint>
 
 // Include shader binary data
-#include <glsl/vs_raymarching.sc.bin.h>
-#include <essl/vs_raymarching.sc.bin.h>
-#include <glsl/fs_raymarching.sc.bin.h>
-#include <essl/fs_raymarching.sc.bin.h>
-#include <spirv/vs_raymarching.sc.bin.h>
-#include <spirv/fs_raymarching.sc.bin.h>
+#include <glsl/vs_mesh.sc.bin.h>
+#include <essl/vs_mesh.sc.bin.h>
+#include <glsl/fs_mesh.sc.bin.h>
+#include <essl/fs_mesh.sc.bin.h>
+#include <spirv/vs_mesh.sc.bin.h>
+#include <spirv/fs_mesh.sc.bin.h>
 
 #if defined(_WIN32)
-#include "dx11/vs_raymarching.sc.bin.h"
-#include "dx11/fs_raymarching.sc.bin.h"
+#include "dx11/vs_mesh.sc.bin.h"
+#include "dx11/fs_mesh.sc.bin.h"
 #endif
 #if __APPLE__
-#include "../mtl/vs_raymarching.sc.bin.h"
-#include "../mtl/fs_raymarching.sc.bin.h"
+#include "metal/vs_mesh.sc.bin.h"
+#include "metal/fs_mesh.sc.bin.h"
 #endif
-
-
-struct PosColorTexCoord0Vertex
-{
-	float m_x;
-	float m_y;
-	float m_z;
-	uint32_t m_abgr;
-	float m_u;
-	float m_v;
-
-	static void init()
-	{
-		ms_layout
-			.begin()
-			.add(bgfx::Attrib::Position,  3, bgfx::AttribType::Float)
-			.add(bgfx::Attrib::Color0,    4, bgfx::AttribType::Uint8, true)
-			.add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float)
-			.end();
-	}
-
-	static bgfx::VertexLayout ms_layout;
-};
-
-bgfx::VertexLayout PosColorTexCoord0Vertex::ms_layout;
-
-void renderScreenSpaceQuad(uint8_t _view, bgfx::ProgramHandle _program, float _x, float _y, float _width, float _height)
-{
-	bgfx::TransientVertexBuffer tvb;
-	bgfx::TransientIndexBuffer tib;
-
-	if (bgfx::allocTransientBuffers(&tvb, PosColorTexCoord0Vertex::ms_layout, 4, &tib, 6) )
-	{
-		PosColorTexCoord0Vertex* vertex = (PosColorTexCoord0Vertex*)tvb.data;
-
-		float zz = 0.0f;
-
-		const float minx = _x;
-		const float maxx = _x + _width;
-		const float miny = _y;
-		const float maxy = _y + _height;
-
-		float minu = -1.0f;
-		float minv = -1.0f;
-		float maxu =  1.0f;
-		float maxv =  1.0f;
-
-		vertex[0].m_x = minx;
-		vertex[0].m_y = miny;
-		vertex[0].m_z = zz;
-		vertex[0].m_abgr = 0xff0000ff;
-		vertex[0].m_u = minu;
-		vertex[0].m_v = minv;
-
-		vertex[1].m_x = maxx;
-		vertex[1].m_y = miny;
-		vertex[1].m_z = zz;
-		vertex[1].m_abgr = 0xff00ff00;
-		vertex[1].m_u = maxu;
-		vertex[1].m_v = minv;
-
-		vertex[2].m_x = maxx;
-		vertex[2].m_y = maxy;
-		vertex[2].m_z = zz;
-		vertex[2].m_abgr = 0xffff0000;
-		vertex[2].m_u = maxu;
-		vertex[2].m_v = maxv;
-
-		vertex[3].m_x = minx;
-		vertex[3].m_y = maxy;
-		vertex[3].m_z = zz;
-		vertex[3].m_abgr = 0xffffffff;
-		vertex[3].m_u = minu;
-		vertex[3].m_v = maxv;
-
-		uint16_t* indices = (uint16_t*)tib.data;
-
-		indices[0] = 0;
-		indices[1] = 2;
-		indices[2] = 1;
-		indices[3] = 0;
-		indices[4] = 3;
-		indices[5] = 2;
-
-		bgfx::setState(BGFX_STATE_DEFAULT);
-		bgfx::setIndexBuffer(&tib);
-		bgfx::setVertexBuffer(0, &tvb);
-		bgfx::submit(_view, _program);
-	}
-}
 
 namespace C6GE {
 
 // Embedded shaders - bgfx will automatically select the right format
 static const bgfx::EmbeddedShader s_embeddedShaders[] =
 {
-    BGFX_EMBEDDED_SHADER(vs_raymarching),
-    BGFX_EMBEDDED_SHADER(fs_raymarching),
+    BGFX_EMBEDDED_SHADER(vs_mesh),
+    BGFX_EMBEDDED_SHADER(fs_mesh),
 
     BGFX_EMBEDDED_SHADER_END()
 };
@@ -151,7 +63,7 @@ bool EngineRun() {
         return false;
     }
 
-    if (!window.CreateGLFWWindow("C6GE Cubes", 1280, 720)) {
+    if (!window.CreateGLFWWindow("C6GE", 1280, 720)) {
         std::cout << "Failed to create window" << std::endl;
         return false;
     }
@@ -181,23 +93,34 @@ bool EngineRun() {
         return false;
     }
 
-	// Create vertex stream declaration.
-	PosColorTexCoord0Vertex::init();
-
 	int64_t m_timeOffset;
-	bgfx::UniformHandle u_mtx;
-	bgfx::UniformHandle u_lightDirTime;
+	Mesh* m_mesh;
 	bgfx::ProgramHandle m_program;
+	bgfx::UniformHandle u_time;
+	
+	// bunny properties for UI controls
+	float m_bunnyScale = 1.0f;
+	float m_bunnyRotation = 0.0f;
+	bx::Vec3 m_bunnyPosition = {0.0f, 0.0f, 0.0f};
 
-	u_mtx          = bgfx::createUniform("u_mtx",      bgfx::UniformType::Mat4);
-	u_lightDirTime = bgfx::createUniform("u_lightDirTime", bgfx::UniformType::Vec4);
-	
-	// Create program from embedded shaders.
+	u_time = bgfx::createUniform("u_time", bgfx::UniformType::Vec4);
+
+	// Create program from shaders.
 	bgfx::RendererType::Enum type = bgfx::getRendererType();
-	bgfx::ShaderHandle vsh = bgfx::createEmbeddedShader(s_embeddedShaders, type, "vs_raymarching");
-	bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(s_embeddedShaders, type, "fs_raymarching");
+	bgfx::ShaderHandle vsh = bgfx::createEmbeddedShader(s_embeddedShaders, type, "vs_mesh");
+	bgfx::ShaderHandle fsh = bgfx::createEmbeddedShader(s_embeddedShaders, type, "fs_mesh");
 	m_program = bgfx::createProgram(vsh, fsh, true);
-	
+
+	// Pre-convert mesh files to .bin format during initialization
+	MeshLoader meshLoader;
+	if (meshLoader.preConvertMesh("../src/assets/meshes/bunny.obj")) {
+		// Load the converted .bin file
+		m_mesh = meshLoader.loadMesh("../src/assets/meshes/bunny.bin");
+	} else {
+		std::cout << "Failed to pre-convert bunny.obj" << std::endl;
+		return false;
+	}
+
 	m_timeOffset = bx::getHPCounter();
 
     IMGUI_CHECKVERSION();
@@ -252,6 +175,21 @@ bool EngineRun() {
             ImGuiCond_FirstUseEver
         );
         ImGui::Begin("Settings", NULL, 0);
+        
+        // Add some content to the settings window
+        ImGui::Text("C6GE Engine");
+        ImGui::Text("Window Size: %d x %d", currentWidth, currentHeight);
+        
+        ImGui::End();
+
+		ImGui::Begin("Bunny Settings", NULL, 0);
+		ImGui::Text("Bunny Scale: %.2f", m_bunnyScale);
+		ImGui::SliderFloat("Bunny Scale", &m_bunnyScale, 0.1f, 10.0f);
+		ImGui::SliderFloat("Bunny Rotation", &m_bunnyRotation, 0.0f, 360.0f);
+		ImGui::SliderFloat("Bunny Position X", &m_bunnyPosition.x, -10.0f, 10.0f);
+		ImGui::SliderFloat("Bunny Position Y", &m_bunnyPosition.y, -10.0f, 10.0f);
+		ImGui::SliderFloat("Bunny Position Z", &m_bunnyPosition.z, -10.0f, 10.0f);
+		ImGui::End();
 
         // Set view 0 default viewport with current window size
         bgfx::setViewRect(0, 0, 0, uint16_t(currentWidth), uint16_t(currentHeight));
@@ -259,61 +197,63 @@ bool EngineRun() {
         // Clear the screen with black - do this BEFORE touch(0)
         bgfx::setViewClear(0, BGFX_CLEAR_COLOR|BGFX_CLEAR_DEPTH, 0x000000ff, 1.0f, 0);
 
+        // Render ImGui
+        ImGui::Render();
+        ImGui_Implbgfx_RenderDrawLists(ImGui::GetDrawData());
+
         // This dummy draw call is here to make sure that view 0 is cleared
         // if no other draw calls are submitted to view 0.
         bgfx::touch(0);
 
-		const bx::Vec3 at  = { 0.0f, 0.0f,   0.0f };
-		const bx::Vec3 eye = { 0.0f, 0.0f, -15.0f };
+		float time = (float)( (bx::getHPCounter()-m_timeOffset)/double(bx::getHPFrequency() ) );
+		bgfx::setUniform(u_time, &time);
 
-		float view[16];
-		float proj[16];
-		bx::mtxLookAt(view, eye, at);
-
-		const bgfx::Caps* caps = bgfx::getCaps();
-		bx::mtxProj(proj, 60.0f, float(currentWidth)/float(currentHeight), 0.1f, 100.0f, caps->homogeneousDepth);
-
-		// Set view and projection matrix for view 1.
-		bgfx::setViewTransform(0, view, proj);
-
-		float ortho[16];
-		bx::mtxOrtho(ortho, 0.0f, 1280.0f, 720.0f, 0.0f, 0.0f, 100.0f, 0.0, caps->homogeneousDepth);
+		const bx::Vec3 at  = { 0.0f, 1.0f,  0.0f };
+		const bx::Vec3 eye = { 0.0f, 1.0f, -2.5f };
 
 		// Set view and projection matrix for view 0.
-		bgfx::setViewTransform(1, NULL, ortho);
+		{
+			float view[16];
+			bx::mtxLookAt(view, eye, at);
 
-		float time = (float)( (bx::getHPCounter()-m_timeOffset)/double(bx::getHPFrequency() ) );
+			float proj[16];
+			bx::mtxProj(proj, 60.0f, float(currentWidth)/float(currentHeight), 0.1f, 100.0f, bgfx::getCaps()->homogeneousDepth);
+			bgfx::setViewTransform(0, view, proj);
 
-		float vp[16];
-		bx::mtxMul(vp, view, proj);
+			// Set view 0 default viewport.
+			bgfx::setViewRect(0, 0, 0, uint16_t(currentWidth), uint16_t(currentHeight) );
+		}
 
 		float mtx[16];
-		bx::mtxRotateXY(mtx
-			, time
-			, time*0.37f
-			);
+		
+		// Create transformation matrix using UI-controlled values
+		float scaleMtx[16];
+		float rotMtx[16];
+		float posMtx[16];
+		
+		// Scale matrix
+		bx::mtxScale(scaleMtx, m_bunnyScale, m_bunnyScale, m_bunnyScale);
+		
+		// Rotation matrix (convert degrees to radians)
+		bx::mtxRotateY(rotMtx, bx::toRad(m_bunnyRotation + time*0.37f));
+		
+		// Position matrix
+		bx::mtxTranslate(posMtx, m_bunnyPosition.x, m_bunnyPosition.y, m_bunnyPosition.z);
+		
+		// Combine transformations: position * rotation * scale
+		bx::mtxMul(mtx, posMtx, rotMtx);
+		float tempMtx[16];
+		bx::mtxMul(tempMtx, mtx, scaleMtx);
+		bx::memCopy(mtx, tempMtx, sizeof(mtx));
 
-		float mtxInv[16];
-		bx::mtxInverse(mtxInv, mtx);
-		float lightDirTime[4];
-		const bx::Vec3 lightDirModelN = bx::normalize(bx::Vec3{-0.4f, -0.5f, -1.0f});
-		bx::store(lightDirTime, bx::mul(lightDirModelN, mtxInv) );
-		lightDirTime[3] = time;
-		bgfx::setUniform(u_lightDirTime, lightDirTime);
-
-		float mvp[16];
-		bx::mtxMul(mvp, mtx, vp);
-
-		float invMvp[16];
-		bx::mtxInverse(invMvp, mvp);
-		bgfx::setUniform(u_mtx, invMvp);
-
-		renderScreenSpaceQuad(1, m_program, 0.0f, 0.0f, 1280.0f, 720.0f);
-
-        ImGui::End();
-
-        ImGui::Render();
-        ImGui_Implbgfx_RenderDrawLists(ImGui::GetDrawData());
+		// Use custom render state to disable culling and fix "inside out" appearance
+		uint64_t renderState = BGFX_STATE_WRITE_RGB
+			| BGFX_STATE_WRITE_A
+			| BGFX_STATE_WRITE_Z
+			| BGFX_STATE_DEPTH_TEST_LESS
+			| BGFX_STATE_MSAA;
+		// Note: No BGFX_STATE_CULL_* specified = culling disabled
+		meshSubmit(m_mesh, 0, m_program, mtx, renderState);
 
         // Advance to next frame. Rendering thread will be kicked to
         // process submitted rendering primitives.
@@ -322,11 +262,6 @@ bool EngineRun() {
 
     ImGui_Implbgfx_Shutdown();
     ImGui_ImplGlfw_Shutdown();
-
-	// Cleanup.
-	bgfx::destroy(m_program);
-	bgfx::destroy(u_mtx);
-	bgfx::destroy(u_lightDirTime);
     ImGui::DestroyContext();
     bgfx::shutdown();
     window.DestroyWindow();

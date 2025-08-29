@@ -6,6 +6,9 @@ project(C6GE)
 add_subdirectory(external/bgfx.cmake ${CMAKE_BINARY_DIR}/bgfx.cmake-build)
 include(${CMAKE_CURRENT_SOURCE_DIR}/external/bgfx.cmake/cmake/bgfxToolUtils.cmake)
 
+# Add meshoptimizer
+add_subdirectory(external/meshoptimizer)
+
 # Add bgfx shader build integration
 set(SHADER_DIR ${CMAKE_SOURCE_DIR}/src)
 set(SHADER_OUT_DIR ${CMAKE_BINARY_DIR}/generated/shaders)
@@ -16,7 +19,7 @@ set(BGFX_SHADER_INCLUDE_DIRS
 
 bgfx_compile_shaders(
   TYPE VERTEX
-  SHADERS ${SHADER_DIR}/vs_raymarching.sc
+  SHADERS ${SHADER_DIR}/vs_mesh.sc
   VARYING_DEF ${SHADER_DIR}/varying.def.sc
   OUTPUT_DIR ${SHADER_OUT_DIR}
   AS_HEADERS
@@ -27,7 +30,7 @@ bgfx_compile_shaders(
 
 bgfx_compile_shaders(
   TYPE VERTEX
-  SHADERS ${SHADER_DIR}/vs_raymarching.sc
+  SHADERS ${SHADER_DIR}/vs_mesh.sc
   VARYING_DEF ${SHADER_DIR}/varying.def.sc
   OUTPUT_DIR ${SHADER_OUT_DIR}
   AS_HEADERS
@@ -38,7 +41,7 @@ bgfx_compile_shaders(
 
 bgfx_compile_shaders(
   TYPE VERTEX
-  SHADERS ${SHADER_DIR}/vs_raymarching.sc
+  SHADERS ${SHADER_DIR}/vs_mesh.sc
   VARYING_DEF ${SHADER_DIR}/varying.def.sc
   OUTPUT_DIR ${SHADER_OUT_DIR}
   AS_HEADERS
@@ -49,7 +52,7 @@ bgfx_compile_shaders(
 
 bgfx_compile_shaders(
   TYPE FRAGMENT
-  SHADERS ${SHADER_DIR}/fs_raymarching.sc
+  SHADERS ${SHADER_DIR}/fs_mesh.sc
   VARYING_DEF ${SHADER_DIR}/varying.def.sc
   OUTPUT_DIR ${SHADER_OUT_DIR}
   AS_HEADERS
@@ -60,7 +63,7 @@ bgfx_compile_shaders(
 
 bgfx_compile_shaders(
   TYPE FRAGMENT
-  SHADERS ${SHADER_DIR}/fs_raymarching.sc
+  SHADERS ${SHADER_DIR}/fs_mesh.sc
   VARYING_DEF ${SHADER_DIR}/varying.def.sc
   OUTPUT_DIR ${SHADER_OUT_DIR}
   AS_HEADERS
@@ -71,7 +74,7 @@ bgfx_compile_shaders(
 
 bgfx_compile_shaders(
   TYPE FRAGMENT
-  SHADERS ${SHADER_DIR}/fs_raymarching.sc
+  SHADERS ${SHADER_DIR}/fs_mesh.sc
   VARYING_DEF ${SHADER_DIR}/varying.def.sc
   OUTPUT_DIR ${SHADER_OUT_DIR}
   AS_HEADERS
@@ -84,7 +87,7 @@ bgfx_compile_shaders(
 if(APPLE)
   bgfx_compile_shaders(
     TYPE VERTEX
-    SHADERS ${SHADER_DIR}/vs_raymarching.sc
+    SHADERS ${SHADER_DIR}/vs_mesh.sc
     VARYING_DEF ${SHADER_DIR}/varying.def.sc
     OUTPUT_DIR ${SHADER_OUT_DIR}
     AS_HEADERS
@@ -95,7 +98,7 @@ if(APPLE)
 
   bgfx_compile_shaders(
     TYPE FRAGMENT
-    SHADERS ${SHADER_DIR}/fs_raymarching.sc
+    SHADERS ${SHADER_DIR}/fs_mesh.sc
     VARYING_DEF ${SHADER_DIR}/varying.def.sc
     OUTPUT_DIR ${SHADER_OUT_DIR}
     AS_HEADERS
@@ -153,35 +156,34 @@ add_executable(C6GE
     src/Render/Render.h
     src/Window/Window.cpp
     src/Window/Window.h
-    src/vs_raymarching.sc
-    src/fs_raymarching.sc
+    src/vs_mesh.sc
+    src/fs_mesh.sc
     src/iq_sdf.sh
     src/varying.def.sc
     external/bgfx.cmake/bgfx/examples/common/common.sh
     external/bgfx.cmake/bgfx/src/bgfx_shader.sh
+    external/bgfx.cmake/bgfx/examples/common/bgfx_utils.cpp
+    src/entry_stubs.cpp
+    src/MeshLoader/MeshLoader.cpp
+    src/vs_mesh_simple.sc
+    src/fs_mesh_simple.sc
 )
 
 target_link_libraries(C6GE PRIVATE
     bgfx
     bimg
+    bimg_decode
     bx
     glfw
     imgui
+    meshoptimizer
 )
 
 target_include_directories(C6GE PRIVATE 
     ${IMGUI_GEN_DIR} 
     ${SHADER_OUT_DIR}
     ${CMAKE_SOURCE_DIR}/external/bgfx.cmake/bgfx/examples/common
+    ${CMAKE_SOURCE_DIR}/external/bgfx.cmake/bx/include
+    ${CMAKE_SOURCE_DIR}/external/bgfx.cmake/bgfx/examples/common/entry
+    ${CMAKE_SOURCE_DIR}/external
 )
-
-# Copy Metal shaders to src/mtl directory for relative includes on macOS
-if(APPLE)
-  add_custom_command(
-    TARGET C6GE PRE_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADER_DIR}/mtl
-    COMMAND ${CMAKE_COMMAND} -E copy ${SHADER_OUT_DIR}/metal/vs_raymarching.sc.bin.h ${SHADER_DIR}/mtl/
-    COMMAND ${CMAKE_COMMAND} -E copy ${SHADER_OUT_DIR}/metal/fs_raymarching.sc.bin.h ${SHADER_DIR}/mtl/
-    COMMENT "Copying Metal shaders to src/mtl directory"
-  )
-endif()
