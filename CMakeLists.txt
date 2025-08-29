@@ -158,15 +158,12 @@ add_executable(C6GE
     src/Window/Window.h
     src/vs_mesh.sc
     src/fs_mesh.sc
-    src/iq_sdf.sh
     src/varying.def.sc
     external/bgfx.cmake/bgfx/examples/common/common.sh
     external/bgfx.cmake/bgfx/src/bgfx_shader.sh
     external/bgfx.cmake/bgfx/examples/common/bgfx_utils.cpp
     src/entry_stubs.cpp
     src/MeshLoader/MeshLoader.cpp
-    src/vs_mesh_simple.sc
-    src/fs_mesh_simple.sc
 )
 
 target_link_libraries(C6GE PRIVATE
@@ -186,4 +183,10 @@ target_include_directories(C6GE PRIVATE
     ${CMAKE_SOURCE_DIR}/external/bgfx.cmake/bx/include
     ${CMAKE_SOURCE_DIR}/external/bgfx.cmake/bgfx/examples/common/entry
     ${CMAKE_SOURCE_DIR}/external
+)
+
+# Copy assets to the same directory as the executable
+add_custom_command(TARGET C6GE POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/src/assets $<TARGET_FILE_DIR:C6GE>/assets
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/bgfx.cmake-build/cmake/bgfx/Debug/meshes $<TARGET_FILE_DIR:C6GE>/assets/meshes
 )

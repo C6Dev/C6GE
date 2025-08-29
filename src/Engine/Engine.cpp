@@ -113,9 +113,14 @@ bool EngineRun() {
 
 	// Pre-convert mesh files to .bin format during initialization
 	MeshLoader meshLoader;
-	if (meshLoader.preConvertMesh("../src/assets/meshes/bunny.obj")) {
+	if (meshLoader.preConvertMesh("assets/meshes/bunny.obj")) {
 		// Load the converted .bin file
-		m_mesh = meshLoader.loadMesh("../src/assets/meshes/bunny.bin");
+		m_mesh = meshLoader.loadMesh("assets/meshes/bunny.bin");
+		if (!m_mesh) {
+			std::cout << "Failed to load bunny.bin mesh" << std::endl;
+			return false;
+		}
+		std::cout << "Successfully loaded bunny mesh" << std::endl;
 	} else {
 		std::cout << "Failed to pre-convert bunny.obj" << std::endl;
 		return false;
@@ -253,7 +258,9 @@ bool EngineRun() {
 			| BGFX_STATE_DEPTH_TEST_LESS
 			| BGFX_STATE_MSAA;
 		// Note: No BGFX_STATE_CULL_* specified = culling disabled
-		meshSubmit(m_mesh, 0, m_program, mtx, renderState);
+		if (m_mesh) {
+			meshSubmit(m_mesh, 0, m_program, mtx, renderState);
+		}
 
         // Advance to next frame. Rendering thread will be kicked to
         // process submitted rendering primitives.

@@ -98,7 +98,11 @@ bool MeshLoader::preConvertMesh(const char* filePath) {
 bool MeshLoader::convertToBin(const bx::FilePath& inputPath, const bx::FilePath& outputPath) {
     // Build geometryc command
     // Use the geometryc executable that was built in the build directory
-    const char* geometrycPath = "./bgfx.cmake-build/cmake/bgfx/geometryc"; // Correct path to built geometryc
+#ifdef _WIN32
+    const char* geometrycPath = "..\\bgfx.cmake-build\\cmake\\bgfx\\Debug\\geometryc.exe"; // Windows executable
+#else
+    const char* geometrycPath = "./bgfx.cmake-build/cmake/bgfx/geometryc"; // Unix executable
+#endif
     
     char cmd[1024];
     bx::snprintf(cmd, sizeof(cmd), 
@@ -109,7 +113,7 @@ bool MeshLoader::convertToBin(const bx::FilePath& inputPath, const bx::FilePath&
     
     std::cout << "Executing: " << cmd << std::endl;
     
-    // Execute the command
+    // Execute the command from the current directory (Debug)
     int result = system(cmd);
     return result == 0;
 }

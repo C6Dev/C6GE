@@ -42,6 +42,7 @@ void main()
 	// Change to simple white color instead of the colorful scheme
 	vec3 color = vec3(1.0, 1.0, 1.0) * v_color0.xyz;
 
-	gl_FragColor.xyz = pow(vec3(0.07, 0.06, 0.08) + color*lc.y + fres*pow(lc.z, 128.0), vec3_splat(1.0/2.2) );
+	vec3 lighting = vec3(0.07, 0.06, 0.08) + color*lc.y + fres*pow(max(lc.z, 0.0), 128.0);
+	gl_FragColor.xyz = pow(max(lighting, 0.0), vec3_splat(1.0/2.2) );
 	gl_FragColor.w = 1.0;
 }
