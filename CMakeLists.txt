@@ -16,7 +16,29 @@ set(BGFX_SHADER_INCLUDE_DIRS
 
 bgfx_compile_shaders(
   TYPE VERTEX
-  SHADERS ${SHADER_DIR}/vs_metaballs.sc
+  SHADERS ${SHADER_DIR}/vs_raymarching.sc
+  VARYING_DEF ${SHADER_DIR}/varying.def.sc
+  OUTPUT_DIR ${SHADER_OUT_DIR}
+  AS_HEADERS
+  DEPENDS shaderc
+  LANG glsl
+  INCLUDE_DIRS ${BGFX_SHADER_INCLUDE_DIRS}
+)
+
+bgfx_compile_shaders(
+  TYPE VERTEX
+  SHADERS ${SHADER_DIR}/vs_raymarching.sc
+  VARYING_DEF ${SHADER_DIR}/varying.def.sc
+  OUTPUT_DIR ${SHADER_OUT_DIR}
+  AS_HEADERS
+  DEPENDS shaderc
+  LANG essl
+  INCLUDE_DIRS ${BGFX_SHADER_INCLUDE_DIRS}
+)
+
+bgfx_compile_shaders(
+  TYPE VERTEX
+  SHADERS ${SHADER_DIR}/vs_raymarching.sc
   VARYING_DEF ${SHADER_DIR}/varying.def.sc
   OUTPUT_DIR ${SHADER_OUT_DIR}
   AS_HEADERS
@@ -24,9 +46,32 @@ bgfx_compile_shaders(
   LANG spirv
   INCLUDE_DIRS ${BGFX_SHADER_INCLUDE_DIRS}
 )
+
 bgfx_compile_shaders(
   TYPE FRAGMENT
-  SHADERS ${SHADER_DIR}/fs_metaballs.sc
+  SHADERS ${SHADER_DIR}/fs_raymarching.sc
+  VARYING_DEF ${SHADER_DIR}/varying.def.sc
+  OUTPUT_DIR ${SHADER_OUT_DIR}
+  AS_HEADERS
+  DEPENDS shaderc
+  LANG glsl
+  INCLUDE_DIRS ${BGFX_SHADER_INCLUDE_DIRS}
+)
+
+bgfx_compile_shaders(
+  TYPE FRAGMENT
+  SHADERS ${SHADER_DIR}/fs_raymarching.sc
+  VARYING_DEF ${SHADER_DIR}/varying.def.sc
+  OUTPUT_DIR ${SHADER_OUT_DIR}
+  AS_HEADERS
+  DEPENDS shaderc
+  LANG essl
+  INCLUDE_DIRS ${BGFX_SHADER_INCLUDE_DIRS}
+)
+
+bgfx_compile_shaders(
+  TYPE FRAGMENT
+  SHADERS ${SHADER_DIR}/fs_raymarching.sc
   VARYING_DEF ${SHADER_DIR}/varying.def.sc
   OUTPUT_DIR ${SHADER_OUT_DIR}
   AS_HEADERS
@@ -34,6 +79,32 @@ bgfx_compile_shaders(
   LANG spirv
   INCLUDE_DIRS ${BGFX_SHADER_INCLUDE_DIRS}
 )
+
+# Metal shaders for macOS
+if(APPLE)
+  bgfx_compile_shaders(
+    TYPE VERTEX
+    SHADERS ${SHADER_DIR}/vs_raymarching.sc
+    VARYING_DEF ${SHADER_DIR}/varying.def.sc
+    OUTPUT_DIR ${SHADER_OUT_DIR}
+    AS_HEADERS
+    DEPENDS shaderc
+    LANG metal
+    INCLUDE_DIRS ${BGFX_SHADER_INCLUDE_DIRS}
+  )
+
+  bgfx_compile_shaders(
+    TYPE FRAGMENT
+    SHADERS ${SHADER_DIR}/fs_raymarching.sc
+    VARYING_DEF ${SHADER_DIR}/varying.def.sc
+    OUTPUT_DIR ${SHADER_OUT_DIR}
+    AS_HEADERS
+    DEPENDS shaderc
+    LANG metal
+    INCLUDE_DIRS ${BGFX_SHADER_INCLUDE_DIRS}
+  )
+
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 
@@ -82,8 +153,9 @@ add_executable(C6GE
     src/Render/Render.h
     src/Window/Window.cpp
     src/Window/Window.h
-    src/vs_metaballs.sc
-    src/fs_metaballs.sc
+    src/vs_raymarching.sc
+    src/fs_raymarching.sc
+    src/iq_sdf.sh
     src/varying.def.sc
     external/bgfx.cmake/bgfx/examples/common/common.sh
     external/bgfx.cmake/bgfx/src/bgfx_shader.sh
@@ -97,4 +169,19 @@ target_link_libraries(C6GE PRIVATE
     imgui
 )
 
-target_include_directories(C6GE PRIVATE ${IMGUI_GEN_DIR} ${SHADER_OUT_DIR})
+target_include_directories(C6GE PRIVATE 
+    ${IMGUI_GEN_DIR} 
+    ${SHADER_OUT_DIR}
+    ${CMAKE_SOURCE_DIR}/external/bgfx.cmake/bgfx/examples/common
+)
+
+# Copy Metal shaders to src/mtl directory for relative includes on macOS
+if(APPLE)
+  add_custom_command(
+    TARGET C6GE PRE_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADER_DIR}/mtl
+    COMMAND ${CMAKE_COMMAND} -E copy ${SHADER_OUT_DIR}/metal/vs_raymarching.sc.bin.h ${SHADER_DIR}/mtl/
+    COMMAND ${CMAKE_COMMAND} -E copy ${SHADER_OUT_DIR}/metal/fs_raymarching.sc.bin.h ${SHADER_DIR}/mtl/
+    COMMENT "Copying Metal shaders to src/mtl directory"
+  )
+endif()
