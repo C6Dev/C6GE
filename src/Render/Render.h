@@ -11,7 +11,7 @@ namespace C6GE {
         public:
         void RenderFrame();
         void SetPlatformData(C6GE::Window& window, bgfx::PlatformData& pd);
-        bool Init(C6GE::Window& window, bgfx::PlatformData& pd);
+        bool Init(C6GE::Window& window, bgfx::PlatformData& pd, bgfx::CallbackI* callback = nullptr);
         void UpdateWindowSize(C6GE::Window& window);
     };
 }

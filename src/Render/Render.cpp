@@ -19,8 +19,11 @@ namespace C6GE {
         #endif
     }
 
-    bool Render::Init(C6GE::Window& window, bgfx::PlatformData& pd) {
+    bool Render::Init(C6GE::Window& window, bgfx::PlatformData& pd, bgfx::CallbackI* callback) {
         bgfx::Init init;
+        
+        // Don't set any debug flags to minimize output
+        
         #if BX_PLATFORM_WINDOWS
             // Try DX12 first, fall back to DX11 if it fails
             init.type = bgfx::RendererType::Direct3D12;
@@ -28,6 +31,9 @@ namespace C6GE {
             init.resolution.height = window.GetFramebufferHeight();
             init.resolution.reset = BGFX_RESET_VSYNC;
             init.platformData = pd;
+            if (callback) {
+                init.callback = callback;
+            }
             
             if (!bgfx::init(init)) {
                 std::cout << "DX12 failed, trying DX11..." << std::endl;
@@ -43,6 +49,9 @@ namespace C6GE {
             init.resolution.height = window.GetFramebufferHeight();
             init.resolution.reset = BGFX_RESET_VSYNC;
             init.platformData = pd;
+            if (callback) {
+                init.callback = callback;
+            }
             
             if (!bgfx::init(init)) { 
                 std::cout << "Failed to initialize bgfx" << std::endl; 

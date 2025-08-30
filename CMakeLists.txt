@@ -15,6 +15,9 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/external/bgfx.cmake/cmake/bgfxToolUtils.cmak
 # Add meshoptimizer
 add_subdirectory(external/meshoptimizer)
 
+# Add EnTT
+add_subdirectory(external/entt)
+
 # Add bgfx shader build integration
 set(SHADER_DIR ${CMAKE_SOURCE_DIR}/src)
 set(SHADER_OUT_DIR ${CMAKE_BINARY_DIR}/generated/shaders)
@@ -115,6 +118,8 @@ if(APPLE)
 
 endif()
 
+
+
 set(CMAKE_CXX_STANDARD 20)
 
 
@@ -164,16 +169,26 @@ add_executable(C6GE
     src/Engine/Engine.h
     src/Render/Render.cpp
     src/Render/Render.h
+    src/Render/RenderECS.cpp
+    src/Render/RenderECS.h
     src/Window/Window.cpp
     src/Window/Window.h
+    src/Object/Object.cpp
+    src/Object/Object.h
     src/vs_mesh.sc
     src/fs_mesh.sc
     src/varying.def.sc
+    src/vs_cube.sc
+    src/fs_cube.sc
+    src/varying_cube.def.sc
+
     external/bgfx.cmake/bgfx/examples/common/common.sh
     external/bgfx.cmake/bgfx/src/bgfx_shader.sh
     external/bgfx.cmake/bgfx/examples/common/bgfx_utils.cpp
     src/entry_stubs.cpp
     src/MeshLoader/MeshLoader.cpp
+    src/TextureLoader/TextureLoader.cpp
+    src/TextureLoader/TextureLoader.h
 )
 
 target_compile_definitions(C6GE PRIVATE
@@ -188,6 +203,7 @@ target_link_libraries(C6GE PRIVATE
     glfw
     imgui
     meshoptimizer
+    EnTT::EnTT
 )
 
 # Platform-specific linking
