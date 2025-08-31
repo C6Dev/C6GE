@@ -26,78 +26,102 @@ set(BGFX_SHADER_INCLUDE_DIRS
     ${CMAKE_SOURCE_DIR}/external/bgfx.cmake/bgfx/src
 )
 
-bgfx_compile_shaders(
-  TYPE VERTEX
-  SHADERS ${SHADER_DIR}/vs_mesh.sc
-  VARYING_DEF ${SHADER_DIR}/varying.def.sc
-  OUTPUT_DIR ${SHADER_OUT_DIR}
-  AS_HEADERS
-  DEPENDS shaderc
-  LANG glsl
-  INCLUDE_DIRS ${BGFX_SHADER_INCLUDE_DIRS}
-)
+# Mesh shaders - commented out for now since we're only using cube shaders
+# bgfx_compile_shaders(
+#   TYPE VERTEX
+#   SHADERS ${SHADER_DIR}/assets/shaders/vs_mesh.sc
+#   VARYING_DEF ${SHADER_DIR}/assets/shaders/varying_mesh.def.sc
+#   OUTPUT_DIR ${SHADER_OUT_DIR}
+#   AS_HEADERS
+#   DEPENDS shaderc
+#   LANG glsl
+#   INCLUDE_DIRS ${BGFX_SHADER_INCLUDE_DIRS}
+# )
 
-bgfx_compile_shaders(
-  TYPE VERTEX
-  SHADERS ${SHADER_DIR}/vs_mesh.sc
-  VARYING_DEF ${SHADER_DIR}/varying.def.sc
-  OUTPUT_DIR ${SHADER_OUT_DIR}
-  AS_HEADERS
-  DEPENDS shaderc
-  LANG essl
-  INCLUDE_DIRS ${BGFX_SHADER_INCLUDE_DIRS}
-)
+# bgfx_compile_shaders(
+#   TYPE VERTEX
+#   SHADERS ${SHADER_DIR}/assets/shaders/vs_mesh.sc
+#   VARYING_DEF ${SHADER_DIR}/assets/shaders/varying_mesh.def.sc
+#   OUTPUT_DIR ${SHADER_OUT_DIR}
+#   AS_HEADERS
+#   DEPENDS shaderc
+#   LANG essl
+#   INCLUDE_DIRS ${BGFX_SHADER_INCLUDE_DIRS}
+# )
 
-bgfx_compile_shaders(
-  TYPE VERTEX
-  SHADERS ${SHADER_DIR}/vs_mesh.sc
-  VARYING_DEF ${SHADER_DIR}/varying.def.sc
-  OUTPUT_DIR ${SHADER_OUT_DIR}
-  AS_HEADERS
-  DEPENDS shaderc
-  LANG spirv
-  INCLUDE_DIRS ${BGFX_SHADER_INCLUDE_DIRS}
-)
+# bgfx_compile_shaders(
+#   TYPE VERTEX
+#   SHADERS ${SHADER_DIR}/assets/shaders/vs_mesh.sc
+#   VARYING_DEF ${SHADER_DIR}/assets/shaders/varying_mesh.def.sc
+#   OUTPUT_DIR ${SHADER_OUT_DIR}
+#   AS_HEADERS
+#   DEPENDS shaderc
+#   LANG spirv
+#   INCLUDE_DIRS ${BGFX_SHADER_INCLUDE_DIRS}
+# )
 
-bgfx_compile_shaders(
-  TYPE FRAGMENT
-  SHADERS ${SHADER_DIR}/fs_mesh.sc
-  VARYING_DEF ${SHADER_DIR}/varying.def.sc
-  OUTPUT_DIR ${SHADER_OUT_DIR}
-  AS_HEADERS
-  DEPENDS shaderc
-  LANG glsl
-  INCLUDE_DIRS ${BGFX_SHADER_INCLUDE_DIRS}
-)
+# bgfx_compile_shaders(
+#   TYPE FRAGMENT
+#   SHADERS ${SHADER_DIR}/assets/shaders/fs_mesh.sc
+#   VARYING_DEF ${SHADER_DIR}/assets/shaders/varying_mesh.def.sc
+#   OUTPUT_DIR ${SHADER_OUT_DIR}
+#   AS_HEADERS
+#   DEPENDS shaderc
+#   LANG glsl
+#   INCLUDE_DIRS ${BGFX_SHADER_INCLUDE_DIRS}
+# )
 
-bgfx_compile_shaders(
-  TYPE FRAGMENT
-  SHADERS ${SHADER_DIR}/fs_mesh.sc
-  VARYING_DEF ${SHADER_DIR}/varying.def.sc
-  OUTPUT_DIR ${SHADER_OUT_DIR}
-  AS_HEADERS
-  DEPENDS shaderc
-  LANG essl
-  INCLUDE_DIRS ${BGFX_SHADER_INCLUDE_DIRS}
-)
+# bgfx_compile_shaders(
+#   TYPE FRAGMENT
+#   SHADERS ${SHADER_DIR}/assets/shaders/fs_mesh.sc
+#   VARYING_DEF ${SHADER_DIR}/assets/shaders/varying_mesh.def.sc
+#   OUTPUT_DIR ${SHADER_OUT_DIR}
+#   AS_HEADERS
+#   DEPENDS shaderc
+#   LANG essl
+#   INCLUDE_DIRS ${BGFX_SHADER_INCLUDE_DIRS}
+# )
 
-bgfx_compile_shaders(
-  TYPE FRAGMENT
-  SHADERS ${SHADER_DIR}/fs_mesh.sc
-  VARYING_DEF ${SHADER_DIR}/varying.def.sc
-  OUTPUT_DIR ${SHADER_OUT_DIR}
-  AS_HEADERS
-  DEPENDS shaderc
-  LANG spirv
-  INCLUDE_DIRS ${BGFX_SHADER_INCLUDE_DIRS}
-)
+# bgfx_compile_shaders(
+#   TYPE FRAGMENT
+#   SHADERS ${SHADER_DIR}/assets/shaders/fs_mesh.sc
+#   VARYING_DEF ${SHADER_DIR}/assets/shaders/varying_mesh.def.sc
+#   OUTPUT_DIR ${SHADER_OUT_DIR}
+#   AS_HEADERS
+#   DEPENDS shaderc
+#   LANG spirv
+#   INCLUDE_DIRS ${BGFX_SHADER_INCLUDE_DIRS}
+# )
 
 # Metal shaders for macOS
 if(APPLE)
+  # bgfx_compile_shaders(
+  #   TYPE VERTEX
+  #   SHADERS ${SHADER_DIR}/assets/shaders/vs_mesh.sc
+  #   VARYING_DEF ${SHADER_DIR}/assets/shaders/varying_mesh.def.sc
+  #   OUTPUT_DIR ${SHADER_OUT_DIR}
+  #   AS_HEADERS
+  #   DEPENDS shaderc
+  #   LANG metal
+  #   INCLUDE_DIRS ${BGFX_SHADER_INCLUDE_DIRS}
+  # )
+
+  # bgfx_compile_shaders(
+  #   TYPE FRAGMENT
+  #   SHADERS ${SHADER_DIR}/assets/shaders/fs_mesh.sc
+  #   VARYING_DEF ${SHADER_DIR}/assets/shaders/varying_mesh.def.sc
+  #   OUTPUT_DIR ${SHADER_OUT_DIR}
+  #   AS_HEADERS
+  #   DEPENDS shaderc
+  #   LANG metal
+  #   INCLUDE_DIRS ${BGFX_SHADER_INCLUDE_DIRS}
+  # )
+
+  # Cube shaders for Metal
   bgfx_compile_shaders(
     TYPE VERTEX
-    SHADERS ${SHADER_DIR}/vs_mesh.sc
-    VARYING_DEF ${SHADER_DIR}/varying.def.sc
+    SHADERS ${SHADER_DIR}/assets/shaders/vs_cube.sc
+    VARYING_DEF ${SHADER_DIR}/assets/shaders/varying_cube.def.sc
     OUTPUT_DIR ${SHADER_OUT_DIR}
     AS_HEADERS
     DEPENDS shaderc
@@ -107,8 +131,8 @@ if(APPLE)
 
   bgfx_compile_shaders(
     TYPE FRAGMENT
-    SHADERS ${SHADER_DIR}/fs_mesh.sc
-    VARYING_DEF ${SHADER_DIR}/varying.def.sc
+    SHADERS ${SHADER_DIR}/assets/shaders/fs_cube.sc
+    VARYING_DEF ${SHADER_DIR}/assets/shaders/varying_cube.def.sc
     OUTPUT_DIR ${SHADER_OUT_DIR}
     AS_HEADERS
     DEPENDS shaderc
@@ -117,6 +141,76 @@ if(APPLE)
   )
 
 endif()
+
+# Cube shaders for other platforms
+bgfx_compile_shaders(
+  TYPE VERTEX
+  SHADERS ${SHADER_DIR}/assets/shaders/vs_cube.sc
+  VARYING_DEF ${SHADER_DIR}/assets/shaders/varying_cube.def.sc
+  OUTPUT_DIR ${SHADER_OUT_DIR}
+  AS_HEADERS
+  DEPENDS shaderc
+  LANG glsl
+  INCLUDE_DIRS ${BGFX_SHADER_INCLUDE_DIRS}
+)
+
+bgfx_compile_shaders(
+  TYPE VERTEX
+  SHADERS ${SHADER_DIR}/assets/shaders/vs_cube.sc
+  VARYING_DEF ${SHADER_DIR}/assets/shaders/varying_cube.def.sc
+  OUTPUT_DIR ${SHADER_OUT_DIR}
+  AS_HEADERS
+  DEPENDS shaderc
+  LANG essl
+  INCLUDE_DIRS ${BGFX_SHADER_INCLUDE_DIRS}
+)
+
+bgfx_compile_shaders(
+  TYPE VERTEX
+  SHADERS ${SHADER_DIR}/assets/shaders/vs_cube.sc
+  VARYING_DEF ${SHADER_DIR}/assets/shaders/varying_cube.def.sc
+  OUTPUT_DIR ${SHADER_OUT_DIR}
+  AS_HEADERS
+  DEPENDS shaderc
+  LANG spirv
+  INCLUDE_DIRS ${BGFX_SHADER_INCLUDE_DIRS}
+)
+
+bgfx_compile_shaders(
+  TYPE FRAGMENT
+  SHADERS ${SHADER_DIR}/assets/shaders/fs_cube.sc
+  VARYING_DEF ${SHADER_DIR}/assets/shaders/varying_cube.def.sc
+  OUTPUT_DIR ${SHADER_OUT_DIR}
+  AS_HEADERS
+  DEPENDS shaderc
+  LANG glsl
+  INCLUDE_DIRS ${BGFX_SHADER_INCLUDE_DIRS}
+)
+
+bgfx_compile_shaders(
+  TYPE FRAGMENT
+  SHADERS ${SHADER_DIR}/assets/shaders/fs_cube.sc
+  VARYING_DEF ${SHADER_DIR}/assets/shaders/varying_cube.def.sc
+  OUTPUT_DIR ${SHADER_OUT_DIR}
+  AS_HEADERS
+  DEPENDS shaderc
+  LANG essl
+  INCLUDE_DIRS ${BGFX_SHADER_INCLUDE_DIRS}
+)
+
+bgfx_compile_shaders(
+  TYPE FRAGMENT
+  SHADERS ${SHADER_DIR}/assets/shaders/fs_cube.sc
+  VARYING_DEF ${SHADER_DIR}/assets/shaders/varying_cube.def.sc
+  OUTPUT_DIR ${SHADER_OUT_DIR}
+  AS_HEADERS
+  DEPENDS shaderc
+  LANG spirv
+  INCLUDE_DIRS ${BGFX_SHADER_INCLUDE_DIRS}
+)
+
+# HDR shaders - commented out for now, using existing shaders
+# Will be implemented with proper shader compilation later
 
 
 
@@ -171,16 +265,22 @@ add_executable(C6GE
     src/Render/Render.h
     src/Render/RenderECS.cpp
     src/Render/RenderECS.h
+    src/Render/HDR.cpp
+    src/Render/HDR.h
     src/Window/Window.cpp
     src/Window/Window.h
     src/Object/Object.cpp
     src/Object/Object.h
-    src/vs_mesh.sc
-    src/fs_mesh.sc
-    src/varying.def.sc
-    src/vs_cube.sc
-    src/fs_cube.sc
-    src/varying_cube.def.sc
+    # src/assets/shaders/vs_mesh.sc
+    # src/assets/shaders/fs_mesh.sc
+    # src/assets/shaders/varying_mesh.def.sc
+    src/assets/shaders/vs_cube.sc
+    src/assets/shaders/fs_cube.sc
+    src/assets/shaders/varying_cube.def.sc
+    # HDR shader files - commented out for now
+    # src/assets/shaders/hdr/vs_hdr_tonemap.sc
+    # src/assets/shaders/hdr/fs_hdr_tonemap_simple.sc
+    # src/assets/shaders/hdr/varying.def.sc
 
     external/bgfx.cmake/bgfx/examples/common/common.sh
     external/bgfx.cmake/bgfx/src/bgfx_shader.sh

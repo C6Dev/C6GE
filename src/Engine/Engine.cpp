@@ -3,6 +3,7 @@
 #include "../Window/Window.h"
 #include "../Render/Render.h"
 #include "../Render/RenderECS.h"
+#include "../Render/HDR.h"
 #include "../MeshLoader/MeshLoader.h"
 #include "../TextureLoader/TextureLoader.h"
 #include "../Object/Object.h"
@@ -22,14 +23,15 @@
 #include <cstdint>
 #include <bx/file.h>
 #include <bimg/bimg.h>
+#include <filesystem>
 
 // Include shader binary data
-#include "glsl/vs_mesh.sc.bin.h"
-#include "essl/vs_mesh.sc.bin.h"
-#include "spirv/vs_mesh.sc.bin.h"
-#include "glsl/fs_mesh.sc.bin.h"
-#include "essl/fs_mesh.sc.bin.h"
-#include "spirv/fs_mesh.sc.bin.h"
+// #include "glsl/vs_mesh.sc.bin.h"
+// #include "essl/vs_mesh.sc.bin.h"
+// #include "spirv/vs_mesh.sc.bin.h"
+// #include "glsl/fs_mesh.sc.bin.h"
+// #include "essl/fs_mesh.sc.bin.h"
+// #include "spirv/fs_mesh.sc.bin.h"
 #include "glsl/vs_cube.sc.bin.h"
 #include "essl/vs_cube.sc.bin.h"
 #include "spirv/vs_cube.sc.bin.h"
@@ -38,12 +40,12 @@
 #include "spirv/fs_cube.sc.bin.h"
 
 #if defined(_WIN32)
-#include "dx11/vs_mesh.sc.bin.h"
-#include "dx11/fs_mesh.sc.bin.h"
+// #include "dx11/vs_mesh.sc.bin.h"
+// #include "dx11/fs_mesh.sc.bin.h"
 #endif
 #if __APPLE__
-#include "metal/vs_mesh.sc.bin.h"
-#include "metal/fs_mesh.sc.bin.h"
+// #include "metal/vs_mesh.sc.bin.h"
+// #include "metal/fs_mesh.sc.bin.h"
 #include "metal/vs_cube.sc.bin.h"
 #include "metal/fs_cube.sc.bin.h"
 #endif
@@ -109,8 +111,8 @@ public:
 // Embedded shaders - bgfx will automatically select the right format
 static const bgfx::EmbeddedShader s_embeddedShaders[] =
 {
-    BGFX_EMBEDDED_SHADER(vs_mesh),
-    BGFX_EMBEDDED_SHADER(fs_mesh),
+    // BGFX_EMBEDDED_SHADER(vs_mesh),
+    // BGFX_EMBEDDED_SHADER(fs_mesh),
     BGFX_EMBEDDED_SHADER(vs_cube),
     BGFX_EMBEDDED_SHADER(fs_cube),
 
@@ -148,10 +150,12 @@ bool EngineRun() {
     window.ShowWindow();
     window.FocusWindow();
     
-    // Set up window resize callback
+    // Set up window resize callback (will be updated after HDR system is initialized)
     window.SetFramebufferSizeCallback([](GLFWwindow* window, int width, int height) {
         bgfx::reset(width, height, BGFX_RESET_VSYNC);
         bgfx::setViewRect(0, 0, 0, uint16_t(width), uint16_t(height));
+        bgfx::setViewRect(1, 0, 0, uint16_t(width), uint16_t(height));
+        bgfx::setViewRect(2, 0, 0, uint16_t(width), uint16_t(height));
         bgfx::setViewClear(0, BGFX_CLEAR_COLOR|BGFX_CLEAR_DEPTH, 0x000000ff, 1.0f, 0);
     });
     
@@ -170,6 +174,13 @@ bool EngineRun() {
     	// Initialize ECS system
 	ObjectManager objectManager;
 	RenderECS renderECS(objectManager.GetRegistry());
+	
+	// Initialize HDR system
+	HDR hdrSystem;
+	if (!hdrSystem.init(width, height)) {
+		std::cout << "Failed to initialize HDR system" << std::endl;
+		return false;
+	}
 	
 	// Create shaders and materials
 	bgfx::RendererType::Enum type = bgfx::getRendererType();
@@ -198,11 +209,11 @@ bool EngineRun() {
 		}
 	}
 	
-	// Load texture
-	bgfx::TextureHandle orbTexture = textureLoader.loadTexture("assets/textures/fieldstone-rgba.dds");
+	// Load initial texture
+	bgfx::TextureHandle orbTexture = textureLoader.loadTexture("assets/textures/normalmap.png");
 	if (!textureLoader.isTextureValid(orbTexture)) {
-		std::cout << "Failed to load DDS texture, trying PNG..." << std::endl;
-		orbTexture = textureLoader.loadTexture("assets/textures/fieldstone-rgba.png");
+		std::cout << "Failed to load normalmap.png, trying aerial rocks..." << std::endl;
+		orbTexture = textureLoader.loadTexture("assets/textures/aerial_rocks_04_diff_2k.jpg");
 		if (!textureLoader.isTextureValid(orbTexture)) {
 			std::cout << "Failed to load texture" << std::endl;
 			return false;
@@ -212,47 +223,56 @@ bool EngineRun() {
 	// Create texture uniform
 	bgfx::UniformHandle s_texColor = bgfx::createUniform("s_texColor", bgfx::UniformType::Sampler);
 	
-	// Create objects using the new ECS system
+	// Create HDR uniform
+	bgfx::UniformHandle u_hdrParams = bgfx::createUniform("u_hdrParams", bgfx::UniformType::Vec4);
+	
+	// Create single orb object (no instancing)
 	Object orbObject = objectManager.CreateObject("OrbObject");
-	orbObject.AddComponent<Model>(orbMesh);
-	orbObject.AddComponent<Texture>(orbTexture);
-	orbObject.AddComponent<Material>(m_program_cube, s_texColor);
 	
-	// Set up instancing for multiple orbs
-	Instanced instanced(100); // 10x10 grid
-	const int gridSize = 10;
-	for (int i = 0; i < 100; ++i) {
-		int row = i / gridSize;
-		int col = i % gridSize;
-		float x = (float)(col - gridSize/2) * 2.0f; // Closer spacing
-		float z = (float)(row - gridSize/2) * 2.0f; // Closer spacing
-		float y = 0.0f;
-		
-		// Create different transformations for each instance
-		float scale = 0.5f + (float)(i % 5) * 0.1f; // Larger scale
-		float angle = (float)i * 0.1f;
-		
-		instanced.instances[i].setPosition(x, y, z);
-		instanced.instances[i].setRotation(0.0f, angle, 0.0f);
-		instanced.instances[i].setScale(scale);
+	// Add components one by one to avoid conflicts
+	if (!orbObject.HasComponent<Model>()) {
+		orbObject.AddComponent<Model>(orbMesh);
 	}
-	orbObject.AddComponent<Instanced>(instanced);
+	if (!orbObject.HasComponent<Texture>()) {
+		orbObject.AddComponent<Texture>(orbTexture);
+	}
+	if (!orbObject.HasComponent<Material>()) {
+		orbObject.AddComponent<Material>(m_program_cube, s_texColor);
+	}
 	
-	std::cout << "C6GE Engine started successfully with ECS system" << std::endl;
+	// Update transform component (it's already added by CreateObject)
+	if (orbObject.HasComponent<Transform>()) {
+		auto* transformComp = orbObject.GetComponent<Transform>();
+		transformComp->setPosition(0.0f, 0.0f, 0.0f); // Center in front of camera
+		transformComp->setRotation(0.0f, 0.0f, 0.0f); // No rotation
+		transformComp->setScale(1.0f); // Normal scale
+	}
+	
+	// Get available textures for UI
+	std::vector<std::string> availableTextures = textureLoader.getAvailableTextures();
+	int currentTextureIndex = 0;
+	
+	// Find current texture in the list
+	for (size_t i = 0; i < availableTextures.size(); ++i) {
+		if (availableTextures[i].find("normalmap") != std::string::npos) {
+			currentTextureIndex = static_cast<int>(i);
+			break;
+		}
+	}
+	
+	std::cout << "C6GE Engine started successfully with single static orb" << std::endl;
 
 	// Timing variables
 	int64_t m_timeOffset = bx::getHPCounter();
 	int64_t m_lastFrameTime = m_timeOffset;
 	float m_fps = 0.0f;
 
-
-
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
     ImGui::StyleColorsDark();
     ImGui_ImplGlfw_InitForOpenGL(glfwWindow, true);
-    ImGui_Implbgfx_Init(1);
+    ImGui_Implbgfx_Init(2);
 	
     // Variables to track window size changes
     int currentWidth = width;
@@ -271,6 +291,9 @@ bool EngineRun() {
             width = currentWidth;
             height = currentHeight;
             render.UpdateWindowSize(window);
+            
+            // Resize HDR system
+            hdrSystem.resize(currentWidth, currentHeight);
         }
         
         // Handle window events more frequently
@@ -306,7 +329,7 @@ bool EngineRun() {
             ImGuiCond_FirstUseEver
         );
         ImGui::SetNextWindowSize(
-            ImVec2(currentWidth / 5.0f, currentHeight / 7.0f),
+            ImVec2(currentWidth / 5.0f, currentHeight / 3.0f),
             ImGuiCond_FirstUseEver
         );
         ImGui::Begin("Settings", NULL, 0);
@@ -323,32 +346,129 @@ bool EngineRun() {
         ImGui::SameLine();
         ImGui::Text("(or press F12)");
         
+        ImGui::Separator();
+        
+        // Texture swapping section
+        ImGui::Text("Texture Swapping");
+        ImGui::Text("Current: %s", textureLoader.getTextureName(orbTexture).c_str());
+        
+        // Create texture selection combo
+        if (ImGui::BeginCombo("Select Texture", availableTextures[currentTextureIndex].c_str())) {
+            for (int i = 0; i < availableTextures.size(); ++i) {
+                const bool isSelected = (currentTextureIndex == i);
+                std::string displayName = std::filesystem::path(availableTextures[i]).filename().string();
+                
+                if (ImGui::Selectable(displayName.c_str(), isSelected)) {
+                    if (currentTextureIndex != i) {
+                        // Swap texture
+                        bgfx::TextureHandle newTexture = textureLoader.reloadTexture(availableTextures[i], orbTexture);
+                        if (textureLoader.isTextureValid(newTexture)) {
+                            orbTexture = newTexture;
+                            currentTextureIndex = i;
+                            
+                            // Update the object's texture component
+                            if (orbObject.HasComponent<Texture>()) {
+                                auto* textureComp = orbObject.GetComponent<Texture>();
+                                textureComp->handle = orbTexture;
+                            }
+                        }
+                    }
+                }
+                
+                if (isSelected) {
+                    ImGui::SetItemDefaultFocus();
+                }
+            }
+            ImGui::EndCombo();
+        }
+        
+        // Quick texture swap buttons
+        ImGui::Text("Quick Swap:");
+        if (ImGui::Button("Normal Map")) {
+            std::string normalPath = "assets/textures/normalmap.png";
+            bgfx::TextureHandle newTexture = textureLoader.reloadTexture(normalPath, orbTexture);
+            if (textureLoader.isTextureValid(newTexture)) {
+                orbTexture = newTexture;
+                if (orbObject.HasComponent<Texture>()) {
+                    auto* textureComp = orbObject.GetComponent<Texture>();
+                    textureComp->handle = orbTexture;
+                }
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Aerial Rocks")) {
+            std::string aerialPath = "assets/textures/aerial_rocks_04_diff_2k.jpg";
+            bgfx::TextureHandle newTexture = textureLoader.reloadTexture(aerialPath, orbTexture);
+            if (textureLoader.isTextureValid(newTexture)) {
+                orbTexture = newTexture;
+                if (orbObject.HasComponent<Texture>()) {
+                    auto* textureComp = orbObject.GetComponent<Texture>();
+                    textureComp->handle = orbTexture;
+                }
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Parallax")) {
+            std::string parallaxPath = "assets/textures/parallax-d.png";
+            bgfx::TextureHandle newTexture = textureLoader.reloadTexture(parallaxPath, orbTexture);
+            if (textureLoader.isTextureValid(newTexture)) {
+                orbTexture = newTexture;
+                if (orbObject.HasComponent<Texture>()) {
+                    auto* textureComp = orbObject.GetComponent<Texture>();
+                    textureComp->handle = orbTexture;
+                }
+            }
+        }
+        
         ImGui::End();
 
-			ImGui::Begin("ECS System", NULL, 0);
-	ImGui::Text("Entity Component System");
-	ImGui::Text("Object: OrbObject");
-	ImGui::Text("Components: Transform, Model, Texture, Material, Instanced");
-	ImGui::Text("Grid Layout: 10x10");
-	ImGui::Text("Total Instances: 100");
-	ImGui::Text("Rendering: ECS-based");
-	ImGui::Text("Model: Orb");
-	ImGui::Text("Texture: Fieldstone");
-	ImGui::End();
+		ImGui::Begin("Scene Info", NULL, 0);
+		ImGui::Text("Single Static Orb");
+		ImGui::Text("Position: (0, 0, 0)");
+		ImGui::Text("Rotation: (0, 0, 0)");
+		ImGui::Text("Scale: 1.0");
+		ImGui::Text("Camera: (0, 0, -2.5)");
+		ImGui::Text("Rendering: ECS-based");
+		ImGui::Text("Model: Orb");
+		ImGui::Text("Texture: %s", textureLoader.getTextureName(orbTexture).c_str());
+        ImGui::End();
+        
+        // HDR Settings window
+        ImGui::SetNextWindowPos(
+            ImVec2(10.0f, 10.0f),
+            ImGuiCond_FirstUseEver
+        );
+        ImGui::SetNextWindowSize(
+            ImVec2(300.0f, 200.0f),
+            ImGuiCond_FirstUseEver
+        );
+        ImGui::Begin("HDR Settings", NULL, 0);
+        
+        static float middleGray = hdrSystem.getMiddleGray();
+        static float whitePoint = hdrSystem.getWhitePoint();
+        static float threshold = hdrSystem.getThreshold();
+        
+        if (ImGui::SliderFloat("Middle Gray", &middleGray, 0.1f, 1.0f)) {
+            hdrSystem.setMiddleGray(middleGray);
+        }
+        if (ImGui::SliderFloat("White Point", &whitePoint, 0.1f, 2.0f)) {
+            hdrSystem.setWhitePoint(whitePoint);
+        }
+        if (ImGui::SliderFloat("Threshold", &threshold, 0.1f, 2.0f)) {
+            hdrSystem.setThreshold(threshold);
+        }
+        
+        ImGui::Separator();
+        ImGui::Text("HDR Parameters:");
+        ImGui::Text("Middle Gray: %.3f", hdrSystem.getMiddleGray());
+        ImGui::Text("White Point: %.3f", hdrSystem.getWhitePoint());
+        ImGui::Text("Threshold: %.3f", hdrSystem.getThreshold());
+        
+        ImGui::End();
 
-        // Set view 0 default viewport with current window size
+        // Set view 0 to render normally (HDR effects applied via shader)
         bgfx::setViewRect(0, 0, 0, uint16_t(currentWidth), uint16_t(currentHeight));
-
-        // Clear the screen with black - do this BEFORE touch(0)
         bgfx::setViewClear(0, BGFX_CLEAR_COLOR|BGFX_CLEAR_DEPTH, 0x000000ff, 1.0f, 0);
-
-        // Render ImGui
-        ImGui::Render();
-        ImGui_Implbgfx_RenderDrawLists(ImGui::GetDrawData());
-
-        // This dummy draw call is here to make sure that view 0 is cleared
-        // if no other draw calls are submitted to view 0.
-        bgfx::touch(0);
 
 		// Calculate FPS
 		int64_t currentTime = bx::getHPCounter();
@@ -358,11 +478,9 @@ bool EngineRun() {
 		}
 		m_lastFrameTime = currentTime;
 
-		float time = (float)( (currentTime-m_timeOffset)/double(bx::getHPFrequency() ) );
-
-		// Set up camera
+		// Set up camera (static position)
 		const bx::Vec3 at  = { 0.0f, 0.0f,  0.0f };
-		const bx::Vec3 eye = { 3.0f, 4.0f, -3.0f };
+		const bx::Vec3 eye = { 0.0f, 0.0f, -2.5f };
 
 		// Set view and projection matrix for view 0.
 		float view[16];
@@ -375,23 +493,22 @@ bool EngineRun() {
 		renderECS.SetViewProjection(view, proj);
 		bgfx::setViewRect(0, 0, 0, uint16_t(currentWidth), uint16_t(currentHeight) );
 		
-		// Update object transforms with time-based animation
-		Object orbObject = objectManager.GetObject("OrbObject");
-		if (orbObject.HasComponent<Instanced>()) {
-			auto* instanced = orbObject.GetComponent<Instanced>();
-			for (uint32_t i = 0; i < instanced->instanceCount; ++i) {
-				if (i < instanced->instances.size()) {
-					// Add time-based rotation
-					instanced->instances[i].rotation.y = time * 0.5f + (float)i * 0.1f;
-				}
-			}
-		}
+		// Set HDR parameters based on UI controls
+		float exposure = hdrSystem.getMiddleGray();
+		float gamma = 2.2f; // Standard gamma
+		float whitePointParam = hdrSystem.getWhitePoint();
+		float thresholdParam = hdrSystem.getThreshold();
+		renderECS.SetHDRParams(exposure, gamma, whitePointParam, thresholdParam);
 		
-		// Update ECS systems
+		// Update ECS systems (no animation needed for static orb)
 		objectManager.Update();
 		
 		// Render all objects using the ECS system
 		renderECS.RenderAllObjects();
+
+        // Render ImGui on top of the final result
+        ImGui::Render();
+        ImGui_Implbgfx_RenderDrawLists(ImGui::GetDrawData());
 
         // Advance to next frame. Rendering thread will be kicked to
         // process submitted rendering primitives.
@@ -422,6 +539,9 @@ bool EngineRun() {
     
     // Clear ECS objects
     objectManager.Clear();
+    
+    // Shutdown HDR system
+    hdrSystem.shutdown();
 
     ImGui_Implbgfx_Shutdown();
     ImGui_ImplGlfw_Shutdown();

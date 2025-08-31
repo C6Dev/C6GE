@@ -38,6 +38,9 @@ public:
     
     // Set view and projection matrices
     void SetViewProjection(const float* view, const float* proj);
+    
+    // Set HDR parameters
+    void SetHDRParams(float exposure, float gamma, float whitePoint, float threshold);
 };
 
 } // namespace C6GE

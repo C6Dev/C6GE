@@ -32,6 +32,12 @@ void RenderECS::renderSingleObject(entt::entity entity, const Transform& transfo
         return;
     }
     
+    // Check if mesh has groups
+    if (model.mesh->m_groups.empty()) {
+        std::cout << "Warning: Mesh has no groups for entity " << (uint32_t)entity << std::endl;
+        return;
+    }
+    
     // Create transformation matrix
     float mtx[16];
     createTransformMatrix(transform, mtx);
@@ -57,6 +63,12 @@ void RenderECS::renderInstancedObjects(entt::entity entity, const Transform& tra
                                       const Texture& texture, const Instanced& instanced) {
     if (!model.mesh) {
         std::cout << "Warning: Model has no mesh for instanced entity " << (uint32_t)entity << std::endl;
+        return;
+    }
+    
+    // Check if mesh has groups
+    if (model.mesh->m_groups.empty()) {
+        std::cout << "Warning: Mesh has no groups for instanced entity " << (uint32_t)entity << std::endl;
         return;
     }
     
@@ -146,6 +158,15 @@ void RenderECS::RenderObjectsWithComponents() {
 
 void RenderECS::SetViewProjection(const float* view, const float* proj) {
     bgfx::setViewTransform(0, view, proj);
+}
+
+void RenderECS::SetHDRParams(float exposure, float gamma, float whitePoint, float threshold) {
+    // Create HDR uniform if it doesn't exist
+    static bgfx::UniformHandle u_hdrParams = bgfx::createUniform("u_hdrParams", bgfx::UniformType::Vec4);
+    
+    // Set HDR parameters
+    float hdrParams[4] = { exposure, gamma, whitePoint, threshold };
+    bgfx::setUniform(u_hdrParams, hdrParams);
 }
 
 } // namespace C6GE

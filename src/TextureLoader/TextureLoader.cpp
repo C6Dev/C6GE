@@ -4,6 +4,7 @@
 #include <bimg/bimg.h>
 #include <bimg/decode.h>
 #include <entry/entry.h>
+#include <filesystem>
 
 namespace C6GE {
     // Callback for releasing image memory
@@ -19,11 +20,37 @@ namespace C6GE {
     }
     
     TextureLoader::~TextureLoader() {
-        // Cleanup if needed
+        // Don't destroy textures here as they're already destroyed in main cleanup
+        // Just clear the tracking vector
+        m_loadedTextures.clear();
     }
     
     bgfx::TextureHandle TextureLoader::loadTexture(const std::string& filePath) {
-        return loadTextureInternal(filePath);
+        bgfx::TextureHandle texture = loadTextureInternal(filePath);
+        if (bgfx::isValid(texture)) {
+            m_loadedTextures.emplace_back(texture, filePath);
+        }
+        return texture;
+    }
+    
+    bgfx::TextureHandle TextureLoader::reloadTexture(const std::string& filePath, bgfx::TextureHandle oldTexture) {
+        // Destroy old texture if valid
+        if (bgfx::isValid(oldTexture)) {
+            bgfx::destroy(oldTexture);
+            // Remove from tracking
+            m_loadedTextures.erase(
+                std::remove_if(m_loadedTextures.begin(), m_loadedTextures.end(),
+                    [oldTexture](const TextureInfo& info) { return info.handle.idx == oldTexture.idx; }),
+                m_loadedTextures.end()
+            );
+        }
+        
+        // Load new texture
+        bgfx::TextureHandle newTexture = loadTextureInternal(filePath);
+        if (bgfx::isValid(newTexture)) {
+            m_loadedTextures.emplace_back(newTexture, filePath);
+        }
+        return newTexture;
     }
     
     bool TextureLoader::isTextureValid(bgfx::TextureHandle texture) const {
@@ -39,7 +66,42 @@ namespace C6GE {
     void TextureLoader::destroyTexture(bgfx::TextureHandle texture) {
         if (bgfx::isValid(texture)) {
             bgfx::destroy(texture);
+            // Remove from tracking
+            m_loadedTextures.erase(
+                std::remove_if(m_loadedTextures.begin(), m_loadedTextures.end(),
+                    [texture](const TextureInfo& info) { return info.handle.idx == texture.idx; }),
+                m_loadedTextures.end()
+            );
         }
+    }
+    
+    std::vector<std::string> TextureLoader::getAvailableTextures() const {
+        std::vector<std::string> textures;
+        std::string textureDir = "assets/textures/";
+        
+        try {
+            for (const auto& entry : std::filesystem::directory_iterator(textureDir)) {
+                if (entry.is_regular_file()) {
+                    std::string ext = entry.path().extension().string();
+                    if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".dds" || ext == ".exr") {
+                        textures.push_back(entry.path().string());
+                    }
+                }
+            }
+        } catch (const std::filesystem::filesystem_error& e) {
+            std::cout << "Error reading texture directory: " << e.what() << std::endl;
+        }
+        
+        return textures;
+    }
+    
+    std::string TextureLoader::getTextureName(bgfx::TextureHandle texture) const {
+        for (const auto& textureInfo : m_loadedTextures) {
+            if (textureInfo.handle.idx == texture.idx) {
+                return std::filesystem::path(textureInfo.filePath).filename().string();
+            }
+        }
+        return "Unknown";
     }
     
     bgfx::TextureHandle TextureLoader::loadTextureInternal(const std::string& filePath) {
