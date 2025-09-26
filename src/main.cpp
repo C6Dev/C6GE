@@ -24,9 +24,8 @@
 
 #include "MapHelper.hpp"
 #include "GraphicsUtilities.h"
+#include "TextureUtilities.h"
 #include "ColorConversion.h"
-
-#include "ImGuiImplDiligent.hpp"
 
 using namespace Diligent;
 
@@ -35,10 +34,10 @@ namespace Diligent
 
 SampleBase* CreateSample()
 {
-    return new Tutorial02_Cube();
+    return new Tutorial03_Texturing();
 }
 
-void Tutorial02_Cube::CreatePipelineState()
+void Tutorial03_Texturing::CreatePipelineState()
 {
     // Pipeline state object encompasses configuration of all GPU stages
 
@@ -84,8 +83,7 @@ void Tutorial02_Cube::CreatePipelineState()
     ShaderMacro Macros[] = {{"CONVERT_PS_OUTPUT_TO_GAMMA", m_ConvertPSOutputToGamma ? "1" : "0"}};
     ShaderCI.Macros      = {Macros, _countof(Macros)};
 
-    // In this tutorial, we will load shaders from file. To be able to do that,
-    // we need to create a shader source stream factory
+    // Create a shader source stream factory to load shaders from files.
     RefCntAutoPtr<IShaderSourceInputStreamFactory> pShaderSourceFactory;
     m_pEngineFactory->CreateDefaultShaderSourceStreamFactory(nullptr, &pShaderSourceFactory);
     ShaderCI.pShaderSourceStreamFactory = pShaderSourceFactory;
@@ -99,13 +97,7 @@ void Tutorial02_Cube::CreatePipelineState()
         m_pDevice->CreateShader(ShaderCI, &pVS);
         // Create dynamic uniform buffer that will store our transformation matrix
         // Dynamic buffers can be frequently updated by the CPU
-        BufferDesc CBDesc;
-        CBDesc.Name           = "VS constants CB";
-        CBDesc.Size           = sizeof(float4x4);
-        CBDesc.Usage          = USAGE_DYNAMIC;
-        CBDesc.BindFlags      = BIND_UNIFORM_BUFFER;
-        CBDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
-        m_pDevice->CreateBuffer(CBDesc, nullptr, &m_VSConstants);
+        CreateUniformBuffer(m_pDevice, sizeof(float4x4), "VS constants CB", &m_VSConstants);
     }
 
     // Create a pixel shader
@@ -124,37 +116,65 @@ void Tutorial02_Cube::CreatePipelineState()
     {
         // Attribute 0 - vertex position
         LayoutElement{0, 0, 3, VT_FLOAT32, False},
-        // Attribute 1 - vertex color
-        LayoutElement{1, 0, 4, VT_FLOAT32, False}
+        // Attribute 1 - texture coordinates
+        LayoutElement{1, 0, 2, VT_FLOAT32, False}
     };
     // clang-format on
-    PSOCreateInfo.GraphicsPipeline.InputLayout.LayoutElements = LayoutElems;
-    PSOCreateInfo.GraphicsPipeline.InputLayout.NumElements    = _countof(LayoutElems);
 
     PSOCreateInfo.pVS = pVS;
     PSOCreateInfo.pPS = pPS;
 
+    PSOCreateInfo.GraphicsPipeline.InputLayout.LayoutElements = LayoutElems;
+    PSOCreateInfo.GraphicsPipeline.InputLayout.NumElements    = _countof(LayoutElems);
+
     // Define variable type that will be used by default
     PSOCreateInfo.PSODesc.ResourceLayout.DefaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+
+        // clang-format off
+    // Shader variables should typically be mutable, which means they are expected
+    // to change on a per-instance basis
+    ShaderResourceVariableDesc Vars[] = 
+    {
+        {SHADER_TYPE_PIXEL, "g_Texture", SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE}
+    };
+    // clang-format on
+    PSOCreateInfo.PSODesc.ResourceLayout.Variables    = Vars;
+    PSOCreateInfo.PSODesc.ResourceLayout.NumVariables = _countof(Vars);
+
+    // clang-format off
+    // Define immutable sampler for g_Texture. Immutable samplers should be used whenever possible
+    SamplerDesc SamLinearClampDesc
+    {
+        FILTER_TYPE_LINEAR, FILTER_TYPE_LINEAR, FILTER_TYPE_LINEAR, 
+        TEXTURE_ADDRESS_CLAMP, TEXTURE_ADDRESS_CLAMP, TEXTURE_ADDRESS_CLAMP
+    };
+    ImmutableSamplerDesc ImtblSamplers[] = 
+    {
+        {SHADER_TYPE_PIXEL, "g_Texture", SamLinearClampDesc}
+    };
+    // clang-format on
+    PSOCreateInfo.PSODesc.ResourceLayout.ImmutableSamplers    = ImtblSamplers;
+    PSOCreateInfo.PSODesc.ResourceLayout.NumImmutableSamplers = _countof(ImtblSamplers);
 
     m_pDevice->CreateGraphicsPipelineState(PSOCreateInfo, &m_pPSO);
 
     // Since we did not explicitly specify the type for 'Constants' variable, default
     // type (SHADER_RESOURCE_VARIABLE_TYPE_STATIC) will be used. Static variables never
-    // change and are bound directly through the pipeline state object.
+    // never change and are bound directly through the pipeline state object.
     m_pPSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "Constants")->Set(m_VSConstants);
 
-    // Create a shader resource binding object and bind all static resources in it
-    m_pPSO->CreateShaderResourceBinding(&m_pSRB, true);
+    // Since we are using mutable variable, we must create a shader resource binding object
+    // http://diligentgraphics.com/2016/03/23/resource-binding-model-in-diligent-engine-2-0/
+    m_pPSO->CreateShaderResourceBinding(&m_SRB, true);
 }
 
-void Tutorial02_Cube::CreateVertexBuffer()
+void Tutorial03_Texturing::CreateVertexBuffer()
 {
     // Layout of this structure matches the one we defined in the pipeline state
     struct Vertex
     {
         float3 pos;
-        float4 color;
+        float2 uv;
     };
 
     // Cube vertices
@@ -174,17 +194,39 @@ void Tutorial02_Cube::CreateVertexBuffer()
     //        (-1,-1,-1)       (+1,-1,-1)
     //
 
-    constexpr Vertex CubeVerts[8] =
+    // This time we have to duplicate verices because texture coordinates cannot
+    // be shared
+    constexpr Vertex CubeVerts[] =
         {
-            {float3{-1, -1, -1}, float4{1, 0, 0, 1}},
-            {float3{-1, +1, -1}, float4{0, 1, 0, 1}},
-            {float3{+1, +1, -1}, float4{0, 0, 1, 1}},
-            {float3{+1, -1, -1}, float4{1, 1, 1, 1}},
+            {float3{-1, -1, -1}, float2{0, 1}},
+            {float3{-1, +1, -1}, float2{0, 0}},
+            {float3{+1, +1, -1}, float2{1, 0}},
+            {float3{+1, -1, -1}, float2{1, 1}},
 
-            {float3{-1, -1, +1}, float4{1, 1, 0, 1}},
-            {float3{-1, +1, +1}, float4{0, 1, 1, 1}},
-            {float3{+1, +1, +1}, float4{1, 0, 1, 1}},
-            {float3{+1, -1, +1}, float4{0.2f, 0.2f, 0.2f, 1.f}},
+            {float3{-1, -1, -1}, float2{0, 1}},
+            {float3{-1, -1, +1}, float2{0, 0}},
+            {float3{+1, -1, +1}, float2{1, 0}},
+            {float3{+1, -1, -1}, float2{1, 1}},
+
+            {float3{+1, -1, -1}, float2{0, 1}},
+            {float3{+1, -1, +1}, float2{1, 1}},
+            {float3{+1, +1, +1}, float2{1, 0}},
+            {float3{+1, +1, -1}, float2{0, 0}},
+
+            {float3{+1, +1, -1}, float2{0, 1}},
+            {float3{+1, +1, +1}, float2{0, 0}},
+            {float3{-1, +1, +1}, float2{1, 0}},
+            {float3{-1, +1, -1}, float2{1, 1}},
+
+            {float3{-1, +1, -1}, float2{1, 0}},
+            {float3{-1, +1, +1}, float2{0, 0}},
+            {float3{-1, -1, +1}, float2{0, 1}},
+            {float3{-1, -1, -1}, float2{1, 1}},
+
+            {float3{-1, -1, +1}, float2{1, 1}},
+            {float3{+1, -1, +1}, float2{0, 1}},
+            {float3{+1, +1, +1}, float2{0, 0}},
+            {float3{-1, +1, +1}, float2{1, 0}},
         };
 
     // Create a vertex buffer that stores cube vertices
@@ -199,17 +241,17 @@ void Tutorial02_Cube::CreateVertexBuffer()
     m_pDevice->CreateBuffer(VertBuffDesc, &VBData, &m_CubeVertexBuffer);
 }
 
-void Tutorial02_Cube::CreateIndexBuffer()
+void Tutorial03_Texturing::CreateIndexBuffer()
 {
     // clang-format off
     constexpr Uint32 Indices[] =
     {
-        2,0,1, 2,3,0,
-        4,6,5, 4,7,6,
-        0,7,4, 0,3,7,
-        1,0,4, 1,4,5,
-        1,5,2, 5,6,2,
-        3,6,7, 3,2,6
+        2,0,1,    2,3,0,
+        4,6,5,    4,7,6,
+        8,10,9,   8,11,10,
+        12,14,13, 12,15,14,
+        16,18,17, 16,19,18,
+        20,21,22, 20,22,23
     };
     // clang-format on
 
@@ -224,17 +266,31 @@ void Tutorial02_Cube::CreateIndexBuffer()
     m_pDevice->CreateBuffer(IndBuffDesc, &IBData, &m_CubeIndexBuffer);
 }
 
-void Tutorial02_Cube::Initialize(const SampleInitInfo& InitInfo)
+void Tutorial03_Texturing::LoadTexture()
+{
+    TextureLoadInfo loadInfo;
+    loadInfo.IsSRGB = true;
+    RefCntAutoPtr<ITexture> Tex;
+    CreateTextureFromFile("C6GElogo.png", loadInfo, m_pDevice, &Tex);
+    // Get shader resource view from the texture
+    m_TextureSRV = Tex->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+
+    // Set texture SRV in the SRB
+    m_SRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_Texture")->Set(m_TextureSRV);
+}
+
+void Tutorial03_Texturing::Initialize(const SampleInitInfo& InitInfo)
 {
     SampleBase::Initialize(InitInfo);
 
     CreatePipelineState();
     CreateVertexBuffer();
     CreateIndexBuffer();
+    LoadTexture();
 }
 
 // Render a frame
-void Tutorial02_Cube::Render()
+void Tutorial03_Texturing::Render()
 {
     ITextureView* pRTV = m_pSwapChain->GetCurrentBackBufferRTV();
     ITextureView* pDSV = m_pSwapChain->GetDepthBufferDSV();
@@ -268,7 +324,7 @@ void Tutorial02_Cube::Render()
     m_pImmediateContext->SetPipelineState(m_pPSO);
     // Commit shader resources. RESOURCE_STATE_TRANSITION_MODE_TRANSITION mode
     // makes sure that resources are transitioned to required states.
-    m_pImmediateContext->CommitShaderResources(m_pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    m_pImmediateContext->CommitShaderResources(m_SRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
     DrawIndexedAttribs DrawAttrs;     // This is an indexed draw call
     DrawAttrs.IndexType  = VT_UINT32; // Index type
@@ -278,7 +334,7 @@ void Tutorial02_Cube::Render()
     m_pImmediateContext->DrawIndexed(DrawAttrs);
 }
 
-void Tutorial02_Cube::Update(double CurrTime, double ElapsedTime, bool DoUpdateUI)
+void Tutorial03_Texturing::Update(double CurrTime, double ElapsedTime, bool DoUpdateUI)
 {
     SampleBase::Update(CurrTime, ElapsedTime, DoUpdateUI);
 

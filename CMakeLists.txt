@@ -68,3 +68,32 @@ target_link_directories(C6GE PRIVATE
 target_compile_definitions(C6GE PRIVATE
     GLFW_EXPOSE_NATIVE_WIN32
 )
+
+# Copy assets folder contents into exe dir
+set(ASSETS_DIR "${CMAKE_SOURCE_DIR}/src/Assets")
+add_custom_command(
+    TARGET C6GE POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${ASSETS_DIR}"
+            "$<TARGET_FILE_DIR:C6GE>"
+)
+
+# Copy Diligent backend DLLs into exe dir (only those that were built)
+set(DILIGENT_DLL_TARGETS
+    Diligent-GraphicsEngineD3D11-shared
+    Diligent-GraphicsEngineD3D12-shared
+    Diligent-GraphicsEngineVk-shared
+    Diligent-GraphicsEngineGL-shared
+    Diligent-GraphicsEngineGLES-shared
+)
+
+foreach(DLL_TARGET IN LISTS DILIGENT_DLL_TARGETS)
+    if(TARGET ${DLL_TARGET})
+        add_custom_command(
+            TARGET C6GE POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "$<TARGET_FILE:${DLL_TARGET}>"
+                    "$<TARGET_FILE_DIR:C6GE>"
+        )
+    endif()
+endforeach()
