@@ -28,11 +28,12 @@
 #pragma once
 
 #include "SampleBase.hpp"
+#include "BasicMath.hpp"
 
 namespace Diligent
 {
 
-class Tutorial01_HelloTriangle final : public SampleBase
+class Tutorial02_Cube final : public SampleBase
 {
 public:
     virtual void Initialize(const SampleInitInfo& InitInfo) override final;
@@ -40,10 +41,19 @@ public:
     virtual void Render() override final;
     virtual void Update(double CurrTime, double ElapsedTime, bool DoUpdateUI) override final;
 
-    virtual const Char* GetSampleName() const override final { return "Tutorial01: Hello Triangle"; }
+    virtual const Char* GetSampleName() const override final { return "Tutorial02: Cube"; }
 
 private:
-    RefCntAutoPtr<IPipelineState> m_pPSO;
+    void CreatePipelineState();
+    void CreateVertexBuffer();
+    void CreateIndexBuffer();
+
+    RefCntAutoPtr<IPipelineState>         m_pPSO;
+    RefCntAutoPtr<IShaderResourceBinding> m_pSRB;
+    RefCntAutoPtr<IBuffer>                m_CubeVertexBuffer;
+    RefCntAutoPtr<IBuffer>                m_CubeIndexBuffer;
+    RefCntAutoPtr<IBuffer>                m_VSConstants;
+    float4x4                              m_WorldViewProjMatrix;
 };
 
 } // namespace Diligent
