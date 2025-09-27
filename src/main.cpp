@@ -1,6 +1,7 @@
 #include <iostream>
 #include <thread>
 #include <chrono>
+#include <memory>
 
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
@@ -14,8 +15,22 @@
 #include "DiligentCore/Graphics/GraphicsEngine/interface/Buffer.h"
 #include "DiligentCore/Graphics/GraphicsEngine/interface/Shader.h"
 #include "DiligentCore/Graphics/GraphicsEngine/interface/PipelineState.h"
+
+// Include engine factory headers for all supported backends
 #include "DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h"
+#include "DiligentCore/Graphics/GraphicsEngineD3D11/interface/EngineFactoryD3D11.h"
+#include "DiligentCore/Graphics/GraphicsEngineVulkan/interface/EngineFactoryVk.h"
+#include "DiligentCore/Graphics/GraphicsEngineOpenGL/interface/EngineFactoryOpenGL.h"
+#ifdef __APPLE__
+#include "DiligentCore/Graphics/GraphicsEngineMetal/interface/EngineFactoryMtl.h"
+#include "DiligentCore/Platforms/MacOS/interface/MacOSNativeWindow.h"
+#endif
+#ifdef _WIN32
 #include "DiligentCore/Platforms/Win32/interface/Win32NativeWindow.h"
+#endif
+#ifdef __linux__
+#include "DiligentCore/Platforms/Linux/interface/LinuxNativeWindow.h"
+#endif
 
 #include "main.h"
 
@@ -41,16 +56,16 @@ SampleBase* CreateSample()
     return new Tutorial05_TextureArray();
 }
 
-  namespace
-  {
+namespace
+{
 
-  struct InstanceData
-  {
-      float4x4 Matrix;
-      float    TextureInd = 0;
-  };
+struct InstanceData
+{
+    float4x4 Matrix;
+    float    TextureInd = 0;
+};
 
-  } // namespace
+} // namespace
 
 void Tutorial05_TextureArray::CreatePipelineState()
 {
@@ -317,6 +332,183 @@ void Tutorial05_TextureArray::Update(double CurrTime, double ElapsedTime, bool D
 
 } // namespace Diligent
 
+// Function to initialize Diligent Engine with the specified backend
+bool InitializeDiligentEngine(
+    GLFWwindow* window,
+    RefCntAutoPtr<IEngineFactory>& factory,
+    RefCntAutoPtr<IRenderDevice>& device,
+    RefCntAutoPtr<IDeviceContext>& immediateContext,
+    RefCntAutoPtr<ISwapChain>& swapChain,
+    IDeviceContext* ppContexts[1])
+{
+    SwapChainDesc swapChainDesc;
+    swapChainDesc.Width = 800;
+    swapChainDesc.Height = 600;
+    swapChainDesc.ColorBufferFormat = TEX_FORMAT_RGBA8_UNORM;
+    swapChainDesc.DepthBufferFormat = TEX_FORMAT_D32_FLOAT;
+
+#if defined(_WIN32)
+    // Windows: Try D3D12, D3D11, Vulkan, OpenGL
+    {
+        Win32NativeWindow nativeWindow{ glfwGetWin32Window(window) };
+
+        // Try Direct3D12
+#if D3D12_SUPPORTED
+        {
+            auto* pFactoryD3D12 = LoadAndGetEngineFactoryD3D12();
+            if (pFactoryD3D12)
+            {
+                RefCntAutoPtr<IEngineFactoryD3D12> factoryD3D12(pFactoryD3D12);
+                EngineD3D12CreateInfo engineCI;
+                factoryD3D12->CreateDeviceAndContextsD3D12(engineCI, &device, ppContexts);
+                if (device)
+                {
+                    immediateContext = ppContexts[0];
+                    factoryD3D12->CreateSwapChainD3D12(device, immediateContext, swapChainDesc, FullScreenModeDesc{}, nativeWindow, &swapChain);
+                    if (swapChain)
+                    {
+                        std::cout << "Render backend: Direct3D12" << std::endl;
+                        factory = factoryD3D12;
+                        return true;
+                    }
+                    device.Release();
+                    immediateContext.Release();
+                    ppContexts[0] = nullptr;
+                }
+            }
+        }
+#endif
+
+        // Try Direct3D11
+#if D3D11_SUPPORTED
+        {
+            auto* pFactoryD3D11 = LoadAndGetEngineFactoryD3D11();
+            if (pFactoryD3D11)
+            {
+                RefCntAutoPtr<IEngineFactoryD3D11> factoryD3D11(pFactoryD3D11);
+                EngineD3D11CreateInfo engineCI;
+                factoryD3D11->CreateDeviceAndContextsD3D11(engineCI, &device, ppContexts);
+                if (device)
+                {
+                    immediateContext = ppContexts[0];
+                    factoryD3D11->CreateSwapChainD3D11(device, immediateContext, swapChainDesc, FullScreenModeDesc{}, nativeWindow, &swapChain);
+                    if (swapChain)
+                    {
+                        std::cout << "Render backend: Direct3D11" << std::endl;
+                        factory = factoryD3D11;
+                        return true;
+                    }
+                    device.Release();
+                    immediateContext.Release();
+                    ppContexts[0] = nullptr;
+                }
+            }
+        }
+#endif
+    }
+#endif
+
+    // Try Vulkan (Windows, Linux, or macOS fallback)
+#if VULKAN_SUPPORTED
+    {
+        auto* pFactoryVk = LoadAndGetEngineFactoryVk();
+        if (pFactoryVk)
+        {
+            RefCntAutoPtr<IEngineFactoryVk> factoryVk(pFactoryVk);
+            EngineVkCreateInfo engineCI;
+            factoryVk->CreateDeviceAndContextsVk(engineCI, &device, ppContexts);
+            if (device)
+            {
+                immediateContext = ppContexts[0];
+#ifdef _WIN32
+                Win32NativeWindow nativeWindow{ glfwGetWin32Window(window) };
+                factoryVk->CreateSwapChainVk(device, immediateContext, swapChainDesc, nativeWindow, &swapChain);
+#elif defined(__linux__)
+                LinuxNativeWindow nativeWindow{ glfwGetX11Window(window), glfwGetX11Display() };
+                factoryVk->CreateSwapChainVk(device, immediateContext, swapChainDesc, nativeWindow, &swapChain);
+#else // __APPLE__
+                MacOSNativeWindow nativeWindow{ glfwGetCocoaWindow(window) };
+                factoryVk->CreateSwapChainVk(device, immediateContext, swapChainDesc, nativeWindow, &swapChain);
+#endif
+                if (swapChain)
+                {
+                    std::cout << "Render backend: Vulkan" << std::endl;
+                    factory = factoryVk;
+                    return true;
+                }
+                device.Release();
+                immediateContext.Release();
+                ppContexts[0] = nullptr;
+            }
+        }
+    }
+#endif
+
+    // Try OpenGL (Windows, Linux, or macOS fallback)
+#if GL_SUPPORTED || GLES_SUPPORTED
+    {
+        auto* pFactoryOpenGL = LoadAndGetEngineFactoryOpenGL();
+        if (pFactoryOpenGL)
+        {
+            RefCntAutoPtr<IEngineFactoryOpenGL> factoryOpenGL(pFactoryOpenGL);
+            EngineGLCreateInfo engineCI;
+            engineCI.Window = {};
+#ifdef _WIN32
+            Win32NativeWindow nativeWindow{ glfwGetWin32Window(window) };
+            engineCI.Window.hWnd = nativeWindow.hWnd;
+#elif defined(__linux__)
+            LinuxNativeWindow nativeWindow{ glfwGetX11Window(window), glfwGetX11Display() };
+            engineCI.Window.WindowId = nativeWindow.WindowId;
+            engineCI.Window.pDisplay = nativeWindow.pDisplay;
+#elif defined(__APPLE__)
+            MacOSNativeWindow nativeWindow{ glfwGetCocoaWindow(window) };
+            engineCI.Window.pNSView = nativeWindow.pNSView;
+#endif
+            factoryOpenGL->CreateDeviceAndSwapChainGL(engineCI, &device, &immediateContext, swapChainDesc, &swapChain);
+            if (device && swapChain)
+            {
+                std::cout << "Render backend: OpenGL" << std::endl;
+                ppContexts[0] = immediateContext;
+                factory = factoryOpenGL;
+                return true;
+            }
+            device.Release();
+            immediateContext.Release();
+            ppContexts[0] = nullptr;
+        }
+    }
+#endif
+
+#if defined(__APPLE__) && METAL_SUPPORTED
+    // Try Metal (macOS only)
+    {
+        auto* pFactoryMtl = LoadAndGetEngineFactoryMtl();
+        if (pFactoryMtl)
+        {
+            RefCntAutoPtr<IEngineFactoryMtl> factoryMtl(pFactoryMtl);
+            EngineMtlCreateInfo engineCI;
+            factoryMtl->CreateDeviceAndContextsMtl(engineCI, &device, ppContexts);
+            if (device)
+            {
+                immediateContext = ppContexts[0];
+                MacOSNativeWindow nativeWindow{ glfwGetCocoaWindow(window) };
+                factoryMtl->CreateSwapChainMtl(device, immediateContext, swapChainDesc, nativeWindow, &swapChain);
+                if (swapChain)
+                {
+                    std::cout << "Render backend: Metal" << std::endl;
+                    factory = factoryMtl;
+                    return true;
+                }
+                device.Release();
+                immediateContext.Release();
+                ppContexts[0] = nullptr;
+            }
+        }
+    }
+#endif
+
+    return false;
+}
 
 int main()
 {
@@ -341,45 +533,15 @@ int main()
     // -------------------
     // Create Diligent Engine
     // -------------------
-    auto GetFactoryD3D12 = LoadGraphicsEngineD3D12();
-    if (!GetFactoryD3D12)
-    {
-        std::cerr << "Failed to load D3D12 engine factory function" << std::endl;
-        glfwDestroyWindow(window);
-        glfwTerminate();
-        return -1;
-    }
-
-    IEngineFactoryD3D12* pFactoryRaw = GetFactoryD3D12();
-    RefCntAutoPtr<IEngineFactoryD3D12> factory(pFactoryRaw);
-
+    RefCntAutoPtr<IEngineFactory> factory;
     RefCntAutoPtr<IRenderDevice> device;
     RefCntAutoPtr<IDeviceContext> immediateContext;
     RefCntAutoPtr<ISwapChain> swapChain;
-
     IDeviceContext* ppContexts[1] = {nullptr};
-    EngineD3D12CreateInfo engineCI;
-    factory->CreateDeviceAndContextsD3D12(engineCI, &device, ppContexts);
-    immediateContext = ppContexts[0];
-    if (!device || !immediateContext)
-    {
-        std::cerr << "Failed to create Diligent Engine device and context" << std::endl;
-        glfwDestroyWindow(window);
-        glfwTerminate();
-        return -1;
-    }
 
-    SwapChainDesc swapChainDesc;
-    swapChainDesc.Width = 800;
-    swapChainDesc.Height = 600;
-    swapChainDesc.ColorBufferFormat = TEX_FORMAT_RGBA8_UNORM;
-    swapChainDesc.DepthBufferFormat = TEX_FORMAT_D32_FLOAT;
-
-    Win32NativeWindow nativeWindow{ glfwGetWin32Window(window) };
-    factory->CreateSwapChainD3D12(device, immediateContext, swapChainDesc, FullScreenModeDesc{}, nativeWindow, &swapChain);
-    if (!swapChain)
+    if (!InitializeDiligentEngine(window, factory, device, immediateContext, swapChain, ppContexts))
     {
-        std::cerr << "Failed to create swap chain" << std::endl;
+        std::cerr << "Failed to initialize any rendering backend" << std::endl;
         glfwDestroyWindow(window);
         glfwTerminate();
         return -1;
@@ -406,14 +568,13 @@ int main()
     std::unique_ptr<ImGuiImplDiligent> imGuiImpl;
     try
     {
-        ImGuiDiligentCreateInfo imGuiCI(device, swapChainDesc);
+        ImGuiDiligentCreateInfo imGuiCI(device, swapChain->GetDesc());
         imGuiImpl = std::make_unique<ImGuiImplDiligent>(imGuiCI);
     }
     catch (const std::exception& e)
     {
         std::cerr << "Failed to initialize ImGui Diligent backend: " << e.what() << std::endl;
         ImGui_ImplGlfw_Shutdown();
-        ImGui::DestroyContext();
         glfwDestroyWindow(window);
         glfwTerminate();
         return -1;
@@ -422,7 +583,6 @@ int main()
     {
         std::cerr << "Failed to initialize ImGui Diligent backend" << std::endl;
         ImGui_ImplGlfw_Shutdown();
-        ImGui::DestroyContext();
         glfwDestroyWindow(window);
         glfwTerminate();
         return -1;
@@ -454,11 +614,9 @@ int main()
         glfwGetFramebufferSize(window, &fbW, &fbH);
 
         // Resize swap chain if window size changed
-        if (fbW != static_cast<int>(swapChainDesc.Width) || fbH != static_cast<int>(swapChainDesc.Height))
+        if (fbW != static_cast<int>(swapChain->GetDesc().Width) || fbH != static_cast<int>(swapChain->GetDesc().Height))
         {
             swapChain->Resize(fbW, fbH);
-            swapChainDesc.Width = fbW;
-            swapChainDesc.Height = fbH;
             sample->WindowResize(fbW, fbH);
         }
 
