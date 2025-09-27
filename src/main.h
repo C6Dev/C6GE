@@ -33,7 +33,7 @@
 namespace Diligent
 {
 
-class Tutorial04_Instancing final : public SampleBase
+class Tutorial05_TextureArray final : public SampleBase
 {
 public:
     virtual void Initialize(const SampleInitInfo& InitInfo) override final;
@@ -41,13 +41,15 @@ public:
     virtual void Render() override final;
     virtual void Update(double CurrTime, double ElapsedTime, bool DoUpdateUI) override final;
 
-    virtual const Char* GetSampleName() const override final { return "Tutorial04: Instancing"; }
+    virtual const Char* GetSampleName() const override final { return "Tutorial05: Texture Array"; }
 
 protected:
+    virtual void UpdateUI() override final;
 
 private:
     void CreatePipelineState();
     void CreateInstanceBuffer();
+    void LoadTextures();
     void PopulateInstanceBuffer();
 
     RefCntAutoPtr<IPipelineState>         m_pPSO;
@@ -63,6 +65,7 @@ private:
     int                  m_GridSize   = 5;
     static constexpr int MaxGridSize  = 32;
     static constexpr int MaxInstances = MaxGridSize * MaxGridSize * MaxGridSize;
+    static constexpr int NumTextures  = 4;
 };
 
 } // namespace Diligent

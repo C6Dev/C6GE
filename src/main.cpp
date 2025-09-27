@@ -38,10 +38,21 @@ namespace Diligent
 
 SampleBase* CreateSample()
 {
-    return new Tutorial04_Instancing();
+    return new Tutorial05_TextureArray();
 }
 
-void Tutorial04_Instancing::CreatePipelineState()
+  namespace
+  {
+
+  struct InstanceData
+  {
+      float4x4 Matrix;
+      float    TextureInd = 0;
+  };
+
+  } // namespace
+
+void Tutorial05_TextureArray::CreatePipelineState()
 {
     // clang-format off
     // Define vertex shader input layout
@@ -63,7 +74,9 @@ void Tutorial04_Instancing::CreatePipelineState()
         // Attribute 4 - third row
         LayoutElement{4, 1, 4, VT_FLOAT32, False, INPUT_ELEMENT_FREQUENCY_PER_INSTANCE},
         // Attribute 5 - fourth row
-        LayoutElement{5, 1, 4, VT_FLOAT32, False, INPUT_ELEMENT_FREQUENCY_PER_INSTANCE}
+        LayoutElement{5, 1, 4, VT_FLOAT32, False, INPUT_ELEMENT_FREQUENCY_PER_INSTANCE},
+        // Attribute 6 - texture array index
+        LayoutElement{6, 1, 1, VT_FLOAT32, False, INPUT_ELEMENT_FREQUENCY_PER_INSTANCE},
     };
     // clang-format on
 
@@ -97,7 +110,7 @@ void Tutorial04_Instancing::CreatePipelineState()
     m_pPSO->CreateShaderResourceBinding(&m_SRB, true);
 }
 
-void Tutorial04_Instancing::CreateInstanceBuffer()
+void Tutorial05_TextureArray::CreateInstanceBuffer()
 {
     // Create instance data buffer that will store transformation matrices
     BufferDesc InstBuffDesc;
@@ -105,32 +118,93 @@ void Tutorial04_Instancing::CreateInstanceBuffer()
     // Use default usage as this buffer will only be updated when grid size changes
     InstBuffDesc.Usage     = USAGE_DEFAULT;
     InstBuffDesc.BindFlags = BIND_VERTEX_BUFFER;
-    InstBuffDesc.Size      = sizeof(float4x4) * MaxInstances;
+    InstBuffDesc.Size      = sizeof(InstanceData) * MaxInstances;
     m_pDevice->CreateBuffer(InstBuffDesc, nullptr, &m_InstanceBuffer);
     PopulateInstanceBuffer();
 }
 
-void Tutorial04_Instancing::Initialize(const SampleInitInfo& InitInfo)
+void Tutorial05_TextureArray::LoadTextures()
+{
+    std::vector<RefCntAutoPtr<ITextureLoader>> TexLoaders(NumTextures);
+    // Load textures
+    for (int tex = 0; tex < NumTextures; ++tex)
+    {
+        // Create loader for the current texture
+        std::stringstream FileNameSS;
+        FileNameSS << "C6GELogo" << tex << ".png";
+        const auto      FileName = FileNameSS.str();
+        TextureLoadInfo LoadInfo;
+        LoadInfo.IsSRGB = true;
+
+        CreateTextureLoaderFromFile(FileName.c_str(), IMAGE_FILE_FORMAT_UNKNOWN, LoadInfo, &TexLoaders[tex]);
+        VERIFY_EXPR(TexLoaders[tex]);
+        VERIFY(tex == 0 || TexLoaders[tex]->GetTextureDesc() == TexLoaders[0]->GetTextureDesc(), "All textures must be same size");
+    }
+
+    TextureDesc TexArrDesc = TexLoaders[0]->GetTextureDesc();
+    TexArrDesc.ArraySize   = NumTextures;
+    TexArrDesc.Type        = RESOURCE_DIM_TEX_2D_ARRAY;
+    TexArrDesc.Usage       = USAGE_DEFAULT;
+    TexArrDesc.BindFlags   = BIND_SHADER_RESOURCE;
+
+    // Prepare initialization data
+    std::vector<TextureSubResData> SubresData(TexArrDesc.ArraySize * TexArrDesc.MipLevels);
+    for (Uint32 slice = 0; slice < TexArrDesc.ArraySize; ++slice)
+    {
+        for (Uint32 mip = 0; mip < TexArrDesc.MipLevels; ++mip)
+        {
+            SubresData[slice * TexArrDesc.MipLevels + mip] = TexLoaders[slice]->GetSubresourceData(mip, 0);
+        }
+    }
+    TextureData InitData{SubresData.data(), TexArrDesc.MipLevels * TexArrDesc.ArraySize};
+
+    // Create the texture array
+    RefCntAutoPtr<ITexture> pTexArray;
+    m_pDevice->CreateTexture(TexArrDesc, &InitData, &pTexArray);
+
+    // Get shader resource view from the texture array
+    m_TextureSRV = pTexArray->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+    // Set texture SRV in the SRB
+    m_SRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_Texture")->Set(m_TextureSRV);
+}
+
+void Tutorial05_TextureArray::UpdateUI()
+{
+    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Settings", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        if (ImGui::SliderInt("Grid Size", &m_GridSize, 1, 32))
+        {
+            PopulateInstanceBuffer();
+        }
+    }
+    ImGui::End();
+
+    ImGui::Begin("Demo Window", nullptr);
+    ImGui::Text("This window is created by the Dear ImGui library.");
+    ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+    ImGui::End();
+}
+
+void Tutorial05_TextureArray::Initialize(const SampleInitInfo& InitInfo)
 {
     SampleBase::Initialize(InitInfo);
 
     CreatePipelineState();
 
-    // Load textured cube
+    // Load cube vertex and index buffers
     m_CubeVertexBuffer = TexturedCube::CreateVertexBuffer(m_pDevice, GEOMETRY_PRIMITIVE_VERTEX_FLAG_POS_TEX);
     m_CubeIndexBuffer  = TexturedCube::CreateIndexBuffer(m_pDevice);
-    m_TextureSRV       = TexturedCube::LoadTexture(m_pDevice, "C6GELogo.png")->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
-    // Set cube texture SRV in the SRB
-    m_SRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_Texture")->Set(m_TextureSRV);
 
     CreateInstanceBuffer();
+    LoadTextures();
 }
 
-void Tutorial04_Instancing::PopulateInstanceBuffer()
+void Tutorial05_TextureArray::PopulateInstanceBuffer()
 {
     // Populate instance data buffer
-    const size_t          zGridSize = static_cast<size_t>(m_GridSize);
-    std::vector<float4x4> InstanceData(zGridSize * zGridSize * zGridSize);
+    const size_t              zGridSize = static_cast<size_t>(m_GridSize);
+    std::vector<InstanceData> Instances(zGridSize * zGridSize * zGridSize);
 
     float fGridSize = static_cast<float>(m_GridSize);
 
@@ -140,6 +214,7 @@ void Tutorial04_Instancing::PopulateInstanceBuffer()
     std::uniform_real_distribution<float> scale_distr(0.3f, 1.0f);
     std::uniform_real_distribution<float> offset_distr(-0.15f, +0.15f);
     std::uniform_real_distribution<float> rot_distr(-PI_F, +PI_F);
+    std::uniform_int_distribution<Int32>  tex_distr(0, NumTextures - 1);
 
     float BaseScale = 0.6f / fGridSize;
     int   instId    = 0;
@@ -161,17 +236,20 @@ void Tutorial04_Instancing::PopulateInstanceBuffer()
                 rotation *= float4x4::RotationZ(rot_distr(gen));
                 // Combine rotation, scale and translation
                 float4x4 matrix        = rotation * float4x4::Scale(scale, scale, scale) * float4x4::Translation(xOffset, yOffset, zOffset);
-                InstanceData[instId++] = matrix;
+                InstanceData& CurrInst = Instances[instId++];
+                CurrInst.Matrix        = matrix;
+                // Texture array index
+                CurrInst.TextureInd = static_cast<float>(tex_distr(gen));
             }
         }
     }
     // Update instance data buffer
-    Uint32 DataSize = static_cast<Uint32>(sizeof(InstanceData[0]) * InstanceData.size());
-    m_pImmediateContext->UpdateBuffer(m_InstanceBuffer, 0, DataSize, InstanceData.data(), RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    Uint32 DataSize = static_cast<Uint32>(sizeof(Instances[0]) * Instances.size());
+    m_pImmediateContext->UpdateBuffer(m_InstanceBuffer, 0, DataSize, Instances.data(), RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 }
 
 // Render a frame
-void Tutorial04_Instancing::Render()
+void Tutorial05_TextureArray::Render()
 {
     ITextureView* pRTV = m_pSwapChain->GetCurrentBackBufferRTV();
     ITextureView* pDSV = m_pSwapChain->GetDepthBufferDSV();
@@ -217,7 +295,7 @@ void Tutorial04_Instancing::Render()
     m_pImmediateContext->DrawIndexed(DrawAttrs);
 }
 
-void Tutorial04_Instancing::Update(double CurrTime, double ElapsedTime, bool DoUpdateUI)
+void Tutorial05_TextureArray::Update(double CurrTime, double ElapsedTime, bool DoUpdateUI)
 {
     SampleBase::Update(CurrTime, ElapsedTime, DoUpdateUI);
 
@@ -252,7 +330,7 @@ int main()
     }
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow* window = glfwCreateWindow(800, 600, "C6GE - Instancing with ImGui", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(800, 600, "C6GE - TextureArray with ImGui", nullptr, nullptr);
     if (!window)
     {
         std::cerr << "Failed to create GLFW window" << std::endl;
@@ -267,10 +345,10 @@ int main()
     if (!GetFactoryD3D12)
     {
         std::cerr << "Failed to load D3D12 engine factory function" << std::endl;
+        glfwDestroyWindow(window);
+        glfwTerminate();
         return -1;
     }
-
-    ImGui::CreateContext();
 
     IEngineFactoryD3D12* pFactoryRaw = GetFactoryD3D12();
     RefCntAutoPtr<IEngineFactoryD3D12> factory(pFactoryRaw);
@@ -283,30 +361,90 @@ int main()
     EngineD3D12CreateInfo engineCI;
     factory->CreateDeviceAndContextsD3D12(engineCI, &device, ppContexts);
     immediateContext = ppContexts[0];
+    if (!device || !immediateContext)
+    {
+        std::cerr << "Failed to create Diligent Engine device and context" << std::endl;
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return -1;
+    }
 
     SwapChainDesc swapChainDesc;
-    swapChainDesc.Width  = 800;
+    swapChainDesc.Width = 800;
     swapChainDesc.Height = 600;
     swapChainDesc.ColorBufferFormat = TEX_FORMAT_RGBA8_UNORM;
     swapChainDesc.DepthBufferFormat = TEX_FORMAT_D32_FLOAT;
 
-    Win32NativeWindow nativeWindow{glfwGetWin32Window(window)};
+    Win32NativeWindow nativeWindow{ glfwGetWin32Window(window) };
     factory->CreateSwapChainD3D12(device, immediateContext, swapChainDesc, FullScreenModeDesc{}, nativeWindow, &swapChain);
+    if (!swapChain)
+    {
+        std::cerr << "Failed to create swap chain" << std::endl;
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return -1;
+    }
+
+    // -------------------
+    // Initialize ImGui
+    // -------------------
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; // Enable keyboard navigation
+    ImGui::StyleColorsDark();
+
+    // Initialize ImGui GLFW backend
+    if (!ImGui_ImplGlfw_InitForOther(window, true))
+    {
+        std::cerr << "Failed to initialize ImGui GLFW backend" << std::endl;
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return -1;
+    }
+
+    // Initialize ImGui Diligent backend
+    std::unique_ptr<ImGuiImplDiligent> imGuiImpl;
+    try
+    {
+        ImGuiDiligentCreateInfo imGuiCI(device, swapChainDesc);
+        imGuiImpl = std::make_unique<ImGuiImplDiligent>(imGuiCI);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Failed to initialize ImGui Diligent backend: " << e.what() << std::endl;
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext();
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return -1;
+    }
+    if (!imGuiImpl)
+    {
+        std::cerr << "Failed to initialize ImGui Diligent backend" << std::endl;
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext();
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return -1;
+    }
 
     // -------------------
     // Initialize sample
     // -------------------
     SampleBase* sample = CreateSample();
     SampleInitInfo initInfo;
-    initInfo.pDevice        = device;
-    initInfo.pSwapChain     = swapChain;
-    initInfo.ppContexts     = ppContexts;
+    initInfo.pDevice = device;
+    initInfo.pSwapChain = swapChain;
+    initInfo.ppContexts = ppContexts;
+    initInfo.NumImmediateCtx = 1;
     initInfo.pEngineFactory = factory;
+    initInfo.pImGui = imGuiImpl.get(); // Use raw pointer for SampleInitInfo
     sample->Initialize(initInfo);
 
     // -------------------
     // Main loop
     // -------------------
+    double lastTime = glfwGetTime();
     while (!glfwWindowShouldClose(window))
     {
         glfwPollEvents();
@@ -315,9 +453,36 @@ int main()
         int fbW = 0, fbH = 0;
         glfwGetFramebufferSize(window, &fbW, &fbH);
 
-        // Update and render sample (which will call UpdateUI())
-        sample->Update(glfwGetTime(), 0.016, true);
+        // Resize swap chain if window size changed
+        if (fbW != static_cast<int>(swapChainDesc.Width) || fbH != static_cast<int>(swapChainDesc.Height))
+        {
+            swapChain->Resize(fbW, fbH);
+            swapChainDesc.Width = fbW;
+            swapChainDesc.Height = fbH;
+            sample->WindowResize(fbW, fbH);
+        }
+
+        // Calculate delta time
+        double currentTime = glfwGetTime();
+        double deltaTime = currentTime - lastTime;
+        lastTime = currentTime;
+
+        // Start new ImGui frame
+        ImGui_ImplGlfw_NewFrame();
+        const SwapChainDesc& scDesc = swapChain->GetDesc();
+        imGuiImpl->NewFrame(scDesc.Width, scDesc.Height, scDesc.PreTransform);
+
+        // Update sample (calls UpdateUI to set up ImGui widgets)
+        sample->Update(currentTime, deltaTime, true);
+
+        // Render sample
         sample->Render();
+
+        // Render ImGui
+        ITextureView* pRTV = swapChain->GetCurrentBackBufferRTV();
+        ITextureView* pDSV = swapChain->GetDepthBufferDSV();
+        immediateContext->SetRenderTargets(1, &pRTV, pDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        imGuiImpl->Render(immediateContext);
 
         // Present
         swapChain->Present();
@@ -330,6 +495,8 @@ int main()
     // Cleanup
     // -------------------
     delete sample;
+    ImGui_ImplGlfw_Shutdown();
+    imGuiImpl.reset();
     glfwDestroyWindow(window);
     glfwTerminate();
 
