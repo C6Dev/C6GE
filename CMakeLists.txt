@@ -27,6 +27,8 @@ endif()
 # Executable
 add_executable(C6GE
     src/main.cpp
+    external/DiligentEngine/DiligentSamples/Tutorials/Common/src/TexturedCube.cpp
+    external/DiligentEngine/DiligentTools/ThirdParty/imgui/backends/imgui_impl_glfw.cpp
 )
 
 # Include directories
@@ -36,6 +38,8 @@ target_include_directories(C6GE PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentTools/NativeApp/include
     ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentSamples/ThirdParty/glfw/include
     ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentSamples/SampleBase/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentSamples/Tutorials/Common/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentTools/Imgui/src
 )
 
 # Link libraries

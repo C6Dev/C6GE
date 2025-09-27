@@ -21,11 +21,15 @@
 
 #include "imgui.h"
 #include "backends/imgui_impl_glfw.h"
+#include "ImGuiImplDiligent.hpp"
+
+#include <random>
 
 #include "MapHelper.hpp"
 #include "GraphicsUtilities.h"
 #include "TextureUtilities.h"
 #include "ColorConversion.h"
+#include "TexturedCube.hpp"
 
 using namespace Diligent;
 
@@ -34,133 +38,58 @@ namespace Diligent
 
 SampleBase* CreateSample()
 {
-    return new Tutorial03_Texturing();
+    return new Tutorial04_Instancing();
 }
 
-void Tutorial03_Texturing::CreatePipelineState()
+void Tutorial04_Instancing::CreatePipelineState()
 {
-    // Pipeline state object encompasses configuration of all GPU stages
-
-    GraphicsPipelineStateCreateInfo PSOCreateInfo;
-
-    // Pipeline state name is used by the engine to report issues.
-    // It is always a good idea to give objects descriptive names.
-    PSOCreateInfo.PSODesc.Name = "Cube PSO";
-
-    // This is a graphics pipeline
-    PSOCreateInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
-
     // clang-format off
-    // This tutorial will render to a single render target
-    PSOCreateInfo.GraphicsPipeline.NumRenderTargets             = 1;
-    // Set render target format which is the format of the swap chain's color buffer
-    PSOCreateInfo.GraphicsPipeline.RTVFormats[0]                = m_pSwapChain->GetDesc().ColorBufferFormat;
-    // Set depth buffer format which is the format of the swap chain's back buffer
-    PSOCreateInfo.GraphicsPipeline.DSVFormat                    = m_pSwapChain->GetDesc().DepthBufferFormat;
-    // Primitive topology defines what kind of primitives will be rendered by this pipeline state
-    PSOCreateInfo.GraphicsPipeline.PrimitiveTopology            = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    // Cull back faces
-    PSOCreateInfo.GraphicsPipeline.RasterizerDesc.CullMode      = CULL_MODE_BACK;
-    // Enable depth testing
-    PSOCreateInfo.GraphicsPipeline.DepthStencilDesc.DepthEnable = True;
+    // Define vertex shader input layout
+    // This tutorial uses two types of input: per-vertex data and per-instance data.
+    LayoutElement LayoutElems[] =
+    {
+        // Per-vertex data - first buffer slot
+        // Attribute 0 - vertex position
+        LayoutElement{0, 0, 3, VT_FLOAT32, False},
+        // Attribute 1 - texture coordinates
+        LayoutElement{1, 0, 2, VT_FLOAT32, False},
+            
+        // Per-instance data - second buffer slot
+        // We will use four attributes to encode instance-specific 4x4 transformation matrix
+        // Attribute 2 - first row
+        LayoutElement{2, 1, 4, VT_FLOAT32, False, INPUT_ELEMENT_FREQUENCY_PER_INSTANCE},
+        // Attribute 3 - second row
+        LayoutElement{3, 1, 4, VT_FLOAT32, False, INPUT_ELEMENT_FREQUENCY_PER_INSTANCE},
+        // Attribute 4 - third row
+        LayoutElement{4, 1, 4, VT_FLOAT32, False, INPUT_ELEMENT_FREQUENCY_PER_INSTANCE},
+        // Attribute 5 - fourth row
+        LayoutElement{5, 1, 4, VT_FLOAT32, False, INPUT_ELEMENT_FREQUENCY_PER_INSTANCE}
+    };
     // clang-format on
-
-    ShaderCreateInfo ShaderCI;
-    // Tell the system that the shader source code is in HLSL.
-    // For OpenGL, the engine will convert this into GLSL under the hood.
-    ShaderCI.SourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
-
-    // OpenGL backend requires emulated combined HLSL texture samplers (g_Texture + g_Texture_sampler combination)
-    ShaderCI.Desc.UseCombinedTextureSamplers = true;
-
-    // Pack matrices in row-major order
-    ShaderCI.CompileFlags = SHADER_COMPILE_FLAG_PACK_MATRIX_ROW_MAJOR;
-
-    // Presentation engine always expects input in gamma space. Normally, pixel shader output is
-    // converted from linear to gamma space by the GPU. However, some platforms (e.g. Android in GLES mode,
-    // or Emscripten in WebGL mode) do not support gamma-correction. In this case the application
-    // has to do the conversion manually.
-    ShaderMacro Macros[] = {{"CONVERT_PS_OUTPUT_TO_GAMMA", m_ConvertPSOutputToGamma ? "1" : "0"}};
-    ShaderCI.Macros      = {Macros, _countof(Macros)};
 
     // Create a shader source stream factory to load shaders from files.
     RefCntAutoPtr<IShaderSourceInputStreamFactory> pShaderSourceFactory;
     m_pEngineFactory->CreateDefaultShaderSourceStreamFactory(nullptr, &pShaderSourceFactory);
-    ShaderCI.pShaderSourceStreamFactory = pShaderSourceFactory;
-    // Create a vertex shader
-    RefCntAutoPtr<IShader> pVS;
-    {
-        ShaderCI.Desc.ShaderType = SHADER_TYPE_VERTEX;
-        ShaderCI.EntryPoint      = "main";
-        ShaderCI.Desc.Name       = "Cube VS";
-        ShaderCI.FilePath        = "cube.vsh";
-        m_pDevice->CreateShader(ShaderCI, &pVS);
-        // Create dynamic uniform buffer that will store our transformation matrix
-        // Dynamic buffers can be frequently updated by the CPU
-        CreateUniformBuffer(m_pDevice, sizeof(float4x4), "VS constants CB", &m_VSConstants);
-    }
 
-    // Create a pixel shader
-    RefCntAutoPtr<IShader> pPS;
-    {
-        ShaderCI.Desc.ShaderType = SHADER_TYPE_PIXEL;
-        ShaderCI.EntryPoint      = "main";
-        ShaderCI.Desc.Name       = "Cube PS";
-        ShaderCI.FilePath        = "cube.psh";
-        m_pDevice->CreateShader(ShaderCI, &pPS);
-    }
+    TexturedCube::CreatePSOInfo CubePsoCI;
+    CubePsoCI.pDevice                = m_pDevice;
+    CubePsoCI.RTVFormat              = m_pSwapChain->GetDesc().ColorBufferFormat;
+    CubePsoCI.DSVFormat              = m_pSwapChain->GetDesc().DepthBufferFormat;
+    CubePsoCI.pShaderSourceFactory   = pShaderSourceFactory;
+    CubePsoCI.VSFilePath             = "cube_inst.vsh";
+    CubePsoCI.PSFilePath             = "cube_inst.psh";
+    CubePsoCI.ExtraLayoutElements    = LayoutElems;
+    CubePsoCI.NumExtraLayoutElements = _countof(LayoutElems);
 
-    // clang-format off
-    // Define vertex shader input layout
-    LayoutElement LayoutElems[] =
-    {
-        // Attribute 0 - vertex position
-        LayoutElement{0, 0, 3, VT_FLOAT32, False},
-        // Attribute 1 - texture coordinates
-        LayoutElement{1, 0, 2, VT_FLOAT32, False}
-    };
-    // clang-format on
+    m_pPSO = TexturedCube::CreatePipelineState(CubePsoCI, m_ConvertPSOutputToGamma);
 
-    PSOCreateInfo.pVS = pVS;
-    PSOCreateInfo.pPS = pPS;
-
-    PSOCreateInfo.GraphicsPipeline.InputLayout.LayoutElements = LayoutElems;
-    PSOCreateInfo.GraphicsPipeline.InputLayout.NumElements    = _countof(LayoutElems);
-
-    // Define variable type that will be used by default
-    PSOCreateInfo.PSODesc.ResourceLayout.DefaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
-
-        // clang-format off
-    // Shader variables should typically be mutable, which means they are expected
-    // to change on a per-instance basis
-    ShaderResourceVariableDesc Vars[] = 
-    {
-        {SHADER_TYPE_PIXEL, "g_Texture", SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE}
-    };
-    // clang-format on
-    PSOCreateInfo.PSODesc.ResourceLayout.Variables    = Vars;
-    PSOCreateInfo.PSODesc.ResourceLayout.NumVariables = _countof(Vars);
-
-    // clang-format off
-    // Define immutable sampler for g_Texture. Immutable samplers should be used whenever possible
-    SamplerDesc SamLinearClampDesc
-    {
-        FILTER_TYPE_LINEAR, FILTER_TYPE_LINEAR, FILTER_TYPE_LINEAR, 
-        TEXTURE_ADDRESS_CLAMP, TEXTURE_ADDRESS_CLAMP, TEXTURE_ADDRESS_CLAMP
-    };
-    ImmutableSamplerDesc ImtblSamplers[] = 
-    {
-        {SHADER_TYPE_PIXEL, "g_Texture", SamLinearClampDesc}
-    };
-    // clang-format on
-    PSOCreateInfo.PSODesc.ResourceLayout.ImmutableSamplers    = ImtblSamplers;
-    PSOCreateInfo.PSODesc.ResourceLayout.NumImmutableSamplers = _countof(ImtblSamplers);
-
-    m_pDevice->CreateGraphicsPipelineState(PSOCreateInfo, &m_pPSO);
+    // Create dynamic uniform buffer that will store our transformation matrix
+    // Dynamic buffers can be frequently updated by the CPU
+    CreateUniformBuffer(m_pDevice, sizeof(float4x4) * 2, "VS constants CB", &m_VSConstants);
 
     // Since we did not explicitly specify the type for 'Constants' variable, default
-    // type (SHADER_RESOURCE_VARIABLE_TYPE_STATIC) will be used. Static variables never
-    // never change and are bound directly through the pipeline state object.
+    // type (SHADER_RESOURCE_VARIABLE_TYPE_STATIC) will be used. Static variables
+    // never change and are bound directly to the pipeline state object.
     m_pPSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "Constants")->Set(m_VSConstants);
 
     // Since we are using mutable variable, we must create a shader resource binding object
@@ -168,129 +97,81 @@ void Tutorial03_Texturing::CreatePipelineState()
     m_pPSO->CreateShaderResourceBinding(&m_SRB, true);
 }
 
-void Tutorial03_Texturing::CreateVertexBuffer()
+void Tutorial04_Instancing::CreateInstanceBuffer()
 {
-    // Layout of this structure matches the one we defined in the pipeline state
-    struct Vertex
-    {
-        float3 pos;
-        float2 uv;
-    };
-
-    // Cube vertices
-
-    //      (-1,+1,+1)________________(+1,+1,+1)
-    //               /|              /|
-    //              / |             / |
-    //             /  |            /  |
-    //            /   |           /   |
-    //(-1,-1,+1) /____|__________/(+1,-1,+1)
-    //           |    |__________|____|
-    //           |   /(-1,+1,-1) |    /(+1,+1,-1)
-    //           |  /            |   /
-    //           | /             |  /
-    //           |/              | /
-    //           /_______________|/
-    //        (-1,-1,-1)       (+1,-1,-1)
-    //
-
-    // This time we have to duplicate verices because texture coordinates cannot
-    // be shared
-    constexpr Vertex CubeVerts[] =
-        {
-            {float3{-1, -1, -1}, float2{0, 1}},
-            {float3{-1, +1, -1}, float2{0, 0}},
-            {float3{+1, +1, -1}, float2{1, 0}},
-            {float3{+1, -1, -1}, float2{1, 1}},
-
-            {float3{-1, -1, -1}, float2{0, 1}},
-            {float3{-1, -1, +1}, float2{0, 0}},
-            {float3{+1, -1, +1}, float2{1, 0}},
-            {float3{+1, -1, -1}, float2{1, 1}},
-
-            {float3{+1, -1, -1}, float2{0, 1}},
-            {float3{+1, -1, +1}, float2{1, 1}},
-            {float3{+1, +1, +1}, float2{1, 0}},
-            {float3{+1, +1, -1}, float2{0, 0}},
-
-            {float3{+1, +1, -1}, float2{0, 1}},
-            {float3{+1, +1, +1}, float2{0, 0}},
-            {float3{-1, +1, +1}, float2{1, 0}},
-            {float3{-1, +1, -1}, float2{1, 1}},
-
-            {float3{-1, +1, -1}, float2{1, 0}},
-            {float3{-1, +1, +1}, float2{0, 0}},
-            {float3{-1, -1, +1}, float2{0, 1}},
-            {float3{-1, -1, -1}, float2{1, 1}},
-
-            {float3{-1, -1, +1}, float2{1, 1}},
-            {float3{+1, -1, +1}, float2{0, 1}},
-            {float3{+1, +1, +1}, float2{0, 0}},
-            {float3{-1, +1, +1}, float2{1, 0}},
-        };
-
-    // Create a vertex buffer that stores cube vertices
-    BufferDesc VertBuffDesc;
-    VertBuffDesc.Name      = "Cube vertex buffer";
-    VertBuffDesc.Usage     = USAGE_IMMUTABLE;
-    VertBuffDesc.BindFlags = BIND_VERTEX_BUFFER;
-    VertBuffDesc.Size      = sizeof(CubeVerts);
-    BufferData VBData;
-    VBData.pData    = CubeVerts;
-    VBData.DataSize = sizeof(CubeVerts);
-    m_pDevice->CreateBuffer(VertBuffDesc, &VBData, &m_CubeVertexBuffer);
+    // Create instance data buffer that will store transformation matrices
+    BufferDesc InstBuffDesc;
+    InstBuffDesc.Name = "Instance data buffer";
+    // Use default usage as this buffer will only be updated when grid size changes
+    InstBuffDesc.Usage     = USAGE_DEFAULT;
+    InstBuffDesc.BindFlags = BIND_VERTEX_BUFFER;
+    InstBuffDesc.Size      = sizeof(float4x4) * MaxInstances;
+    m_pDevice->CreateBuffer(InstBuffDesc, nullptr, &m_InstanceBuffer);
+    PopulateInstanceBuffer();
 }
 
-void Tutorial03_Texturing::CreateIndexBuffer()
-{
-    // clang-format off
-    constexpr Uint32 Indices[] =
-    {
-        2,0,1,    2,3,0,
-        4,6,5,    4,7,6,
-        8,10,9,   8,11,10,
-        12,14,13, 12,15,14,
-        16,18,17, 16,19,18,
-        20,21,22, 20,22,23
-    };
-    // clang-format on
-
-    BufferDesc IndBuffDesc;
-    IndBuffDesc.Name      = "Cube index buffer";
-    IndBuffDesc.Usage     = USAGE_IMMUTABLE;
-    IndBuffDesc.BindFlags = BIND_INDEX_BUFFER;
-    IndBuffDesc.Size      = sizeof(Indices);
-    BufferData IBData;
-    IBData.pData    = Indices;
-    IBData.DataSize = sizeof(Indices);
-    m_pDevice->CreateBuffer(IndBuffDesc, &IBData, &m_CubeIndexBuffer);
-}
-
-void Tutorial03_Texturing::LoadTexture()
-{
-    TextureLoadInfo loadInfo;
-    loadInfo.IsSRGB = true;
-    RefCntAutoPtr<ITexture> Tex;
-    CreateTextureFromFile("C6GElogo.png", loadInfo, m_pDevice, &Tex);
-    // Get shader resource view from the texture
-    m_TextureSRV = Tex->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
-
-    // Set texture SRV in the SRB
-    m_SRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_Texture")->Set(m_TextureSRV);
-}
-
-void Tutorial03_Texturing::Initialize(const SampleInitInfo& InitInfo)
+void Tutorial04_Instancing::Initialize(const SampleInitInfo& InitInfo)
 {
     SampleBase::Initialize(InitInfo);
 
     CreatePipelineState();
-    CreateVertexBuffer();
-    CreateIndexBuffer();
-    LoadTexture();
+
+    // Load textured cube
+    m_CubeVertexBuffer = TexturedCube::CreateVertexBuffer(m_pDevice, GEOMETRY_PRIMITIVE_VERTEX_FLAG_POS_TEX);
+    m_CubeIndexBuffer  = TexturedCube::CreateIndexBuffer(m_pDevice);
+    m_TextureSRV       = TexturedCube::LoadTexture(m_pDevice, "C6GELogo.png")->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+    // Set cube texture SRV in the SRB
+    m_SRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_Texture")->Set(m_TextureSRV);
+
+    CreateInstanceBuffer();
+}
+
+void Tutorial04_Instancing::PopulateInstanceBuffer()
+{
+    // Populate instance data buffer
+    const size_t          zGridSize = static_cast<size_t>(m_GridSize);
+    std::vector<float4x4> InstanceData(zGridSize * zGridSize * zGridSize);
+
+    float fGridSize = static_cast<float>(m_GridSize);
+
+    std::mt19937 gen; // Standard mersenne_twister_engine. Use default seed
+                      // to generate consistent distribution.
+
+    std::uniform_real_distribution<float> scale_distr(0.3f, 1.0f);
+    std::uniform_real_distribution<float> offset_distr(-0.15f, +0.15f);
+    std::uniform_real_distribution<float> rot_distr(-PI_F, +PI_F);
+
+    float BaseScale = 0.6f / fGridSize;
+    int   instId    = 0;
+    for (int x = 0; x < m_GridSize; ++x)
+    {
+        for (int y = 0; y < m_GridSize; ++y)
+        {
+            for (int z = 0; z < m_GridSize; ++z)
+            {
+                // Add random offset from central position in the grid
+                float xOffset = 2.f * (x + 0.5f + offset_distr(gen)) / fGridSize - 1.f;
+                float yOffset = 2.f * (y + 0.5f + offset_distr(gen)) / fGridSize - 1.f;
+                float zOffset = 2.f * (z + 0.5f + offset_distr(gen)) / fGridSize - 1.f;
+                // Random scale
+                float scale = BaseScale * scale_distr(gen);
+                // Random rotation
+                float4x4 rotation = float4x4::RotationX(rot_distr(gen));
+                rotation *= float4x4::RotationY(rot_distr(gen));
+                rotation *= float4x4::RotationZ(rot_distr(gen));
+                // Combine rotation, scale and translation
+                float4x4 matrix        = rotation * float4x4::Scale(scale, scale, scale) * float4x4::Translation(xOffset, yOffset, zOffset);
+                InstanceData[instId++] = matrix;
+            }
+        }
+    }
+    // Update instance data buffer
+    Uint32 DataSize = static_cast<Uint32>(sizeof(InstanceData[0]) * InstanceData.size());
+    m_pImmediateContext->UpdateBuffer(m_InstanceBuffer, 0, DataSize, InstanceData.data(), RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 }
 
 // Render a frame
-void Tutorial03_Texturing::Render()
+void Tutorial04_Instancing::Render()
 {
     ITextureView* pRTV = m_pSwapChain->GetCurrentBackBufferRTV();
     ITextureView* pDSV = m_pSwapChain->GetDepthBufferDSV();
@@ -311,13 +192,14 @@ void Tutorial03_Texturing::Render()
     {
         // Map the buffer and write current world-view-projection matrix
         MapHelper<float4x4> CBConstants(m_pImmediateContext, m_VSConstants, MAP_WRITE, MAP_FLAG_DISCARD);
-        *CBConstants = m_WorldViewProjMatrix;
+        CBConstants[0] = m_ViewProjMatrix;
+        CBConstants[1] = m_RotationMatrix;
     }
 
-    // Bind vertex and index buffers
-    const Uint64 offset   = 0;
-    IBuffer*     pBuffs[] = {m_CubeVertexBuffer};
-    m_pImmediateContext->SetVertexBuffers(0, 1, pBuffs, &offset, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+    // Bind vertex, instance and index buffers
+    const Uint64 offsets[] = {0, 0};
+    IBuffer*    pBuffs[]  = {m_CubeVertexBuffer, m_InstanceBuffer};
+    m_pImmediateContext->SetVertexBuffers(0, _countof(pBuffs), pBuffs, offsets, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
     m_pImmediateContext->SetIndexBuffer(m_CubeIndexBuffer, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
     // Set the pipeline state
@@ -329,20 +211,18 @@ void Tutorial03_Texturing::Render()
     DrawIndexedAttribs DrawAttrs;     // This is an indexed draw call
     DrawAttrs.IndexType  = VT_UINT32; // Index type
     DrawAttrs.NumIndices = 36;
+    DrawAttrs.NumInstances = m_GridSize * m_GridSize * m_GridSize; // The number of instances
     // Verify the state of vertex and index buffers
     DrawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
     m_pImmediateContext->DrawIndexed(DrawAttrs);
 }
 
-void Tutorial03_Texturing::Update(double CurrTime, double ElapsedTime, bool DoUpdateUI)
+void Tutorial04_Instancing::Update(double CurrTime, double ElapsedTime, bool DoUpdateUI)
 {
     SampleBase::Update(CurrTime, ElapsedTime, DoUpdateUI);
 
-    // Apply rotation
-    float4x4 CubeModelTransform = float4x4::RotationY(static_cast<float>(CurrTime) * 1.0f) * float4x4::RotationX(-PI_F * 0.1f);
-
-    // Camera is at (0, 0, -5) looking along the Z axis
-    float4x4 View = float4x4::Translation(0.f, 0.0f, 5.0f);
+    // Set cube view matrix
+    float4x4 View = float4x4::RotationX(-0.6f) * float4x4::Translation(0.f, 0.f, 4.0f);
 
     // Get pretransform matrix that rotates the scene according the surface orientation
     float4x4 SrfPreTransform = GetSurfacePretransformMatrix(float3{0, 0, 1});
@@ -350,8 +230,11 @@ void Tutorial03_Texturing::Update(double CurrTime, double ElapsedTime, bool DoUp
     // Get projection matrix adjusted to the current screen orientation
     float4x4 Proj = GetAdjustedProjectionMatrix(PI_F / 4.0f, 0.1f, 100.f);
 
-    // Compute world-view-projection matrix
-    m_WorldViewProjMatrix = CubeModelTransform * View * SrfPreTransform * Proj;
+    // Compute view-projection matrix
+    m_ViewProjMatrix = View * SrfPreTransform * Proj;
+
+    // Global rotation matrix
+    m_RotationMatrix = float4x4::RotationY(static_cast<float>(CurrTime) * 1.0f) * float4x4::RotationX(-static_cast<float>(CurrTime) * 0.25f);
 }
 
 } // namespace Diligent
@@ -359,15 +242,17 @@ void Tutorial03_Texturing::Update(double CurrTime, double ElapsedTime, bool DoUp
 
 int main()
 {
-    // Initialize GLFW
+    // -------------------
+    // Init GLFW
+    // -------------------
     if (!glfwInit())
     {
         std::cerr << "Failed to initialize GLFW" << std::endl;
         return -1;
     }
 
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API); // No OpenGL context
-    GLFWwindow* window = glfwCreateWindow(800, 600, "Diligent Engine - Hello Triangle", nullptr, nullptr);
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    GLFWwindow* window = glfwCreateWindow(800, 600, "C6GE - Instancing with ImGui", nullptr, nullptr);
     if (!window)
     {
         std::cerr << "Failed to create GLFW window" << std::endl;
@@ -375,46 +260,32 @@ int main()
         return -1;
     }
 
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGui::StyleColorsDark(); // optional, for dark theme
-
-    // Initialize Diligent Engine
-    SampleBase* sample = CreateSample();
-    SampleInitInfo initInfo;
-
-    // Dynamically load the D3D12 engine factory
-    RefCntAutoPtr<IEngineFactoryD3D12> factory;
-    auto GetFactoryFunc = LoadGraphicsEngineD3D12();
-    if (GetFactoryFunc == nullptr)
+    // -------------------
+    // Create Diligent Engine
+    // -------------------
+    auto GetFactoryD3D12 = LoadGraphicsEngineD3D12();
+    if (!GetFactoryD3D12)
     {
         std::cerr << "Failed to load D3D12 engine factory function" << std::endl;
-        glfwDestroyWindow(window);
-        glfwTerminate();
         return -1;
     }
-    factory = GetFactoryFunc();
-    if (!factory)
-    {
-        std::cerr << "Failed to initialize D3D12 engine factory" << std::endl;
-        glfwDestroyWindow(window);
-        glfwTerminate();
-        return -1;
-    }
+
+    ImGui::CreateContext();
+
+    IEngineFactoryD3D12* pFactoryRaw = GetFactoryD3D12();
+    RefCntAutoPtr<IEngineFactoryD3D12> factory(pFactoryRaw);
 
     RefCntAutoPtr<IRenderDevice> device;
     RefCntAutoPtr<IDeviceContext> immediateContext;
     RefCntAutoPtr<ISwapChain> swapChain;
 
-    // Create device and contexts
     IDeviceContext* ppContexts[1] = {nullptr};
     EngineD3D12CreateInfo engineCI;
     factory->CreateDeviceAndContextsD3D12(engineCI, &device, ppContexts);
     immediateContext = ppContexts[0];
 
-    // Create swap chain
     SwapChainDesc swapChainDesc;
-    swapChainDesc.Width = 800;
+    swapChainDesc.Width  = 800;
     swapChainDesc.Height = 600;
     swapChainDesc.ColorBufferFormat = TEX_FORMAT_RGBA8_UNORM;
     swapChainDesc.DepthBufferFormat = TEX_FORMAT_D32_FLOAT;
@@ -422,30 +293,45 @@ int main()
     Win32NativeWindow nativeWindow{glfwGetWin32Window(window)};
     factory->CreateSwapChainD3D12(device, immediateContext, swapChainDesc, FullScreenModeDesc{}, nativeWindow, &swapChain);
 
-    // Set up SampleInitInfo
-    initInfo.pDevice = device;
-    initInfo.pSwapChain = swapChain;
-    initInfo.ppContexts = ppContexts;
-
-    // Set the engine factory
+    // -------------------
+    // Initialize sample
+    // -------------------
+    SampleBase* sample = CreateSample();
+    SampleInitInfo initInfo;
+    initInfo.pDevice        = device;
+    initInfo.pSwapChain     = swapChain;
+    initInfo.ppContexts     = ppContexts;
     initInfo.pEngineFactory = factory;
-
-    // Initialize the sample
     sample->Initialize(initInfo);
 
+    // -------------------
     // Main loop
+    // -------------------
     while (!glfwWindowShouldClose(window))
     {
         glfwPollEvents();
-        sample->Update(glfwGetTime(), 0.016, true); // Assuming ~60 FPS
+
+        // Query the current framebuffer size from GLFW
+        int fbW = 0, fbH = 0;
+        glfwGetFramebufferSize(window, &fbW, &fbH);
+
+        // Update and render sample (which will call UpdateUI())
+        sample->Update(glfwGetTime(), 0.016, true);
         sample->Render();
+
+        // Present
         swapChain->Present();
-        std::this_thread::sleep_for(std::chrono::milliseconds(16)); // Simulate frame time
+
+        // Slight throttle to avoid pegging CPU
+        std::this_thread::sleep_for(std::chrono::milliseconds(8));
     }
 
+    // -------------------
     // Cleanup
+    // -------------------
     delete sample;
     glfwDestroyWindow(window);
     glfwTerminate();
+
     return 0;
 }
