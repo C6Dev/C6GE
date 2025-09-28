@@ -1,68 +1,34 @@
-#ifdef _WIN32
-    #undef _WIN32
-#endif
-#ifdef GLFW_EXPOSE_NATIVE_WIN32
-    #undef GLFW_EXPOSE_NATIVE_WIN32
-#endif
-
 #include <iostream>
 #include <thread>
 #include <chrono>
 #include <memory>
 
-#ifdef __APPLE__
-#include <Cocoa/Cocoa.h>
-#include <QuartzCore/CAMetalLayer.h>
-#endif
-
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
-#if defined(PLATFORM_WIN32)
-    #pragma message("Building for Windows")
-#elif defined(PLATFORM_MACOS)
-    #pragma message("Building for macOS")
-#elif defined(PLATFORM_LINUX)
-    #pragma message("Building for Linux")
-#else
-    #pragma message("Unknown platform")
-#endif
-
-#if defined(PLATFORM_WIN32)
-    #define GLFW_EXPOSE_NATIVE_WIN32
+#if defined(_WIN32)
+    #ifndef GLFW_EXPOSE_NATIVE_WIN32
+        #define GLFW_EXPOSE_NATIVE_WIN32
+    #endif
     #include <GLFW/glfw3native.h>
     #include "DiligentCore/Platforms/Win32/interface/Win32NativeWindow.h"
-#elif defined(PLATFORM_MACOS)
-    #ifdef GLFW_EXPOSE_NATIVE_WIN32
-        #error "GLFW_EXPOSE_NATIVE_WIN32 is defined, but it should not be on macOS"
-    #endif
-    #ifdef GLFW_EXPOSE_NATIVE_COCOA
-        #pragma message("GLFW_EXPOSE_NATIVE_COCOA is correctly defined")
+
+#elif defined(__APPLE__)
+    #ifndef GLFW_EXPOSE_NATIVE_COCOA
+        #define GLFW_EXPOSE_NATIVE_COCOA
     #endif
     #include <GLFW/glfw3native.h>
     #include "DiligentCore/Platforms/Apple/interface/MacOSNativeWindow.h"
-#elif defined(PLATFORM_LINUX)
+
+#elif defined(__linux__)
     #ifndef GLFW_EXPOSE_NATIVE_X11
         #define GLFW_EXPOSE_NATIVE_X11
     #endif
     #include <GLFW/glfw3native.h>
-    // Undefine conflicting X11 macros
-    #ifdef Bool
-        #undef Bool
-    #endif
-    #ifdef True
-        #undef True
-    #endif
-    #ifdef False
-        #undef False
-    #endif
-    #ifdef None
-        #undef None
-    #endif
     #include "DiligentCore/Platforms/Linux/interface/LinuxNativeWindow.h"
 #endif
 
-// Rest of the includes remain unchanged
+// Diligent common interfaces
 #include "DiligentCore/Common/interface/RefCntAutoPtr.hpp"
 #include "DiligentCore/Graphics/GraphicsEngine/interface/EngineFactory.h"
 #include "DiligentCore/Graphics/GraphicsEngine/interface/SwapChain.h"
@@ -72,7 +38,7 @@
 #include "DiligentCore/Graphics/GraphicsEngine/interface/Shader.h"
 #include "DiligentCore/Graphics/GraphicsEngine/interface/PipelineState.h"
 
-// Include engine factory headers for all supported backends
+// Engine factories
 #include "DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h"
 #include "DiligentCore/Graphics/GraphicsEngineD3D11/interface/EngineFactoryD3D11.h"
 #include "DiligentCore/Graphics/GraphicsEngineVulkan/interface/EngineFactoryVk.h"
@@ -80,13 +46,8 @@
 #ifdef __APPLE__
 #include "DiligentCore/Graphics/GraphicsEngineMetal/interface/EngineFactoryMtl.h"
 #endif
-#ifdef _WIN32
-#include "DiligentCore/Platforms/Win32/interface/Win32NativeWindow.h"
-#endif
-#ifdef __linux__
-#include "DiligentCore/Platforms/Linux/interface/LinuxNativeWindow.h"
-#endif
 
+// Your includes
 #include "main.h"
 #include "imgui.h"
 #include "backends/imgui_impl_glfw.h"
@@ -98,7 +59,10 @@
 #include "ColorConversion.h"
 #include "TexturedCube.hpp"
 
+
 using namespace Diligent;
+
+bool enableVsync = false; // toggle this from your editor later
 
 namespace Diligent
 {
@@ -249,7 +213,27 @@ void Tutorial05_TextureArray::UpdateUI()
 
     ImGui::Begin("Demo Window", nullptr);
     ImGui::Text("This window is created by the Dear ImGui library.");
-    ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+    static double lastTime = glfwGetTime();
+    static int frames = 0;
+    static float fps = 0.0f;
+
+    double currentTime = glfwGetTime();
+    frames++;
+
+    if (currentTime - lastTime >= 1.0) // update every 1 second
+    {
+        fps = frames / (currentTime - lastTime);
+        frames = 0;
+        lastTime = currentTime;
+    }
+
+    // later in your ImGui window
+    ImGui::Text("Engine FPS: %.1f", fps);
+    ImGui::Button("Toggle VSync");
+    if (ImGui::IsItemClicked())
+        enableVsync = !enableVsync;
+
+    ImGui::Text("VSync is %s", enableVsync ? "enabled" : "disabled");
     ImGui::End();
 }
 
@@ -398,6 +382,7 @@ bool InitializeDiligentEngine(
     swapChainDesc.Height = 600;
     swapChainDesc.ColorBufferFormat = TEX_FORMAT_RGBA8_UNORM;
     swapChainDesc.DepthBufferFormat = TEX_FORMAT_D32_FLOAT;
+
 
     // Helper to get native window for current platform
     struct NativeWindow
@@ -617,6 +602,7 @@ int main()
     initInfo.pImGui = imGuiImpl.get(); // Use raw pointer for SampleInitInfo
     sample->Initialize(initInfo);
 
+    
     // -------------------
     // Main loop
     // -------------------
@@ -667,8 +653,7 @@ int main()
         immediateContext->SetRenderTargets(1, &pRTV, pDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
         imGuiImpl->Render(immediateContext);
 
-        swapChain->Present();
-        std::this_thread::sleep_for(std::chrono::milliseconds(8));
+        swapChain->Present(enableVsync ? 1 : 0);
     }
 
     // -------------------
