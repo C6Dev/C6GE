@@ -378,200 +378,124 @@ bool InitializeDiligentEngine(
     RefCntAutoPtr<ISwapChain>& swapChain,
     IDeviceContext* ppContexts[1])
 {
-    SwapChainDesc swapChainDesc;
-    swapChainDesc.Width = 800;
+    SwapChainDesc swapChainDesc{};
+    swapChainDesc.Width  = 800;
     swapChainDesc.Height = 600;
     swapChainDesc.ColorBufferFormat = TEX_FORMAT_RGBA8_UNORM;
     swapChainDesc.DepthBufferFormat = TEX_FORMAT_D32_FLOAT;
 
-#if defined(_WIN32)
-    // Windows: Try D3D12, D3D11, Vulkan, OpenGL
+    // Helper to get native window for current platform
+    struct NativeWindow
     {
-        Win32NativeWindow nativeWindow{ glfwGetWin32Window(window) };
+#if defined(_WIN32)
+        Win32NativeWindow win32{};
+#elif defined(__APPLE__)
+        MacOSNativeWindow mac{};
+#elif defined(__linux__)
+        LinuxNativeWindow linux{};
+#endif
+    };
 
-        // Try Direct3D12
+    auto GetNativeWindow = [&](GLFWwindow* w) -> NativeWindow {
+        NativeWindow nw{};
+#if defined(_WIN32)
+        nw.win32.hWnd = glfwGetWin32Window(w);
+#elif defined(__APPLE__)
+        nw.mac.pNSView = [glfwGetCocoaWindow(w) contentView];
+#elif defined(__linux__)
+        nw.linux.WindowId = glfwGetX11Window(w);
+        nw.linux.pDisplay = glfwGetX11Display();
+#endif
+        return nw;
+    };
+
+    NativeWindow nativeWindow = GetNativeWindow(window);
+
+#if defined(_WIN32)
+    // Try D3D12
 #if D3D12_SUPPORTED
+    if (auto* pFactoryD3D12 = LoadAndGetEngineFactoryD3D12())
+    {
+        RefCntAutoPtr<IEngineFactoryD3D12> factoryD3D12(pFactoryD3D12);
+        EngineD3D12CreateInfo engineCI{};
+        factoryD3D12->CreateDeviceAndContextsD3D12(engineCI, &device, ppContexts);
+        if (device)
         {
-            auto* pFactoryD3D12 = LoadAndGetEngineFactoryD3D12();
-            if (pFactoryD3D12)
-            {
-                RefCntAutoPtr<IEngineFactoryD3D12> factoryD3D12(pFactoryD3D12);
-                EngineD3D12CreateInfo engineCI;
-                factoryD3D12->CreateDeviceAndContextsD3D12(engineCI, &device, ppContexts);
-                if (device)
-                {
-                    immediateContext = ppContexts[0];
-                    factoryD3D12->CreateSwapChainD3D12(device, immediateContext, swapChainDesc, FullScreenModeDesc{}, nativeWindow, &swapChain);
-                    if (swapChain)
-                    {
-                        std::cout << "Render backend: Direct3D12" << std::endl;
-                        factory = factoryD3D12;
-                        return true;
-                    }
-                    device.Release();
-                    immediateContext.Release();
-                    ppContexts[0] = nullptr;
-                }
-            }
+            immediateContext = ppContexts[0];
+            factoryD3D12->CreateSwapChainD3D12(device, immediateContext, swapChainDesc, FullScreenModeDesc{}, nativeWindow.win32, &swapChain);
+            if (swapChain) { factory = factoryD3D12; std::cout << "Render backend: D3D12\n"; return true; }
         }
-#endif
-
-        // Try Direct3D11
-#if D3D11_SUPPORTED
-        {
-            auto* pFactoryD3D11 = LoadAndGetEngineFactoryD3D11();
-            if (pFactoryD3D11)
-            {
-                RefCntAutoPtr<IEngineFactoryD3D11> factoryD3D11(pFactoryD3D11);
-                EngineD3D11CreateInfo engineCI;
-                factoryD3D11->CreateDeviceAndContextsD3D11(engineCI, &device, ppContexts);
-                if (device)
-                {
-                    immediateContext = ppContexts[0];
-                    factoryD3D11->CreateSwapChainD3D11(device, immediateContext, swapChainDesc, FullScreenModeDesc{}, nativeWindow, &swapChain);
-                    if (swapChain)
-                    {
-                        std::cout << "Render backend: Direct3D11" << std::endl;
-                        factory = factoryD3D11;
-                        return true;
-                    }
-                    device.Release();
-                    immediateContext.Release();
-                    ppContexts[0] = nullptr;
-                }
-            }
-        }
-#endif
     }
 #endif
+
+    // Try D3D11
+#if D3D11_SUPPORTED
+    if (auto* pFactoryD3D11 = LoadAndGetEngineFactoryD3D11())
+    {
+        RefCntAutoPtr<IEngineFactoryD3D11> factoryD3D11(pFactoryD3D11);
+        EngineD3D11CreateInfo engineCI{};
+        factoryD3D11->CreateDeviceAndContextsD3D11(engineCI, &device, ppContexts);
+        if (device)
+        {
+            immediateContext = ppContexts[0];
+            factoryD3D11->CreateSwapChainD3D11(device, immediateContext, swapChainDesc, FullScreenModeDesc{}, nativeWindow.win32, &swapChain);
+            if (swapChain) { factory = factoryD3D11; std::cout << "Render backend: D3D11\n"; return true; }
+        }
+    }
+#endif
+#endif // _WIN32
 
 #if defined(__APPLE__) && METAL_SUPPORTED
-    // Try Metal (macOS only) - prioritize Metal for macOS
+    if (auto* pFactoryMtl = LoadAndGetEngineFactoryMtl())
     {
-        auto* pFactoryMtl = LoadAndGetEngineFactoryMtl();
-        if (pFactoryMtl)
+        RefCntAutoPtr<IEngineFactoryMtl> factoryMtl(pFactoryMtl);
+        EngineMtlCreateInfo engineCI{};
+        factoryMtl->CreateDeviceAndContextsMtl(engineCI, &device, ppContexts);
+        if (device)
         {
-            RefCntAutoPtr<IEngineFactoryMtl> factoryMtl(pFactoryMtl);
-            EngineMtlCreateInfo engineCI;
-            factoryMtl->CreateDeviceAndContextsMtl(engineCI, &device, ppContexts);
-            if (device)
-            {
-                immediateContext = ppContexts[0];
-                MacOSNativeWindow nativeWindow;
-                nativeWindow.pNSView = [glfwGetCocoaWindow(window) contentView];
-                factoryMtl->CreateSwapChainMtl(device, immediateContext, swapChainDesc, nativeWindow, &swapChain);
-                if (swapChain)
-                {
-                    std::cout << "Render backend: Metal" << std::endl;
-                    factory = factoryMtl;
-                    return true;
-                }
-                device.Release();
-                immediateContext.Release();
-                ppContexts[0] = nullptr;
-            }
+            immediateContext = ppContexts[0];
+            factoryMtl->CreateSwapChainMtl(device, immediateContext, swapChainDesc, nativeWindow.mac, &swapChain);
+            if (swapChain) { factory = factoryMtl; std::cout << "Render backend: Metal\n"; return true; }
         }
     }
 #endif
 
-// Try Vulkan (Windows, Linux, or macOS fallback)
 #if VULKAN_SUPPORTED
-{
-    auto* pFactoryVk = LoadAndGetEngineFactoryVk();
-    if (pFactoryVk)
+    if (auto* pFactoryVk = LoadAndGetEngineFactoryVk())
     {
-        std::cout << "Vulkan factory loaded successfully" << std::endl;
         RefCntAutoPtr<IEngineFactoryVk> factoryVk(pFactoryVk);
-        EngineVkCreateInfo engineCI;
-
-        uint32_t glfwExtensionCount = 0;
-        const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-        if (glfwExtensions == nullptr)
-        {
-            std::cerr << "GLFW failed to provide required Vulkan instance extensions" << std::endl;
-            return false;
-        }
-        std::cout << "GLFW required Vulkan instance extensions:" << std::endl;
-        for (uint32_t i = 0; i < glfwExtensionCount; ++i)
-        {
-            std::cout << "  " << glfwExtensions[i] << std::endl;
-        }
-
+        EngineVkCreateInfo engineCI{};
         factoryVk->CreateDeviceAndContextsVk(engineCI, &device, ppContexts);
         if (device)
         {
-            std::cout << "Vulkan device created successfully" << std::endl;
             immediateContext = ppContexts[0];
-            MacOSNativeWindow nativeWindow;
-            nativeWindow.pNSView = [glfwGetCocoaWindow(window) contentView];
-            if (nativeWindow.pNSView)
-            {
-                std::cout << "MacOSNativeWindow pNSView set successfully" << std::endl;
-            }
-            else
-            {
-                std::cerr << "Failed to set MacOSNativeWindow pNSView" << std::endl;
-            }
-            factoryVk->CreateSwapChainVk(device, immediateContext, swapChainDesc, nativeWindow, &swapChain);
-            if (swapChain)
-            {
-                std::cout << "Render backend: Vulkan" << std::endl;
-                factory = factoryVk;
-                return true;
-            }
-            else
-            {
-                std::cerr << "Failed to create Vulkan swap chain" << std::endl;
-            }
-            device.Release();
-            immediateContext.Release();
-            ppContexts[0] = nullptr;
-        }
-        else
-        {
-            std::cerr << "Failed to create Vulkan device" << std::endl;
+#if defined(_WIN32)
+            factoryVk->CreateSwapChainVk(device, immediateContext, swapChainDesc, nativeWindow.win32, &swapChain);
+#elif defined(__APPLE__)
+            factoryVk->CreateSwapChainVk(device, immediateContext, swapChainDesc, nativeWindow.mac, &swapChain);
+#elif defined(__linux__)
+            factoryVk->CreateSwapChainVk(device, immediateContext, swapChainDesc, nativeWindow.linux, &swapChain);
+#endif
+            if (swapChain) { factory = factoryVk; std::cout << "Render backend: Vulkan\n"; return true; }
         }
     }
-    else
-    {
-        std::cerr << "Failed to load Vulkan factory" << std::endl;
-    }
-}
 #endif
 
-    // Try OpenGL (Windows, Linux, or macOS fallback)
 #if GL_SUPPORTED || GLES_SUPPORTED
+    if (auto* pFactoryGL = LoadAndGetEngineFactoryOpenGL())
     {
-        auto* pFactoryOpenGL = LoadAndGetEngineFactoryOpenGL();
-        if (pFactoryOpenGL)
-        {
-            RefCntAutoPtr<IEngineFactoryOpenGL> factoryOpenGL(pFactoryOpenGL);
-            EngineGLCreateInfo engineCI;
-            engineCI.Window = {};
-#ifdef _WIN32
-            Win32NativeWindow nativeWindow{ glfwGetWin32Window(window) };
-            engineCI.Window.hWnd = nativeWindow.hWnd;
-#elif defined(__linux__)
-            LinuxNativeWindow nativeWindow{ glfwGetX11Window(window), glfwGetX11Display() };
-            engineCI.Window.WindowId = nativeWindow.WindowId;
-            engineCI.Window.pDisplay = nativeWindow.pDisplay;
+        RefCntAutoPtr<IEngineFactoryOpenGL> factoryGL(pFactoryGL);
+        EngineGLCreateInfo engineCI{};
+#if defined(_WIN32)
+        engineCI.Window.hWnd = nativeWindow.win32.hWnd;
 #elif defined(__APPLE__)
-            MacOSNativeWindow nativeWindow;
-            nativeWindow.pNSView = [glfwGetCocoaWindow(window) contentView];
-            engineCI.Window.pNSView = nativeWindow.pNSView;
+        engineCI.Window.pNSView = nativeWindow.mac.pNSView;
+#elif defined(__linux__)
+        engineCI.Window.WindowId = nativeWindow.linux.WindowId;
+        engineCI.Window.pDisplay = nativeWindow.linux.pDisplay;
 #endif
-            factoryOpenGL->CreateDeviceAndSwapChainGL(engineCI, &device, &immediateContext, swapChainDesc, &swapChain);
-            if (device && swapChain)
-            {
-                std::cout << "Render backend: OpenGL" << std::endl;
-                ppContexts[0] = immediateContext;
-                factory = factoryOpenGL;
-                return true;
-            }
-            device.Release();
-            immediateContext.Release();
-            ppContexts[0] = nullptr;
-        }
+        factoryGL->CreateDeviceAndSwapChainGL(engineCI, &device, &immediateContext, swapChainDesc, &swapChain);
+        if (device && swapChain) { ppContexts[0] = immediateContext; factory = factoryGL; std::cout << "Render backend: OpenGL\n"; return true; }
     }
 #endif
 
