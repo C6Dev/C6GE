@@ -2,6 +2,9 @@
 #include <thread>
 #include <chrono>
 #include <memory>
+#include <random>
+#include <string>
+#include <algorithm>
 
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
@@ -19,6 +22,8 @@
     #endif
     #include <GLFW/glfw3native.h>
     #include "DiligentCore/Platforms/Apple/interface/MacOSNativeWindow.h"
+    #include <Cocoa/Cocoa.h>
+    #include <QuartzCore/CAMetalLayer.h>
 
 #elif defined(__linux__)
     #ifndef GLFW_EXPOSE_NATIVE_X11
@@ -49,15 +54,15 @@
 
 // Your includes
 #include "main.h"
-#include "imgui.h"
-#include "backends/imgui_impl_glfw.h"
-#include "ImGuiImplDiligent.hpp"
-#include <random>
 #include "MapHelper.hpp"
 #include "GraphicsUtilities.h"
 #include "TextureUtilities.h"
 #include "ColorConversion.h"
-#include "TexturedCube.hpp"
+#include "../../Common/src/TexturedCube.hpp"
+#include "imgui.h"
+#include "ImGuiUtils.hpp"
+#include "backends/imgui_impl_glfw.h"
+#include "ImGuiImplDiligent.hpp"
 
 
 using namespace Diligent;
@@ -69,194 +74,147 @@ namespace Diligent
 
 SampleBase* CreateSample()
 {
-    return new Tutorial05_TextureArray();
+    return new Tutorial06_Multithreading();
 }
 
-namespace
+Tutorial06_Multithreading::~Tutorial06_Multithreading()
 {
+    StopWorkerThreads();
+}
 
-struct InstanceData
+void Tutorial06_Multithreading::ModifyEngineInitInfo(const ModifyEngineInitInfoAttribs& Attribs)
 {
-    float4x4 Matrix;
-    float    TextureInd = 0;
-};
-
-} // namespace
-
-void Tutorial05_TextureArray::CreatePipelineState()
-{
-    // clang-format off
-    // Define vertex shader input layout
-    // This tutorial uses two types of input: per-vertex data and per-instance data.
-    LayoutElement LayoutElems[] =
+    SampleBase::ModifyEngineInitInfo(Attribs);
+    Attribs.EngineCI.NumDeferredContexts = std::max(std::thread::hardware_concurrency() - 1, 2u);
+#if VULKAN_SUPPORTED
+    if (Attribs.DeviceType == RENDER_DEVICE_TYPE_VULKAN)
     {
-        // Per-vertex data - first buffer slot
-        // Attribute 0 - vertex position
-        LayoutElement{0, 0, 3, VT_FLOAT32, False},
-        // Attribute 1 - texture coordinates
-        LayoutElement{1, 0, 2, VT_FLOAT32, False},
-            
-        // Per-instance data - second buffer slot
-        // We will use four attributes to encode instance-specific 4x4 transformation matrix
-        // Attribute 2 - first row
-        LayoutElement{2, 1, 4, VT_FLOAT32, False, INPUT_ELEMENT_FREQUENCY_PER_INSTANCE},
-        // Attribute 3 - second row
-        LayoutElement{3, 1, 4, VT_FLOAT32, False, INPUT_ELEMENT_FREQUENCY_PER_INSTANCE},
-        // Attribute 4 - third row
-        LayoutElement{4, 1, 4, VT_FLOAT32, False, INPUT_ELEMENT_FREQUENCY_PER_INSTANCE},
-        // Attribute 5 - fourth row
-        LayoutElement{5, 1, 4, VT_FLOAT32, False, INPUT_ELEMENT_FREQUENCY_PER_INSTANCE},
-        // Attribute 6 - texture array index
-        LayoutElement{6, 1, 1, VT_FLOAT32, False, INPUT_ELEMENT_FREQUENCY_PER_INSTANCE},
-    };
-    // clang-format on
+        EngineVkCreateInfo& EngineVkCI = static_cast<EngineVkCreateInfo&>(Attribs.EngineCI);
+        EngineVkCI.DynamicHeapSize     = 26 << 20; // Enough space for 32x32x32x256 bytes allocations for 3 frames
+    }
+#endif
+#if WEBGPU_SUPPORTED
+    if (Attribs.DeviceType == RENDER_DEVICE_TYPE_WEBGPU)
+    {
+        EngineWebGPUCreateInfo& EngineWgpuCI = static_cast<EngineWebGPUCreateInfo&>(Attribs.EngineCI);
+        EngineWgpuCI.DynamicHeapSize         = 16 << 20;
+    }
+#endif
+}
 
+void Tutorial06_Multithreading::CreatePipelineState(std::vector<StateTransitionDesc>& Barriers)
+{
     // Create a shader source stream factory to load shaders from files.
     RefCntAutoPtr<IShaderSourceInputStreamFactory> pShaderSourceFactory;
     m_pEngineFactory->CreateDefaultShaderSourceStreamFactory(nullptr, &pShaderSourceFactory);
 
     TexturedCube::CreatePSOInfo CubePsoCI;
-    CubePsoCI.pDevice                = m_pDevice;
-    CubePsoCI.RTVFormat              = m_pSwapChain->GetDesc().ColorBufferFormat;
-    CubePsoCI.DSVFormat              = m_pSwapChain->GetDesc().DepthBufferFormat;
-    CubePsoCI.pShaderSourceFactory   = pShaderSourceFactory;
-    CubePsoCI.VSFilePath             = "cube_inst.vsh";
-    CubePsoCI.PSFilePath             = "cube_inst.psh";
-    CubePsoCI.ExtraLayoutElements    = LayoutElems;
-    CubePsoCI.NumExtraLayoutElements = _countof(LayoutElems);
+    CubePsoCI.pDevice              = m_pDevice;
+    CubePsoCI.RTVFormat            = m_pSwapChain->GetDesc().ColorBufferFormat;
+    CubePsoCI.DSVFormat            = m_pSwapChain->GetDesc().DepthBufferFormat;
+    CubePsoCI.pShaderSourceFactory = pShaderSourceFactory;
+    CubePsoCI.VSFilePath           = "cube.vsh";
+    CubePsoCI.PSFilePath           = "cube.psh";
+    CubePsoCI.Components           = GEOMETRY_PRIMITIVE_VERTEX_FLAG_POS_TEX;
 
     m_pPSO = TexturedCube::CreatePipelineState(CubePsoCI, m_ConvertPSOutputToGamma);
 
     // Create dynamic uniform buffer that will store our transformation matrix
     // Dynamic buffers can be frequently updated by the CPU
     CreateUniformBuffer(m_pDevice, sizeof(float4x4) * 2, "VS constants CB", &m_VSConstants);
+    CreateUniformBuffer(m_pDevice, sizeof(float4x4), "Instance constants CB", &m_InstanceConstants);
+    // Explicitly transition the buffers to RESOURCE_STATE_CONSTANT_BUFFER state
+    Barriers.emplace_back(m_VSConstants, RESOURCE_STATE_UNKNOWN, RESOURCE_STATE_CONSTANT_BUFFER, STATE_TRANSITION_FLAG_UPDATE_STATE);
+    Barriers.emplace_back(m_InstanceConstants, RESOURCE_STATE_UNKNOWN, RESOURCE_STATE_CONSTANT_BUFFER, STATE_TRANSITION_FLAG_UPDATE_STATE);
 
-    // Since we did not explicitly specify the type for 'Constants' variable, default
-    // type (SHADER_RESOURCE_VARIABLE_TYPE_STATIC) will be used. Static variables
+    // Since we did not explicitly specify the type for 'Constants' and 'InstanceData' variables,
+    // default type (SHADER_RESOURCE_VARIABLE_TYPE_STATIC) will be used. Static variables
     // never change and are bound directly to the pipeline state object.
     m_pPSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "Constants")->Set(m_VSConstants);
-
-    // Since we are using mutable variable, we must create a shader resource binding object
-    // http://diligentgraphics.com/2016/03/23/resource-binding-model-in-diligent-engine-2-0/
-    m_pPSO->CreateShaderResourceBinding(&m_SRB, true);
+    m_pPSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "InstanceData")->Set(m_InstanceConstants);
 }
 
-void Tutorial05_TextureArray::CreateInstanceBuffer()
+void Tutorial06_Multithreading::LoadTextures(std::vector<StateTransitionDesc>& Barriers)
 {
-    // Create instance data buffer that will store transformation matrices
-    BufferDesc InstBuffDesc;
-    InstBuffDesc.Name = "Instance data buffer";
-    // Use default usage as this buffer will only be updated when grid size changes
-    InstBuffDesc.Usage     = USAGE_DEFAULT;
-    InstBuffDesc.BindFlags = BIND_VERTEX_BUFFER;
-    InstBuffDesc.Size      = sizeof(InstanceData) * MaxInstances;
-    m_pDevice->CreateBuffer(InstBuffDesc, nullptr, &m_InstanceBuffer);
-    PopulateInstanceBuffer();
-}
-
-void Tutorial05_TextureArray::LoadTextures()
-{
-    std::vector<RefCntAutoPtr<ITextureLoader>> TexLoaders(NumTextures);
     // Load textures
     for (int tex = 0; tex < NumTextures; ++tex)
     {
-        // Create loader for the current texture
+        // Load current texture
         std::stringstream FileNameSS;
         FileNameSS << "C6GELogo" << tex << ".png";
-        const auto      FileName = FileNameSS.str();
-        TextureLoadInfo LoadInfo;
-        LoadInfo.IsSRGB = true;
+        std::string FileName = FileNameSS.str();
 
-        CreateTextureLoaderFromFile(FileName.c_str(), IMAGE_FILE_FORMAT_UNKNOWN, LoadInfo, &TexLoaders[tex]);
-        VERIFY_EXPR(TexLoaders[tex]);
-        VERIFY(tex == 0 || TexLoaders[tex]->GetTextureDesc() == TexLoaders[0]->GetTextureDesc(), "All textures must be same size");
+        RefCntAutoPtr<ITexture> SrcTex = TexturedCube::LoadTexture(m_pDevice, FileName.c_str());
+        // Get shader resource view from the texture
+        m_TextureSRV[tex] = SrcTex->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+        // Transition textures to shader resource state
+        Barriers.emplace_back(SrcTex, RESOURCE_STATE_UNKNOWN, RESOURCE_STATE_SHADER_RESOURCE, STATE_TRANSITION_FLAG_UPDATE_STATE);
     }
 
-    TextureDesc TexArrDesc = TexLoaders[0]->GetTextureDesc();
-    TexArrDesc.ArraySize   = NumTextures;
-    TexArrDesc.Type        = RESOURCE_DIM_TEX_2D_ARRAY;
-    TexArrDesc.Usage       = USAGE_DEFAULT;
-    TexArrDesc.BindFlags   = BIND_SHADER_RESOURCE;
-
-    // Prepare initialization data
-    std::vector<TextureSubResData> SubresData(TexArrDesc.ArraySize * TexArrDesc.MipLevels);
-    for (Uint32 slice = 0; slice < TexArrDesc.ArraySize; ++slice)
-    {
-        for (Uint32 mip = 0; mip < TexArrDesc.MipLevels; ++mip)
-        {
-            SubresData[slice * TexArrDesc.MipLevels + mip] = TexLoaders[slice]->GetSubresourceData(mip, 0);
-        }
-    }
-    TextureData InitData{SubresData.data(), TexArrDesc.MipLevels * TexArrDesc.ArraySize};
-
-    // Create the texture array
-    RefCntAutoPtr<ITexture> pTexArray;
-    m_pDevice->CreateTexture(TexArrDesc, &InitData, &pTexArray);
-
-    // Get shader resource view from the texture array
-    m_TextureSRV = pTexArray->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
     // Set texture SRV in the SRB
-    m_SRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_Texture")->Set(m_TextureSRV);
+    for (int tex = 0; tex < NumTextures; ++tex)
+    {
+        // Create one Shader Resource Binding for every texture
+        // http://diligentgraphics.com/2016/03/23/resource-binding-model-in-diligent-engine-2-0/
+        m_pPSO->CreateShaderResourceBinding(&m_SRB[tex], true);
+        m_SRB[tex]->GetVariableByName(SHADER_TYPE_PIXEL, "g_Texture")->Set(m_TextureSRV[tex]);
+    }
 }
 
-void Tutorial05_TextureArray::UpdateUI()
+void Tutorial06_Multithreading::UpdateUI()
 {
     ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Settings", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
     {
         if (ImGui::SliderInt("Grid Size", &m_GridSize, 1, 32))
         {
-            PopulateInstanceBuffer();
+            PopulateInstanceData();
+        }
+        {
+            ImGui::ScopedDisabler Disable(m_MaxThreads == 0);
+            if (ImGui::SliderInt("Worker Threads", &m_NumWorkerThreads, 0, m_MaxThreads))
+            {
+                StopWorkerThreads();
+                StartWorkerThreads(m_NumWorkerThreads);
+            }
         }
     }
-    ImGui::End();
 
-    ImGui::Begin("Demo Window", nullptr);
-    ImGui::Text("This window is created by the Dear ImGui library.");
-    static double lastTime = glfwGetTime();
-    static int frames = 0;
-    static float fps = 0.0f;
-
-    double currentTime = glfwGetTime();
-    frames++;
-
-    if (currentTime - lastTime >= 1.0) // update every 1 second
-    {
-        fps = frames / (currentTime - lastTime);
-        frames = 0;
-        lastTime = currentTime;
-    }
-
-    // later in your ImGui window
-    ImGui::Text("Engine FPS: %.1f", fps);
-    ImGui::Button("Toggle VSync");
-    if (ImGui::IsItemClicked())
-        enableVsync = !enableVsync;
-
-    ImGui::Text("VSync is %s", enableVsync ? "enabled" : "disabled");
     ImGui::End();
 }
 
-void Tutorial05_TextureArray::Initialize(const SampleInitInfo& InitInfo)
+void Tutorial06_Multithreading::Initialize(const SampleInitInfo& InitInfo)
 {
     SampleBase::Initialize(InitInfo);
 
-    CreatePipelineState();
+    m_MaxThreads       = static_cast<int>(m_pDeferredContexts.size());
+    m_NumWorkerThreads = std::min(4, m_MaxThreads);
 
-    // Load cube vertex and index buffers
+    std::vector<StateTransitionDesc> Barriers;
+
+    CreatePipelineState(Barriers);
+
+    // Load textured cube
     m_CubeVertexBuffer = TexturedCube::CreateVertexBuffer(m_pDevice, GEOMETRY_PRIMITIVE_VERTEX_FLAG_POS_TEX);
     m_CubeIndexBuffer  = TexturedCube::CreateIndexBuffer(m_pDevice);
+    // Explicitly transition vertex and index buffers to required states
+    Barriers.emplace_back(m_CubeVertexBuffer, RESOURCE_STATE_UNKNOWN, RESOURCE_STATE_VERTEX_BUFFER, STATE_TRANSITION_FLAG_UPDATE_STATE);
+    Barriers.emplace_back(m_CubeIndexBuffer, RESOURCE_STATE_UNKNOWN, RESOURCE_STATE_INDEX_BUFFER, STATE_TRANSITION_FLAG_UPDATE_STATE);
+    LoadTextures(Barriers);
 
-    CreateInstanceBuffer();
-    LoadTextures();
+    // Execute all barriers
+    m_pImmediateContext->TransitionResourceStates(static_cast<Uint32>(Barriers.size()), Barriers.data());
+
+    PopulateInstanceData();
+
+    StartWorkerThreads(m_NumWorkerThreads);
 }
 
-void Tutorial05_TextureArray::PopulateInstanceBuffer()
+void Tutorial06_Multithreading::PopulateInstanceData()
 {
+    const size_t zGridSize = static_cast<size_t>(m_GridSize);
+    m_Instances.resize(zGridSize * zGridSize * zGridSize);
     // Populate instance data buffer
-    const size_t              zGridSize = static_cast<size_t>(m_GridSize);
-    std::vector<InstanceData> Instances(zGridSize * zGridSize * zGridSize);
-
     float fGridSize = static_cast<float>(m_GridSize);
 
     std::mt19937 gen; // Standard mersenne_twister_engine. Use default seed
@@ -286,21 +244,150 @@ void Tutorial05_TextureArray::PopulateInstanceBuffer()
                 rotation *= float4x4::RotationY(rot_distr(gen));
                 rotation *= float4x4::RotationZ(rot_distr(gen));
                 // Combine rotation, scale and translation
-                float4x4 matrix        = rotation * float4x4::Scale(scale, scale, scale) * float4x4::Translation(xOffset, yOffset, zOffset);
-                InstanceData& CurrInst = Instances[instId++];
+                float4x4 matrix = rotation * float4x4::Scale(scale, scale, scale) * float4x4::Translation(xOffset, yOffset, zOffset);
+
+                InstanceData& CurrInst = m_Instances[instId++];
                 CurrInst.Matrix        = matrix;
                 // Texture array index
-                CurrInst.TextureInd = static_cast<float>(tex_distr(gen));
+                CurrInst.TextureInd = tex_distr(gen);
             }
         }
     }
-    // Update instance data buffer
-    Uint32 DataSize = static_cast<Uint32>(sizeof(Instances[0]) * Instances.size());
-    m_pImmediateContext->UpdateBuffer(m_InstanceBuffer, 0, DataSize, Instances.data(), RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+}
+
+void Tutorial06_Multithreading::StartWorkerThreads(size_t NumThreads)
+{
+    m_WorkerThreads.resize(NumThreads);
+    for (Uint32 t = 0; t < m_WorkerThreads.size(); ++t)
+    {
+        m_WorkerThreads[t] = std::thread(WorkerThreadFunc, this, t);
+    }
+    m_CmdLists.resize(NumThreads);
+}
+
+void Tutorial06_Multithreading::StopWorkerThreads()
+{
+    m_RenderSubsetSignal.Trigger(true, -1);
+
+    for (std::thread& thread : m_WorkerThreads)
+    {
+        thread.join();
+    }
+    m_RenderSubsetSignal.Reset();
+    m_WorkerThreads.clear();
+    m_CmdLists.clear();
+}
+
+void Tutorial06_Multithreading::WorkerThreadFunc(Tutorial06_Multithreading* pThis, Uint32 ThreadNum)
+{
+    // Every thread should use its own deferred context
+    IDeviceContext* pDeferredCtx     = pThis->m_pDeferredContexts[ThreadNum];
+    const int       NumWorkerThreads = static_cast<int>(pThis->m_WorkerThreads.size());
+    for (;;)
+    {
+        // Wait for the signal
+        int SignaledValue = pThis->m_RenderSubsetSignal.Wait(true, NumWorkerThreads);
+        if (SignaledValue < 0)
+            return;
+
+        pDeferredCtx->Begin(0);
+
+        // Render current subset using the deferred context
+        pThis->RenderSubset(pDeferredCtx, 1 + ThreadNum);
+
+        // Finish command list
+        RefCntAutoPtr<ICommandList> pCmdList;
+        pDeferredCtx->FinishCommandList(&pCmdList);
+        pThis->m_CmdLists[ThreadNum] = pCmdList;
+
+        {
+            // Atomically increment the number of completed threads
+            const int NumThreadsCompleted = pThis->m_NumThreadsCompleted.fetch_add(1) + 1;
+            if (NumThreadsCompleted == NumWorkerThreads)
+                pThis->m_ExecuteCommandListsSignal.Trigger();
+        }
+
+        pThis->m_GotoNextFrameSignal.Wait(true, NumWorkerThreads);
+
+        // Call FinishFrame() to release dynamic resources allocated by deferred contexts
+        // IMPORTANT: we must wait until the command lists are submitted for execution
+        //            because FinishFrame() invalidates all dynamic resources.
+        // IMPORTANT: In Metal backend FinishFrame must be called from the same
+        //            thread that issued rendering commands.
+        pDeferredCtx->FinishFrame();
+
+        pThis->m_NumThreadsReady.fetch_add(1);
+        // We must wait until all threads reach this point, because
+        // m_GotoNextFrameSignal must be unsignaled before we proceed to
+        // RenderSubsetSignal to avoid one thread going through the loop twice in
+        // a row.
+        while (pThis->m_NumThreadsReady.load() < NumWorkerThreads)
+            std::this_thread::yield();
+        VERIFY_EXPR(!pThis->m_GotoNextFrameSignal.IsTriggered());
+    }
+}
+
+void Tutorial06_Multithreading::RenderSubset(IDeviceContext* pCtx, Uint32 Subset)
+{
+    // Deferred contexts start in default state. We must bind everything to the context.
+    // Render targets are set and transitioned to correct states by the main thread, here we only verify the states.
+    ITextureView* pRTV = m_pSwapChain->GetCurrentBackBufferRTV();
+    pCtx->SetRenderTargets(1, &pRTV, m_pSwapChain->GetDepthBufferDSV(), RESOURCE_STATE_TRANSITION_MODE_VERIFY);
+
+    {
+        // Map the buffer and write current world-view-projection matrix
+
+        // Since this is a dynamic buffer, it must be mapped in every context before
+        // it can be used even though the matrices are the same.
+        MapHelper<float4x4> CBConstants(pCtx, m_VSConstants, MAP_WRITE, MAP_FLAG_DISCARD);
+        CBConstants[0] = m_ViewProjMatrix;
+        CBConstants[1] = m_RotationMatrix;
+    }
+
+    // Bind vertex and index buffers. This must be done for every context
+    IBuffer* pBuffs[] = {m_CubeVertexBuffer};
+    pCtx->SetVertexBuffers(0, _countof(pBuffs), pBuffs, nullptr, RESOURCE_STATE_TRANSITION_MODE_VERIFY, SET_VERTEX_BUFFERS_FLAG_RESET);
+    pCtx->SetIndexBuffer(m_CubeIndexBuffer, 0, RESOURCE_STATE_TRANSITION_MODE_VERIFY);
+
+    DrawIndexedAttribs DrawAttrs;     // This is an indexed draw call
+    DrawAttrs.IndexType  = VT_UINT32; // Index type
+    DrawAttrs.NumIndices = 36;
+    DrawAttrs.Flags      = DRAW_FLAG_VERIFY_ALL;
+
+    // Set the pipeline state
+    pCtx->SetPipelineState(m_pPSO);
+    Uint32 NumSubsets   = Uint32{1} + static_cast<Uint32>(m_WorkerThreads.size());
+    Uint32 NumInstances = static_cast<Uint32>(m_Instances.size());
+    Uint32 SusbsetSize  = NumInstances / NumSubsets;
+    Uint32 StartInst    = SusbsetSize * Subset;
+    Uint32 EndInst      = (Subset < NumSubsets - 1) ? SusbsetSize * (Subset + 1) : NumInstances;
+    for (size_t inst = StartInst; inst < EndInst; ++inst)
+    {
+        const InstanceData& CurrInstData = m_Instances[inst];
+        // Shader resources have been explicitly transitioned to correct states, so
+        // RESOURCE_STATE_TRANSITION_MODE_TRANSITION mode is not needed.
+        // Instead, we use RESOURCE_STATE_TRANSITION_MODE_VERIFY mode to
+        // verify that all resources are in correct states. This mode only has effect
+        // in debug and development builds.
+        pCtx->CommitShaderResources(m_SRB[CurrInstData.TextureInd], RESOURCE_STATE_TRANSITION_MODE_VERIFY);
+
+        {
+            // Map the buffer and write current world-view-projection matrix
+            MapHelper<float4x4> InstData(pCtx, m_InstanceConstants, MAP_WRITE, MAP_FLAG_DISCARD);
+            if (InstData == nullptr)
+            {
+                LOG_ERROR_MESSAGE("Failed to map instance data buffer");
+                break;
+            }
+            *InstData = CurrInstData.Matrix;
+        }
+
+        pCtx->DrawIndexed(DrawAttrs);
+    }
 }
 
 // Render a frame
-void Tutorial05_TextureArray::Render()
+void Tutorial06_Multithreading::Render()
 {
     ITextureView* pRTV = m_pSwapChain->GetCurrentBackBufferRTV();
     ITextureView* pDSV = m_pSwapChain->GetDepthBufferDSV();
@@ -318,39 +405,42 @@ void Tutorial05_TextureArray::Render()
     m_pImmediateContext->ClearRenderTarget(pRTV, ClearColor.Data(), RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     m_pImmediateContext->ClearDepthStencil(pDSV, CLEAR_DEPTH_FLAG, 1.f, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
+    if (!m_WorkerThreads.empty())
     {
-        // Map the buffer and write current world-view-projection matrix
-        MapHelper<float4x4> CBConstants(m_pImmediateContext, m_VSConstants, MAP_WRITE, MAP_FLAG_DISCARD);
-        CBConstants[0] = m_ViewProjMatrix;
-        CBConstants[1] = m_RotationMatrix;
+        m_NumThreadsCompleted.store(0);
+        m_RenderSubsetSignal.Trigger(true);
     }
 
-    // Bind vertex, instance and index buffers
-    const Uint64 offsets[] = {0, 0};
-    IBuffer*    pBuffs[]  = {m_CubeVertexBuffer, m_InstanceBuffer};
-    m_pImmediateContext->SetVertexBuffers(0, _countof(pBuffs), pBuffs, offsets, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
-    m_pImmediateContext->SetIndexBuffer(m_CubeIndexBuffer, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    RenderSubset(m_pImmediateContext, 0);
 
-    // Set the pipeline state
-    m_pImmediateContext->SetPipelineState(m_pPSO);
-    // Commit shader resources. RESOURCE_STATE_TRANSITION_MODE_TRANSITION mode
-    // makes sure that resources are transitioned to required states.
-    m_pImmediateContext->CommitShaderResources(m_SRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    if (!m_WorkerThreads.empty())
+    {
+        m_ExecuteCommandListsSignal.Wait(true, 1);
 
-    DrawIndexedAttribs DrawAttrs;     // This is an indexed draw call
-    DrawAttrs.IndexType  = VT_UINT32; // Index type
-    DrawAttrs.NumIndices = 36;
-    DrawAttrs.NumInstances = m_GridSize * m_GridSize * m_GridSize; // The number of instances
-    // Verify the state of vertex and index buffers
-    DrawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
-    m_pImmediateContext->DrawIndexed(DrawAttrs);
+        m_CmdListPtrs.resize(m_CmdLists.size());
+        for (Uint32 i = 0; i < m_CmdLists.size(); ++i)
+            m_CmdListPtrs[i] = m_CmdLists[i];
+
+        m_pImmediateContext->ExecuteCommandLists(static_cast<Uint32>(m_CmdListPtrs.size()), m_CmdListPtrs.data());
+
+        for (auto& cmdList : m_CmdLists)
+        {
+            // Release command lists now to release all outstanding references.
+            // In d3d11 mode, command lists hold references to the swap chain's back buffer
+            // that cause swap chain resize to fail.
+            cmdList.Release();
+        }
+
+        m_NumThreadsReady.store(0);
+        m_GotoNextFrameSignal.Trigger(true);
+    }
 }
 
-void Tutorial05_TextureArray::Update(double CurrTime, double ElapsedTime, bool DoUpdateUI)
+void Tutorial06_Multithreading::Update(double CurrTime, double ElapsedTime, bool DoUpdateUI)
 {
     SampleBase::Update(CurrTime, ElapsedTime, DoUpdateUI);
 
-    // Set cube view matrix
+    // Set the cube view matrix
     float4x4 View = float4x4::RotationX(-0.6f) * float4x4::Translation(0.f, 0.f, 4.0f);
 
     // Get pretransform matrix that rotates the scene according the surface orientation

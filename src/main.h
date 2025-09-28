@@ -27,46 +27,78 @@
 
 #pragma once
 
+#include <atomic>
+#include <vector>
+#include <thread>
+#include <mutex>
 #include "SampleBase.hpp"
 #include "BasicMath.hpp"
-#include "DebugUtilities.hpp"
+#include "ThreadSignal.hpp"
 
 namespace Diligent
 {
 
-class Tutorial05_TextureArray final : public SampleBase
+class Tutorial06_Multithreading final : public SampleBase
 {
 public:
+    ~Tutorial06_Multithreading() override;
+    virtual void ModifyEngineInitInfo(const ModifyEngineInitInfoAttribs& Attribs) override final;
     virtual void Initialize(const SampleInitInfo& InitInfo) override final;
 
     virtual void Render() override final;
     virtual void Update(double CurrTime, double ElapsedTime, bool DoUpdateUI) override final;
 
-    virtual const Char* GetSampleName() const override final { return "Tutorial05: Texture Array"; }
+    virtual const Char* GetSampleName() const override final { return "Tutorial06: Multithreaded rendering"; }
 
 protected:
     virtual void UpdateUI() override final;
 
 private:
-    void CreatePipelineState();
-    void CreateInstanceBuffer();
-    void LoadTextures();
-    void PopulateInstanceBuffer();
+    void CreatePipelineState(std::vector<StateTransitionDesc>& Barriers);
+    void LoadTextures(std::vector<StateTransitionDesc>& Barriers);
+    void PopulateInstanceData();
 
-    RefCntAutoPtr<IPipelineState>         m_pPSO;
-    RefCntAutoPtr<IBuffer>                m_CubeVertexBuffer;
-    RefCntAutoPtr<IBuffer>                m_CubeIndexBuffer;
-    RefCntAutoPtr<IBuffer>                m_InstanceBuffer;
-    RefCntAutoPtr<IBuffer>                m_VSConstants;
-    RefCntAutoPtr<ITextureView>           m_TextureSRV;
-    RefCntAutoPtr<IShaderResourceBinding> m_SRB;
+    void StartWorkerThreads(size_t NumThreads);
+    void StopWorkerThreads();
 
-    float4x4             m_ViewProjMatrix;
-    float4x4             m_RotationMatrix;
-    int                  m_GridSize   = 5;
-    static constexpr int MaxGridSize  = 32;
-    static constexpr int MaxInstances = MaxGridSize * MaxGridSize * MaxGridSize;
-    static constexpr int NumTextures  = 4;
+    void RenderSubset(IDeviceContext* pCtx, Uint32 Subset);
+
+    static void WorkerThreadFunc(Tutorial06_Multithreading* pThis, Uint32 ThreadNum);
+
+    Threading::Signal        m_RenderSubsetSignal;
+    Threading::Signal        m_ExecuteCommandListsSignal;
+    Threading::Signal        m_GotoNextFrameSignal;
+    std::atomic_int          m_NumThreadsCompleted;
+    std::atomic_int          m_NumThreadsReady;
+    std::vector<std::thread> m_WorkerThreads;
+
+    std::vector<RefCntAutoPtr<ICommandList>> m_CmdLists;
+    std::vector<ICommandList*>               m_CmdListPtrs;
+
+    RefCntAutoPtr<IPipelineState> m_pPSO;
+    RefCntAutoPtr<IBuffer>        m_CubeVertexBuffer;
+    RefCntAutoPtr<IBuffer>        m_CubeIndexBuffer;
+    RefCntAutoPtr<IBuffer>        m_InstanceConstants;
+    RefCntAutoPtr<IBuffer>        m_VSConstants;
+
+    static constexpr int NumTextures = 4;
+
+    RefCntAutoPtr<IShaderResourceBinding> m_SRB[NumTextures];
+    RefCntAutoPtr<ITextureView>           m_TextureSRV[NumTextures];
+
+    float4x4 m_ViewProjMatrix;
+    float4x4 m_RotationMatrix;
+    int      m_GridSize = 5;
+
+    int m_MaxThreads       = 8;
+    int m_NumWorkerThreads = 4;
+
+    struct InstanceData
+    {
+        float4x4 Matrix;
+        int      TextureInd = 0;
+    };
+    std::vector<InstanceData> m_Instances;
 };
 
 } // namespace Diligent
