@@ -42,8 +42,23 @@
     #include <GLFW/glfw3native.h>
     #include "DiligentCore/Platforms/Apple/interface/MacOSNativeWindow.h"
 #elif defined(PLATFORM_LINUX)
-    #define GLFW_EXPOSE_NATIVE_X11
+    #ifndef GLFW_EXPOSE_NATIVE_X11
+        #define GLFW_EXPOSE_NATIVE_X11
+    #endif
     #include <GLFW/glfw3native.h>
+    // Undefine conflicting X11 macros
+    #ifdef Bool
+        #undef Bool
+    #endif
+    #ifdef True
+        #undef True
+    #endif
+    #ifdef False
+        #undef False
+    #endif
+    #ifdef None
+        #undef None
+    #endif
     #include "DiligentCore/Platforms/Linux/interface/LinuxNativeWindow.h"
 #endif
 
@@ -386,13 +401,13 @@ bool InitializeDiligentEngine(
 
     // Helper to get native window for current platform
     struct NativeWindow
-    {
+{
 #if defined(_WIN32)
         Win32NativeWindow win32{};
 #elif defined(__APPLE__)
         MacOSNativeWindow mac{};
 #elif defined(__linux__)
-        LinuxNativeWindow linux{};
+        LinuxNativeWindow x11{}; // Renamed to avoid potential macro conflict with 'linux'
 #endif
     };
 
@@ -403,8 +418,8 @@ bool InitializeDiligentEngine(
 #elif defined(__APPLE__)
         nw.mac.pNSView = [glfwGetCocoaWindow(w) contentView];
 #elif defined(__linux__)
-        nw.linux.WindowId = glfwGetX11Window(w);
-        nw.linux.pDisplay = glfwGetX11Display();
+        nw.x11.WindowId = glfwGetX11Window(w);
+        nw.x11.pDisplay = glfwGetX11Display();
 #endif
         return nw;
     };
@@ -474,7 +489,7 @@ bool InitializeDiligentEngine(
 #elif defined(__APPLE__)
             factoryVk->CreateSwapChainVk(device, immediateContext, swapChainDesc, nativeWindow.mac, &swapChain);
 #elif defined(__linux__)
-            factoryVk->CreateSwapChainVk(device, immediateContext, swapChainDesc, nativeWindow.linux, &swapChain);
+            factoryVk->CreateSwapChainVk(device, immediateContext, swapChainDesc, nativeWindow.x11, &swapChain);
 #endif
             if (swapChain) { factory = factoryVk; std::cout << "Render backend: Vulkan\n"; return true; }
         }
@@ -491,8 +506,8 @@ bool InitializeDiligentEngine(
 #elif defined(__APPLE__)
         engineCI.Window.pNSView = nativeWindow.mac.pNSView;
 #elif defined(__linux__)
-        engineCI.Window.WindowId = nativeWindow.linux.WindowId;
-        engineCI.Window.pDisplay = nativeWindow.linux.pDisplay;
+        engineCI.Window.WindowId = nativeWindow.x11.WindowId;
+        engineCI.Window.pDisplay = nativeWindow.x11.pDisplay;
 #endif
         factoryGL->CreateDeviceAndSwapChainGL(engineCI, &device, &immediateContext, swapChainDesc, &swapChain);
         if (device && swapChain) { ppContexts[0] = immediateContext; factory = factoryGL; std::cout << "Render backend: OpenGL\n"; return true; }
