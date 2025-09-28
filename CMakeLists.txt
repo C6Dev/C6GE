@@ -1,11 +1,6 @@
 cmake_minimum_required(VERSION 3.19)
 project(C6GE)
 
-# Stop macOS builds
-if(APPLE)
-    message(FATAL_ERROR "C6GE: Vulkan backend on macOS is currently broken. Build aborted.")
-endif()
-
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -13,6 +8,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(DILIGENT_TOOLS ON CACHE BOOL "Enable DiligentTools" FORCE)
 set(DILIGENT_BUILD_SAMPLES ON CACHE BOOL "Enable Diligent Samples" FORCE)
 set(DILIGENT_BUILD_NATIVE_APP ON CACHE BOOL "Enable Diligent NativeApp" FORCE)
+set(DILIGENT_MACOS_PLATFORM ON CACHE BOOL "Enable macOS platform" FORCE)
+set(DILIGENT_METAL_SUPPORTED ON CACHE BOOL "Enable Metal backend" FORCE)
+set(DILIGENT_VULKAN_SUPPORTED ON CACHE BOOL "Enable Vulkan backend" FORCE)
+set(DILIGENT_OPENGL_SUPPORTED OFF CACHE BOOL "Disable OpenGL backend" FORCE)
+set(DILIGENT_D3D11_SUPPORTED OFF CACHE BOOL "Disable Direct3D11 backend" FORCE)
+set(DILIGENT_D3D12_SUPPORTED OFF CACHE BOOL "Disable Direct3D12 backend" FORCE)
 
 # Add DiligentEngine
 add_subdirectory(external/DiligentEngine)
@@ -22,6 +23,27 @@ if(WIN32)
     set(PLATFORM_WIN32 TRUE)
 elseif(UNIX AND NOT APPLE)
     set(PLATFORM_LINUX TRUE)
+elseif(UNIX AND APPLE)
+    set(PLATFORM_MACOS TRUE)
+endif()
+
+# Platform-specific definitions
+if(PLATFORM_MACOS)
+    add_definitions(-DPLATFORM_MACOS -DGLFW_EXPOSE_NATIVE_COCOA)
+    add_definitions(-U_WIN32 -UGLFW_EXPOSE_NATIVE_WIN32)
+    find_library(COCOA_FRAMEWORK Cocoa)
+    find_library(IOKIT_FRAMEWORK IOKit)
+    find_library(COREFOUNDATION_FRAMEWORK CoreFoundation)
+    set(PLATFORM_LIBRARIES ${COCOA_FRAMEWORK} ${IOKIT_FRAMEWORK} ${COREFOUNDATION_FRAMEWORK})
+elseif(PLATFORM_WIN32)
+    add_definitions(-DPLATFORM_WIN32 -DGLFW_EXPOSE_NATIVE_WIN32)
+elseif(PLATFORM_LINUX)
+    add_definitions(-DPLATFORM_LINUX -DGLFW_EXPOSE_NATIVE_X11)
+endif()
+
+# Add Objective-C++ flags for macOS
+if(PLATFORM_MACOS)
+    set_source_files_properties(src/main.cpp PROPERTIES COMPILE_FLAGS "-x objective-c++")
 endif()
 
 # Executable
@@ -44,33 +66,27 @@ target_include_directories(C6GE PRIVATE
 
 # Link libraries
 set(DILIGENT_LIBS
-    Diligent-BuildSettings
-    Diligent-Primitives
-    Diligent-BasicPlatform
-    Diligent-Win32Platform
-    Diligent-GraphicsAccessories
     Diligent-GraphicsEngine
-    Diligent-GraphicsEngineD3DBase
-    Diligent-GraphicsEngineD3D12-static
-    Diligent-GraphicsTools
-    Diligent-HLSL2GLSLConverterLib
-    Diligent-ShaderTools
-    Diligent-Imgui          # Use Diligent's built-in ImGui
+    Diligent-Imgui
     Diligent-SampleBase
     glfw
 )
 
-target_link_libraries(C6GE PRIVATE ${DILIGENT_LIBS})
+if(PLATFORM_MACOS)
+    list(APPEND DILIGENT_LIBS Diligent-ApplePlatform)
+elseif(PLATFORM_WIN32)
+    list(APPEND DILIGENT_LIBS Diligent-Win32Platform)
+elseif(PLATFORM_LINUX)
+    list(APPEND DILIGENT_LIBS Diligent-LinuxPlatform)
+endif()
 
-# Add library directories if needed
+target_link_libraries(C6GE PRIVATE ${DILIGENT_LIBS} ${PLATFORM_LIBRARIES})
+
+# Add library directories
 target_link_directories(C6GE PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/build/DiligentTools/NativeApp/lib/Debug
-    ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/build/DiligentSamples/SampleBase/lib/Debug
-)
-
-# Ensure GLFW native headers are available
-target_compile_definitions(C6GE PRIVATE
-    GLFW_EXPOSE_NATIVE_WIN32
+    ${CMAKE_BINARY_DIR}/external/DiligentEngine/DiligentTools/NativeApp/lib
+    ${CMAKE_BINARY_DIR}/external/DiligentEngine/DiligentSamples/SampleBase/lib
+    ${CMAKE_BINARY_DIR}/external/DiligentEngine/DiligentCore/Platforms/Apple
 )
 
 # Copy assets folder contents into exe dir
@@ -82,14 +98,21 @@ add_custom_command(
             "$<TARGET_FILE_DIR:C6GE>"
 )
 
-# Copy Diligent backend DLLs into exe dir (only those that were built)
+# Copy Diligent backend DLLs into exe dir
 set(DILIGENT_DLL_TARGETS
-    Diligent-GraphicsEngineD3D11-shared
-    Diligent-GraphicsEngineD3D12-shared
     Diligent-GraphicsEngineVk-shared
     Diligent-GraphicsEngineGL-shared
     Diligent-GraphicsEngineGLES-shared
 )
+
+if(PLATFORM_MACOS)
+    list(APPEND DILIGENT_DLL_TARGETS Diligent-GraphicsEngineMtl-shared)
+elseif(PLATFORM_WIN32)
+    list(APPEND DILIGENT_DLL_TARGETS
+        Diligent-GraphicsEngineD3D11-shared
+        Diligent-GraphicsEngineD3D12-shared
+    )
+endif()
 
 foreach(DLL_TARGET IN LISTS DILIGENT_DLL_TARGETS)
     if(TARGET ${DLL_TARGET})

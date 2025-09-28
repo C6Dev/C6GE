@@ -1,12 +1,53 @@
+#ifdef _WIN32
+    #undef _WIN32
+#endif
+#ifdef GLFW_EXPOSE_NATIVE_WIN32
+    #undef GLFW_EXPOSE_NATIVE_WIN32
+#endif
+
 #include <iostream>
 #include <thread>
 #include <chrono>
 #include <memory>
 
+#ifdef __APPLE__
+#include <Cocoa/Cocoa.h>
+#include <QuartzCore/CAMetalLayer.h>
+#endif
+
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
-#include <GLFW/glfw3native.h>
 
+#if defined(PLATFORM_WIN32)
+    #pragma message("Building for Windows")
+#elif defined(PLATFORM_MACOS)
+    #pragma message("Building for macOS")
+#elif defined(PLATFORM_LINUX)
+    #pragma message("Building for Linux")
+#else
+    #pragma message("Unknown platform")
+#endif
+
+#if defined(PLATFORM_WIN32)
+    #define GLFW_EXPOSE_NATIVE_WIN32
+    #include <GLFW/glfw3native.h>
+    #include "DiligentCore/Platforms/Win32/interface/Win32NativeWindow.h"
+#elif defined(PLATFORM_MACOS)
+    #ifdef GLFW_EXPOSE_NATIVE_WIN32
+        #error "GLFW_EXPOSE_NATIVE_WIN32 is defined, but it should not be on macOS"
+    #endif
+    #ifdef GLFW_EXPOSE_NATIVE_COCOA
+        #pragma message("GLFW_EXPOSE_NATIVE_COCOA is correctly defined")
+    #endif
+    #include <GLFW/glfw3native.h>
+    #include "DiligentCore/Platforms/Apple/interface/MacOSNativeWindow.h"
+#elif defined(PLATFORM_LINUX)
+    #define GLFW_EXPOSE_NATIVE_X11
+    #include <GLFW/glfw3native.h>
+    #include "DiligentCore/Platforms/Linux/interface/LinuxNativeWindow.h"
+#endif
+
+// Rest of the includes remain unchanged
 #include "DiligentCore/Common/interface/RefCntAutoPtr.hpp"
 #include "DiligentCore/Graphics/GraphicsEngine/interface/EngineFactory.h"
 #include "DiligentCore/Graphics/GraphicsEngine/interface/SwapChain.h"
@@ -23,7 +64,6 @@
 #include "DiligentCore/Graphics/GraphicsEngineOpenGL/interface/EngineFactoryOpenGL.h"
 #ifdef __APPLE__
 #include "DiligentCore/Graphics/GraphicsEngineMetal/interface/EngineFactoryMtl.h"
-#include "DiligentCore/Platforms/MacOS/interface/MacOSNativeWindow.h"
 #endif
 #ifdef _WIN32
 #include "DiligentCore/Platforms/Win32/interface/Win32NativeWindow.h"
@@ -33,13 +73,10 @@
 #endif
 
 #include "main.h"
-
 #include "imgui.h"
 #include "backends/imgui_impl_glfw.h"
 #include "ImGuiImplDiligent.hpp"
-
 #include <random>
-
 #include "MapHelper.hpp"
 #include "GraphicsUtilities.h"
 #include "TextureUtilities.h"
@@ -408,32 +445,25 @@ bool InitializeDiligentEngine(
     }
 #endif
 
-    // Try Vulkan (Windows, Linux, or macOS fallback)
-#if VULKAN_SUPPORTED
+#if defined(__APPLE__) && METAL_SUPPORTED
+    // Try Metal (macOS only) - prioritize Metal for macOS
     {
-        auto* pFactoryVk = LoadAndGetEngineFactoryVk();
-        if (pFactoryVk)
+        auto* pFactoryMtl = LoadAndGetEngineFactoryMtl();
+        if (pFactoryMtl)
         {
-            RefCntAutoPtr<IEngineFactoryVk> factoryVk(pFactoryVk);
-            EngineVkCreateInfo engineCI;
-            factoryVk->CreateDeviceAndContextsVk(engineCI, &device, ppContexts);
+            RefCntAutoPtr<IEngineFactoryMtl> factoryMtl(pFactoryMtl);
+            EngineMtlCreateInfo engineCI;
+            factoryMtl->CreateDeviceAndContextsMtl(engineCI, &device, ppContexts);
             if (device)
             {
                 immediateContext = ppContexts[0];
-#ifdef _WIN32
-                Win32NativeWindow nativeWindow{ glfwGetWin32Window(window) };
-                factoryVk->CreateSwapChainVk(device, immediateContext, swapChainDesc, nativeWindow, &swapChain);
-#elif defined(__linux__)
-                LinuxNativeWindow nativeWindow{ glfwGetX11Window(window), glfwGetX11Display() };
-                factoryVk->CreateSwapChainVk(device, immediateContext, swapChainDesc, nativeWindow, &swapChain);
-#else // __APPLE__
-                MacOSNativeWindow nativeWindow{ glfwGetCocoaWindow(window) };
-                factoryVk->CreateSwapChainVk(device, immediateContext, swapChainDesc, nativeWindow, &swapChain);
-#endif
+                MacOSNativeWindow nativeWindow;
+                nativeWindow.pNSView = [glfwGetCocoaWindow(window) contentView];
+                factoryMtl->CreateSwapChainMtl(device, immediateContext, swapChainDesc, nativeWindow, &swapChain);
                 if (swapChain)
                 {
-                    std::cout << "Render backend: Vulkan" << std::endl;
-                    factory = factoryVk;
+                    std::cout << "Render backend: Metal" << std::endl;
+                    factory = factoryMtl;
                     return true;
                 }
                 device.Release();
@@ -442,6 +472,71 @@ bool InitializeDiligentEngine(
             }
         }
     }
+#endif
+
+// Try Vulkan (Windows, Linux, or macOS fallback)
+#if VULKAN_SUPPORTED
+{
+    auto* pFactoryVk = LoadAndGetEngineFactoryVk();
+    if (pFactoryVk)
+    {
+        std::cout << "Vulkan factory loaded successfully" << std::endl;
+        RefCntAutoPtr<IEngineFactoryVk> factoryVk(pFactoryVk);
+        EngineVkCreateInfo engineCI;
+
+        uint32_t glfwExtensionCount = 0;
+        const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+        if (glfwExtensions == nullptr)
+        {
+            std::cerr << "GLFW failed to provide required Vulkan instance extensions" << std::endl;
+            return false;
+        }
+        std::cout << "GLFW required Vulkan instance extensions:" << std::endl;
+        for (uint32_t i = 0; i < glfwExtensionCount; ++i)
+        {
+            std::cout << "  " << glfwExtensions[i] << std::endl;
+        }
+
+        factoryVk->CreateDeviceAndContextsVk(engineCI, &device, ppContexts);
+        if (device)
+        {
+            std::cout << "Vulkan device created successfully" << std::endl;
+            immediateContext = ppContexts[0];
+            MacOSNativeWindow nativeWindow;
+            nativeWindow.pNSView = [glfwGetCocoaWindow(window) contentView];
+            if (nativeWindow.pNSView)
+            {
+                std::cout << "MacOSNativeWindow pNSView set successfully" << std::endl;
+            }
+            else
+            {
+                std::cerr << "Failed to set MacOSNativeWindow pNSView" << std::endl;
+            }
+            factoryVk->CreateSwapChainVk(device, immediateContext, swapChainDesc, nativeWindow, &swapChain);
+            if (swapChain)
+            {
+                std::cout << "Render backend: Vulkan" << std::endl;
+                factory = factoryVk;
+                return true;
+            }
+            else
+            {
+                std::cerr << "Failed to create Vulkan swap chain" << std::endl;
+            }
+            device.Release();
+            immediateContext.Release();
+            ppContexts[0] = nullptr;
+        }
+        else
+        {
+            std::cerr << "Failed to create Vulkan device" << std::endl;
+        }
+    }
+    else
+    {
+        std::cerr << "Failed to load Vulkan factory" << std::endl;
+    }
+}
 #endif
 
     // Try OpenGL (Windows, Linux, or macOS fallback)
@@ -461,7 +556,8 @@ bool InitializeDiligentEngine(
             engineCI.Window.WindowId = nativeWindow.WindowId;
             engineCI.Window.pDisplay = nativeWindow.pDisplay;
 #elif defined(__APPLE__)
-            MacOSNativeWindow nativeWindow{ glfwGetCocoaWindow(window) };
+            MacOSNativeWindow nativeWindow;
+            nativeWindow.pNSView = [glfwGetCocoaWindow(window) contentView];
             engineCI.Window.pNSView = nativeWindow.pNSView;
 #endif
             factoryOpenGL->CreateDeviceAndSwapChainGL(engineCI, &device, &immediateContext, swapChainDesc, &swapChain);
@@ -479,39 +575,13 @@ bool InitializeDiligentEngine(
     }
 #endif
 
-#if defined(__APPLE__) && METAL_SUPPORTED
-    // Try Metal (macOS only)
-    {
-        auto* pFactoryMtl = LoadAndGetEngineFactoryMtl();
-        if (pFactoryMtl)
-        {
-            RefCntAutoPtr<IEngineFactoryMtl> factoryMtl(pFactoryMtl);
-            EngineMtlCreateInfo engineCI;
-            factoryMtl->CreateDeviceAndContextsMtl(engineCI, &device, ppContexts);
-            if (device)
-            {
-                immediateContext = ppContexts[0];
-                MacOSNativeWindow nativeWindow{ glfwGetCocoaWindow(window) };
-                factoryMtl->CreateSwapChainMtl(device, immediateContext, swapChainDesc, nativeWindow, &swapChain);
-                if (swapChain)
-                {
-                    std::cout << "Render backend: Metal" << std::endl;
-                    factory = factoryMtl;
-                    return true;
-                }
-                device.Release();
-                immediateContext.Release();
-                ppContexts[0] = nullptr;
-            }
-        }
-    }
-#endif
-
     return false;
 }
 
 int main()
 {
+    // Set the custom logger before creating device/contexts
+    SetDebugMessageCallback(DiligentMessageCallback);
     // -------------------
     // Init GLFW
     // -------------------
@@ -529,6 +599,13 @@ int main()
         glfwTerminate();
         return -1;
     }
+
+    #ifdef __APPLE__
+    NSWindow *ns_window = glfwGetCocoaWindow(window);
+    NSView *view = [ns_window contentView];
+    [view setWantsLayer:YES];
+    [view setLayer:[CAMetalLayer layer]];
+    #endif
 
     // -------------------
     // Create Diligent Engine
@@ -609,43 +686,49 @@ int main()
     {
         glfwPollEvents();
 
-        // Query the current framebuffer size from GLFW
+        // Window size (logical, used for input)
+        int windowW = 0, windowH = 0;
+        glfwGetWindowSize(window, &windowW, &windowH);
+
+        // Framebuffer size (physical pixels)
         int fbW = 0, fbH = 0;
         glfwGetFramebufferSize(window, &fbW, &fbH);
 
-        // Resize swap chain if window size changed
-        if (fbW != static_cast<int>(swapChain->GetDesc().Width) || fbH != static_cast<int>(swapChain->GetDesc().Height))
+        // DPI scale
+        float dpiScaleX = (float)fbW / (float)windowW;
+        float dpiScaleY = (float)fbH / (float)windowH;
+
+        // Resize swap chain if needed
+        const auto& scDesc = swapChain->GetDesc();
+        if (fbW != static_cast<int>(scDesc.Width) || fbH != static_cast<int>(scDesc.Height))
         {
             swapChain->Resize(fbW, fbH);
             sample->WindowResize(fbW, fbH);
         }
 
-        // Calculate delta time
-        double currentTime = glfwGetTime();
-        double deltaTime = currentTime - lastTime;
-        lastTime = currentTime;
-
-        // Start new ImGui frame
+        // Start ImGui frame
         ImGui_ImplGlfw_NewFrame();
-        const SwapChainDesc& scDesc = swapChain->GetDesc();
-        imGuiImpl->NewFrame(scDesc.Width, scDesc.Height, scDesc.PreTransform);
+        
+        // Set DisplaySize and scale for Retina
+        ImGuiIO& io = ImGui::GetIO();
+        io.DisplaySize = ImVec2((float)fbW, (float)fbH);
+        io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f); // keep 1.0 because we’re already using pixels
 
-        // Update sample (calls UpdateUI to set up ImGui widgets)
-        sample->Update(currentTime, deltaTime, true);
+        imGuiImpl->NewFrame(fbW, fbH, scDesc.PreTransform);
 
-        // Render sample
+        // Build UI
+        sample->Update(glfwGetTime(), 0.0, true);
+
+        // Render
+        ImGui::Render();
         sample->Render();
 
-        // Render ImGui
         ITextureView* pRTV = swapChain->GetCurrentBackBufferRTV();
         ITextureView* pDSV = swapChain->GetDepthBufferDSV();
         immediateContext->SetRenderTargets(1, &pRTV, pDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
         imGuiImpl->Render(immediateContext);
 
-        // Present
         swapChain->Present();
-
-        // Slight throttle to avoid pegging CPU
         std::this_thread::sleep_for(std::chrono::milliseconds(8));
     }
 

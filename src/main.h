@@ -29,6 +29,7 @@
 
 #include "SampleBase.hpp"
 #include "BasicMath.hpp"
+#include "DebugUtilities.hpp"
 
 namespace Diligent
 {
@@ -69,3 +70,26 @@ private:
 };
 
 } // namespace Diligent
+
+void DiligentMessageCallback(Diligent::DEBUG_MESSAGE_SEVERITY severity,
+                             const char* message,
+                             const char* function,
+                             const char* file,
+                             int line)
+{
+    using namespace Diligent;
+
+    switch (severity)
+    {
+        case DEBUG_MESSAGE_SEVERITY_ERROR:
+        case DEBUG_MESSAGE_SEVERITY_WARNING:
+            std::cerr << "Diligent [" << (severity == DEBUG_MESSAGE_SEVERITY_ERROR ? "Error" : "Warning")
+                      << "]: " << message << std::endl;
+            break;
+
+        case Diligent::DEBUG_MESSAGE_SEVERITY_INFO:
+        default:
+            // ignore
+            break;
+    }
+}
