@@ -1,6 +1,5 @@
 /*
- *  Copyright 2019-2025 Diligent Graphics LLC
- *  Copyright 2015-2019 Egor Yusov
+ *  Copyright 2024-2025 Diligent Graphics LLC
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,196 +26,147 @@
 
 #pragma once
 
-#include <atomic>
-#include <vector>
-#include <thread>
-#include <mutex>
+#include <array>
+#include <memory>
+
 #include "SampleBase.hpp"
-#include "BasicMath.hpp"
-#include "ThreadSignal.hpp"
 #include "FirstPersonCamera.hpp"
+#include "PostFXRenderTechnique.hpp"
+#include "ResourceRegistry.hpp"
+#include "PBR_Renderer.hpp"
+#include "PostFXContext.hpp"
 
 namespace Diligent
 {
 
-// We only need a 3x3 matrix, but in Vulkan and Metal, the rows of a float3x3 matrix are aligned to 16 bytes,
-// which is effectively a float4x3 matrix.
-// In DirectX, the rows of a float3x3 matrix are not aligned.
-// We will use a float4x3 for compatibility between all APIs.
-struct float4x3
-{
-    float m00 = 0.f;
-    float m01 = 0.f;
-    float m02 = 0.f;
-    float m03 = 0.f; // Unused
-
-    float m10 = 0.f;
-    float m11 = 0.f;
-    float m12 = 0.f;
-    float m13 = 0.f; // Unused
-
-    float m20 = 0.f;
-    float m21 = 0.f;
-    float m22 = 0.f;
-    float m23 = 0.f; // Unused
-
-    float4x3() {}
-
-    template <typename MatType>
-    float4x3(const MatType& Other) :
-        // clang-format off
-        m00{Other.m00}, m01{Other.m01}, m02{Other.m02}, 
-        m10{Other.m10}, m11{Other.m11}, m12{Other.m12}, 
-        m20{Other.m20}, m21{Other.m21}, m22{Other.m22}
-    // clang-format on
-    {}
-};
-
 namespace HLSL
 {
-#include "Assets/Structures.fxh"
-}
+struct CameraAttribs;
+struct MaterialAttribs;
+struct ObjectAttribs;
+} // namespace HLSL
 
-class Tutorial22_HybridRendering final : public SampleBase
+class EnvMapRenderer;
+class PostFXContext;
+class ScreenSpaceReflection;
+class ScreenSpaceAmbientOcclusion;
+class TemporalAntiAliasing;
+class Bloom;
+class SuperResolution;
+class GBuffer;
+class PBR_Renderer;
+
+class Tutorial27_PostProcessing final : public SampleBase
 {
 public:
-    virtual void ModifyEngineInitInfo(const ModifyEngineInitInfoAttribs& Attribs) override final;
-    virtual void Initialize(const SampleInitInfo& InitInfo) override final;
+    Tutorial27_PostProcessing();
 
-    virtual void Render() override final;
-    virtual void Update(double CurrTime, double ElapsedTime, bool DoUpdateUI) override final;
+    void Initialize(const SampleInitInfo& InitInfo) override final;
 
-    virtual const Char* GetSampleName() const override final { return "Tutorial22: Hybrid rendering"; }
+    void Render() override final;
 
-    virtual void WindowResize(Uint32 Width, Uint32 Height) override final;
+    void Update(double CurrTime, double ElapsedTime, bool DoUpdateUI) override final;
 
-    Tutorial22_HybridRendering::Tutorial22_HybridRendering() :
-    m_ColorTargetFormat{TEX_FORMAT_RGBA8_UNORM_SRGB},
-    m_NormalTargetFormat{TEX_FORMAT_RG16_SNORM},
-    m_DepthTargetFormat{TEX_FORMAT_D32_FLOAT},
-    m_RayTracedTexFormat{TEX_FORMAT_RGBA16_FLOAT},
-    m_BlockSize{8, 8},
-    m_ShaderCompiler{SHADER_COMPILER_DEFAULT},
-    m_LightDir{normalize(float3{0.5f, -0.6f, -0.6f})},
-    m_DrawMode{0}
-{
-    // Additional initializations if needed, e.g., m_InputController or other members
-}
+    void WindowResize(Uint32 Width, Uint32 Height) override final;
+
+    const Char* GetSampleName() const override final { return "Tutorial27: Post Processing"; }
 
 protected:
     virtual void UpdateUI() override final;
+    virtual void ModifyEngineInitInfo(const ModifyEngineInitInfoAttribs& Attribs) override final;
 
 private:
-    void CreateScene();
-    void CreateSceneMaterials(uint2& CubeMaterialRange, Uint32& GroundMaterial, std::vector<HLSL::MaterialAttribs>& Materials);
-    void CreateSceneObjects(uint2 CubeMaterialRange, Uint32 GroundMaterial);
-    void CreateSceneAccelStructs();
-    void UpdateTLAS();
-    void CreateRasterizationPSO(IShaderSourceInputStreamFactory* pShaderSourceFactory);
-    void CreatePostProcessPSO(IShaderSourceInputStreamFactory* pShaderSourceFactory);
-    void CreateRayTracingPSO(IShaderSourceInputStreamFactory* pShaderSourceFactory);
+    void PrepareResources();
+    void GenerateGeometry();
+    void ComputePostFX();
+    void ComputeSSR();
+    void ComputeSSAO();
+    void ComputeLighting();
+    void ComputeTAA();
+    void ComputeBloom();
+    void ComputeToneMapping();
+    void ComputeFSR();
+    void ComputeGammaCorrection();
+    void LoadEnvironmentMap(const char* FileName);
 
-    // Pipeline resource signature for scene resources used by the ray-tracing PSO
-    RefCntAutoPtr<IPipelineResourceSignature> m_pRayTracingSceneResourcesSign;
-    // Pipeline resource signature for screen resources used by the ray-tracing PSO
-    RefCntAutoPtr<IPipelineResourceSignature> m_pRayTracingScreenResourcesSign;
+private:
+    using RenderTechnique  = PostFXRenderTechnique;
+    using ResourceInternal = RefCntAutoPtr<IDeviceObject>;
+    struct ShaderSettings;
 
-    // Ray-tracing PSO
-    RefCntAutoPtr<IPipelineState> m_RayTracingPSO;
-    // Scene resources for ray-tracing PSO
-    RefCntAutoPtr<IShaderResourceBinding> m_RayTracingSceneSRB;
-    // Screen resources for ray-tracing PSO
-    RefCntAutoPtr<IShaderResourceBinding> m_RayTracingScreenSRB;
-
-    // G-buffer rendering PSO and SRB
-    RefCntAutoPtr<IPipelineState>         m_RasterizationPSO;
-    RefCntAutoPtr<IShaderResourceBinding> m_RasterizationSRB;
-
-    // Post-processing PSO and SRB
-    RefCntAutoPtr<IPipelineState>         m_PostProcessPSO;
-    RefCntAutoPtr<IShaderResourceBinding> m_PostProcessSRB;
-
-    // Simple implementation of a mesh
-    struct Mesh
+    enum RENDER_TECH : Uint32
     {
-        String Name;
-
-        RefCntAutoPtr<IBottomLevelAS> BLAS;
-        RefCntAutoPtr<IBuffer>        VertexBuffer;
-        RefCntAutoPtr<IBuffer>        IndexBuffer;
-
-        Uint32 NumVertices = 0;
-        Uint32 NumIndices  = 0;
-        Uint32 FirstIndex  = 0; // Offset in the index buffer if IB and VB are shared between multiple meshes
-        Uint32 FirstVertex = 0; // Offset in the vertex buffer
-    };
-    static Mesh CreateTexturedPlaneMesh(IRenderDevice* pDevice, float2 UVScale);
-
-    // Objects with the same mesh are grouped for instanced draw call
-    struct InstancedObjects
-    {
-        Uint32 MeshInd             = 0; // Index in m_Scene.Meshes
-        Uint32 ObjectAttribsOffset = 0; // Offset in m_Scene.ObjectAttribsBuffer
-        Uint32 NumObjects          = 0; // Number of instances for a draw call
+        RENDER_TECH_GENERATE_GEOMETRY = 0,
+        RENDER_TECH_COMPUTE_MOTION_VECTORS,
+        RENDER_TECH_COMPUTE_LIGHTING,
+        RENDER_TECH_COMPUTE_TONE_MAPPING,
+        RENDER_TECH_COMPUTE_GAMMA_CORRECTION,
+        RENDER_TECH_COUNT
     };
 
-    struct DynamicObject
+    enum RESOURCE_IDENTIFIER : Uint32
     {
-        Uint32 ObjectAttribsIndex = 0; // Index in m_Scene.ObjectAttribsBuffer
+        RESOURCE_IDENTIFIER_CAMERA_CONSTANT_BUFFER = 0,
+        RESOURCE_IDENTIFIER_PBR_ATTRIBS_CONSTANT_BUFFER,
+        RESOURCE_IDENTIFIER_OBJECT_ATTRIBS_CONSTANT_BUFFER,
+        RESOURCE_IDENTIFIER_MATERIAL_ATTRIBS_CONSTANT_BUFFER,
+        RESOURCE_IDENTIFIER_OBJECT_AABB_VERTEX_BUFFER,
+        RESOURCE_IDENTIFIER_OBJECT_AABB_INDEX_BUFFER,
+        RESOURCE_IDENTIFIER_RADIANCE0,
+        RESOURCE_IDENTIFIER_RADIANCE1,
+        RESOURCE_IDENTIFIER_DEPTH0,
+        RESOURCE_IDENTIFIER_DEPTH1,
+        RESOURCE_IDENTIFIER_ENVIRONMENT_MAP,
+        RESOURCE_IDENTIFIER_PREFILTERED_ENVIRONMENT_MAP,
+        RESOURCE_IDENTIFIER_IRRADIANCE_MAP,
+        RESOURCE_IDENTIFIER_BRDF_INTEGRATION_MAP,
+    RESOURCE_IDENTIFIER_CLEAR_TEXTURE,
+        RESOURCE_IDENTIFIER_TONE_MAPPING,
+        RESOURCE_IDENTIFIER_COUNT
     };
 
-    struct Scene
-    {
-        std::vector<InstancedObjects>    ObjectInstances;
-        std::vector<DynamicObject>       DynamicObjects;
-        std::vector<HLSL::ObjectAttribs> Objects; // CPU-visible array of HLSL::ObjectAttribs
+    std::array<RenderTechnique, RENDER_TECH_COUNT> m_RenderTech{};
+    ResourceRegistry                               m_Resources{};
 
-        // Resources used by shaders
-        std::vector<Mesh>                    Meshes;
-        RefCntAutoPtr<IBuffer>               MaterialAttribsBuffer;
-        RefCntAutoPtr<IBuffer>               ObjectAttribsBuffer; // GPU-visible array of HLSL::ObjectAttribs
-        std::vector<RefCntAutoPtr<ITexture>> Textures;
-        std::vector<RefCntAutoPtr<ISampler>> Samplers;
-        RefCntAutoPtr<IBuffer>               ObjectConstants;
+    std::unique_ptr<GBuffer>                     m_GBuffer;
+    std::unique_ptr<PBR_Renderer>                m_IBLBacker;
+    std::unique_ptr<EnvMapRenderer>              m_EnvironmentMapRenderer;
+    std::unique_ptr<PostFXContext>               m_PostFXContext;
+    std::unique_ptr<ScreenSpaceReflection>       m_ScreenSpaceReflection;
+    std::unique_ptr<ScreenSpaceAmbientOcclusion> m_ScreenSpaceAmbientOcclusion;
+    std::unique_ptr<TemporalAntiAliasing>        m_TemporalAntiAliasing;
+    std::unique_ptr<Bloom>                       m_Bloom;
+    std::unique_ptr<SuperResolution>             m_SuperResolution;
+    std::unique_ptr<ShaderSettings>              m_ShaderSettings;
 
-        // Resources for ray tracing
-        RefCntAutoPtr<ITopLevelAS> TLAS;
-        RefCntAutoPtr<IBuffer>     TLASInstancesBuffer; // Used to update TLAS
-        RefCntAutoPtr<IBuffer>     TLASScratchBuffer;   // Used to update TLAS
-    };
-    Scene m_Scene;
+    FirstPersonCamera                        m_Camera;
+    std::unique_ptr<HLSL::CameraAttribs[]>   m_CameraAttribs;
+    std::unique_ptr<HLSL::ObjectAttribs[]>   m_ObjectAttribs;
+    std::unique_ptr<HLSL::MaterialAttribs[]> m_MaterialAttribs;
+    std::array<std::vector<float4x4>, 2>     m_ObjectTransforms;
 
-    // Constants shared between all PSOs
-    RefCntAutoPtr<IBuffer> m_Constants;
+    float  m_AnimationTime     = 0.0f;
+    bool   m_IsAnimationActive = true;
+    // Feature toggles
+    bool   m_EnableGenerateGeometry    = true;
+    bool   m_EnableMotionVectors       = true;
+    bool   m_EnableLighting            = true;
+    bool   m_EnablePostFX              = true;
+    bool   m_EnableSSR                 = true;
+    bool   m_EnableSSAO                = true;
+    bool   m_EnableTAA                 = true;
+    bool   m_EnableBloom               = true;
+    bool   m_EnableToneMapping         = true;
+    bool   m_EnableFSR                 = true;
+    bool   m_EnableGammaCorrection     = true;
+    Uint32 m_ObjectCount       = 0;
+    Uint32 m_MaterialCount     = 0;
 
-    FirstPersonCamera m_Camera;
+    static constexpr Uint32 m_MaxObjectCount   = 32;
+    static constexpr Uint32 m_MaxMaterialCount = 24;
 
-    struct GBuffer
-    {
-        RefCntAutoPtr<ITexture> Color;
-        RefCntAutoPtr<ITexture> Normal;
-        RefCntAutoPtr<ITexture> Depth;
-    };
-
-    const uint2    m_BlockSize          = {8, 8};
-    TEXTURE_FORMAT m_ColorTargetFormat  = TEX_FORMAT_RGBA8_UNORM;
-    TEXTURE_FORMAT m_NormalTargetFormat = TEX_FORMAT_RGBA16_FLOAT;
-    TEXTURE_FORMAT m_DepthTargetFormat  = TEX_FORMAT_D32_FLOAT;
-    TEXTURE_FORMAT m_RayTracedTexFormat = TEX_FORMAT_RGBA16_FLOAT;
-
-    GBuffer                 m_GBuffer;
-    RefCntAutoPtr<ITexture> m_RayTracedTex;
-
-    float3 m_LightDir = normalize(float3{-0.49f, -0.60f, 0.64f});
-    int    m_DrawMode = 0;
-
-    // Vulkan and DirectX require DXC shader compiler.
-    // Metal uses the builtin glslang compiler.
-#if PLATFORM_MACOS || PLATFORM_IOS || PLATFORM_TVOS
-    const SHADER_COMPILER m_ShaderCompiler = SHADER_COMPILER_DEFAULT;
-#else
-    const SHADER_COMPILER m_ShaderCompiler = SHADER_COMPILER_DXC;
-#endif
+    Uint32                   m_SSRSettingsDisplayMode = 0;
+    PostFXContext::FrameDesc m_PostFXFrameDesc;
 };
 
 } // namespace Diligent

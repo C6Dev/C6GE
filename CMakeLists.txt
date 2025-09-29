@@ -67,6 +67,7 @@ target_include_directories(C6GE PRIVATE
 # Link libraries
 set(DILIGENT_LIBS
     Diligent-GraphicsEngine
+    DiligentFX
     Diligent-Imgui
     Diligent-SampleBase
     glfw
@@ -124,3 +125,5 @@ foreach(DLL_TARGET IN LISTS DILIGENT_DLL_TARGETS)
         )
     endif()
 endforeach()
+
+copy_required_dlls(C6GE DXC_REQUIRED YES)
