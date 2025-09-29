@@ -27,6 +27,8 @@
     #include "DiligentCore/Platforms/Apple/interface/MacOSNativeWindow.h"
     #include <Cocoa/Cocoa.h>
     #include <QuartzCore/CAMetalLayer.h>
+    #include "main.h"
+    #include "DiligentSamples/SampleBase/include/MacOS/InputControllerMacOS.hpp"
 
 #elif defined(__linux__)
     #ifndef GLFW_EXPOSE_NATIVE_X11
@@ -222,6 +224,99 @@ static void GLFWScrollCallback(GLFWwindow* w, double xoffset, double yoffset)
     MsgData.lParam = 0;
     auto& winCtrl3 = reinterpret_cast<Diligent::InputControllerWin32&>(samplePtr->GetInputController());
     winCtrl3.HandleNativeMessage(&MsgData);
+}
+#endif
+
+#if defined(__APPLE__)
+// macOS-specific GLFW callbacks that forward events into Diligent InputControllerMacOS
+static void GLFWKeyCallbackMac(GLFWwindow* w, int key, int scancode, int action, int mods)
+{
+    // Forward to ImGui backend first
+    ImGui_ImplGlfw_KeyCallback(w, key, scancode, action, mods);
+
+    // If ImGui wants keyboard, don't forward to the app
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.WantCaptureKeyboard)
+        return;
+
+    auto* samplePtr = static_cast<SampleBase*>(glfwGetWindowUserPointer(w));
+    if (!samplePtr)
+        return;
+
+    auto& macCtrl = reinterpret_cast<Diligent::InputControllerMacOS&>(samplePtr->GetInputController());
+
+    if (action == GLFW_PRESS || action == GLFW_REPEAT)
+        macCtrl.OnKeyPressed(key);
+    else if (action == GLFW_RELEASE)
+        macCtrl.OnKeyReleased(key);
+
+    // Forward modifier state as flags change
+    macCtrl.OnFlagsChanged((mods & GLFW_MOD_SHIFT) != 0,
+                           (mods & GLFW_MOD_CONTROL) != 0,
+                           (mods & GLFW_MOD_ALT) != 0);
+}
+
+static void GLFWMouseButtonCallbackMac(GLFWwindow* w, int button, int action, int mods)
+{
+    // Forward to ImGui backend first
+    ImGui_ImplGlfw_MouseButtonCallback(w, button, action, mods);
+
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.WantCaptureMouse)
+        return;
+
+    auto* samplePtr = static_cast<SampleBase*>(glfwGetWindowUserPointer(w));
+    if (!samplePtr)
+        return;
+
+    auto& macCtrl = reinterpret_cast<Diligent::InputControllerMacOS&>(samplePtr->GetInputController());
+
+    if (button == GLFW_MOUSE_BUTTON_LEFT)
+    {
+        if (action == GLFW_PRESS)
+            macCtrl.OnMouseButtonEvent(Diligent::InputControllerMacOS::MouseButtonEvent::LMB_Pressed);
+        else if (action == GLFW_RELEASE)
+            macCtrl.OnMouseButtonEvent(Diligent::InputControllerMacOS::MouseButtonEvent::LMB_Released);
+    }
+    else if (button == GLFW_MOUSE_BUTTON_RIGHT)
+    {
+        if (action == GLFW_PRESS)
+            macCtrl.OnMouseButtonEvent(Diligent::InputControllerMacOS::MouseButtonEvent::RMB_Pressed);
+        else if (action == GLFW_RELEASE)
+            macCtrl.OnMouseButtonEvent(Diligent::InputControllerMacOS::MouseButtonEvent::RMB_Released);
+    }
+}
+
+static void GLFWCursorPosCallbackMac(GLFWwindow* w, double xpos, double ypos)
+{
+    // Forward to ImGui
+    ImGui_ImplGlfw_CursorPosCallback(w, xpos, ypos);
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.WantCaptureMouse)
+        return;
+
+    auto* samplePtr = static_cast<SampleBase*>(glfwGetWindowUserPointer(w));
+    if (!samplePtr)
+        return;
+
+    auto& macCtrl = reinterpret_cast<Diligent::InputControllerMacOS&>(samplePtr->GetInputController());
+    macCtrl.OnMouseMove(static_cast<int>(xpos), static_cast<int>(ypos));
+}
+
+static void GLFWScrollCallbackMac(GLFWwindow* w, double xoffset, double yoffset)
+{
+    // Forward to ImGui
+    ImGui_ImplGlfw_ScrollCallback(w, xoffset, yoffset);
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.WantCaptureMouse)
+        return;
+
+    auto* samplePtr = static_cast<SampleBase*>(glfwGetWindowUserPointer(w));
+    if (!samplePtr)
+        return;
+
+    auto& macCtrl = reinterpret_cast<Diligent::InputControllerMacOS&>(samplePtr->GetInputController());
+    macCtrl.OnMouseWheel(static_cast<float>(yoffset));
 }
 #endif
 
@@ -1459,10 +1554,20 @@ int main()
     // Forward GLFW events to Diligent InputController (Windows). We set the sample as
     // the user pointer so callbacks can access the InputController instance.
     glfwSetWindowUserPointer(window, sample);
+#if defined(_WIN32)
+    // These callbacks are implemented above only for Windows and forward
+    // events into the Win32-specific InputController implementation.
     glfwSetKeyCallback(window, GLFWKeyCallback);
     glfwSetMouseButtonCallback(window, GLFWMouseButtonCallback);
     glfwSetCursorPosCallback(window, GLFWCursorPosCallback);
     glfwSetScrollCallback(window, GLFWScrollCallback);
+#elif defined(__APPLE__)
+    // Register macOS callbacks that forward into InputControllerMacOS
+    glfwSetKeyCallback(window, GLFWKeyCallbackMac);
+    glfwSetMouseButtonCallback(window, GLFWMouseButtonCallbackMac);
+    glfwSetCursorPosCallback(window, GLFWCursorPosCallbackMac);
+    glfwSetScrollCallback(window, GLFWScrollCallbackMac);
+#endif
 
     
     // -------------------

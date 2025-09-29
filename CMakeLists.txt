@@ -126,4 +126,6 @@ foreach(DLL_TARGET IN LISTS DILIGENT_DLL_TARGETS)
     endif()
 endforeach()
 
+if(PLATFORM_WIN32)
 copy_required_dlls(C6GE DXC_REQUIRED YES)
+endif()
