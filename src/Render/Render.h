@@ -56,6 +56,8 @@ public:
 
     virtual void WindowResize(Uint32 Width, Uint32 Height) override final;
 
+    static bool IsRuntime;
+
 protected:
     virtual void UpdateUI() override final;
 

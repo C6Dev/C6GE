@@ -45,6 +45,7 @@ namespace Diligent
 {
 
 bool RenderShadows = true;
+bool Diligent::ShadowsSample::IsRuntime = false;
 
 SampleBase* CreateSample()
 {
@@ -73,6 +74,13 @@ void ShadowsSample::ModifyEngineInitInfo(const ModifyEngineInitInfoAttribs& Attr
 
 void ShadowsSample::Initialize(const SampleInitInfo& InitInfo)
 {
+    if (IsRuntime == true)
+    {
+        std::cout << "IsRuntime" << std::endl;
+    }
+    else {
+        std::cout << "Not IsRuntime" << std::endl;
+    }
     SampleBase::Initialize(InitInfo);
 
     std::string MeshFileName = "Powerplant/Powerplant.sdkmesh";
@@ -138,6 +146,10 @@ void ShadowsSample::Initialize(const SampleInitInfo& InitInfo)
 
 void ShadowsSample::UpdateUI()
 {
+
+    if (!IsRuntime) 
+    {
+
     ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Settings", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
     {
@@ -326,6 +338,7 @@ void ShadowsSample::UpdateUI()
         }
     }
     ImGui::End();
+}
 }
 
 

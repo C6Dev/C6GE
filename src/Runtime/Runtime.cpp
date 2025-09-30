@@ -1,4 +1,5 @@
-﻿#include <iostream>
+﻿
+#include <iostream>
 #include <thread>
 #include <chrono>
 #include <memory>
@@ -90,6 +91,8 @@
 
 using namespace Diligent;
 
+
+
 // Windows-only GLFW callbacks that forward events into Diligent InputControllerWin32
 #if defined(_WIN32)
 static UINT MapGLFWKeyToVK(int key)
@@ -119,13 +122,6 @@ static UINT MapGLFWKeyToVK(int key)
 
 static void GLFWKeyCallback(GLFWwindow* w, int key, int scancode, int action, int mods)
 {
-    // Forward to ImGui backend first
-    ImGui_ImplGlfw_KeyCallback(w, key, scancode, action, mods);
-
-    // If ImGui wants keyboard, don't forward to the app
-    ImGuiIO& io = ImGui::GetIO();
-    if (io.WantCaptureKeyboard)
-        return;
 
     auto* samplePtr = static_cast<SampleBase*>(glfwGetWindowUserPointer(w));
     if (!samplePtr)
@@ -153,12 +149,6 @@ static void GLFWKeyCallback(GLFWwindow* w, int key, int scancode, int action, in
 
 static void GLFWMouseButtonCallback(GLFWwindow* w, int button, int action, int mods)
 {
-    // Forward to ImGui backend first
-    ImGui_ImplGlfw_MouseButtonCallback(w, button, action, mods);
-
-    ImGuiIO& io = ImGui::GetIO();
-    if (io.WantCaptureMouse)
-        return;
 
     auto* samplePtr = static_cast<SampleBase*>(glfwGetWindowUserPointer(w));
     if (!samplePtr)
@@ -190,11 +180,6 @@ static void GLFWMouseButtonCallback(GLFWwindow* w, int button, int action, int m
 
 static void GLFWCursorPosCallback(GLFWwindow* w, double xpos, double ypos)
 {
-    // Forward to ImGui
-    ImGui_ImplGlfw_CursorPosCallback(w, xpos, ypos);
-    ImGuiIO& io = ImGui::GetIO();
-    if (io.WantCaptureMouse)
-        return;
 
     auto* samplePtr = static_cast<SampleBase*>(glfwGetWindowUserPointer(w));
     if (!samplePtr)
@@ -204,11 +189,13 @@ static void GLFWCursorPosCallback(GLFWwindow* w, double xpos, double ypos)
 
 static void GLFWScrollCallback(GLFWwindow* w, double xoffset, double yoffset)
 {
+    if (!IsRuntime) {
     // Forward to ImGui
     ImGui_ImplGlfw_ScrollCallback(w, xoffset, yoffset);
     ImGuiIO& io = ImGui::GetIO();
     if (io.WantCaptureMouse)
         return;
+    }
 
     auto* samplePtr = static_cast<SampleBase*>(glfwGetWindowUserPointer(w));
     if (!samplePtr)
@@ -229,13 +216,6 @@ static void GLFWScrollCallback(GLFWwindow* w, double xoffset, double yoffset)
 // macOS-specific GLFW callbacks that forward events into Diligent InputControllerMacOS
 static void GLFWKeyCallbackMac(GLFWwindow* w, int key, int scancode, int action, int mods)
 {
-    // Forward to ImGui backend first
-    ImGui_ImplGlfw_KeyCallback(w, key, scancode, action, mods);
-
-    // If ImGui wants keyboard, don't forward to the app
-    ImGuiIO& io = ImGui::GetIO();
-    if (io.WantCaptureKeyboard)
-        return;
 
     auto* samplePtr = static_cast<SampleBase*>(glfwGetWindowUserPointer(w));
     if (!samplePtr)
@@ -256,12 +236,6 @@ static void GLFWKeyCallbackMac(GLFWwindow* w, int key, int scancode, int action,
 
 static void GLFWMouseButtonCallbackMac(GLFWwindow* w, int button, int action, int mods)
 {
-    // Forward to ImGui backend first
-    ImGui_ImplGlfw_MouseButtonCallback(w, button, action, mods);
-
-    ImGuiIO& io = ImGui::GetIO();
-    if (io.WantCaptureMouse)
-        return;
 
     auto* samplePtr = static_cast<SampleBase*>(glfwGetWindowUserPointer(w));
     if (!samplePtr)
@@ -287,11 +261,6 @@ static void GLFWMouseButtonCallbackMac(GLFWwindow* w, int button, int action, in
 
 static void GLFWCursorPosCallbackMac(GLFWwindow* w, double xpos, double ypos)
 {
-    // Forward to ImGui
-    ImGui_ImplGlfw_CursorPosCallback(w, xpos, ypos);
-    ImGuiIO& io = ImGui::GetIO();
-    if (io.WantCaptureMouse)
-        return;
 
     auto* samplePtr = static_cast<SampleBase*>(glfwGetWindowUserPointer(w));
     if (!samplePtr)
@@ -303,11 +272,6 @@ static void GLFWCursorPosCallbackMac(GLFWwindow* w, double xpos, double ypos)
 
 static void GLFWScrollCallbackMac(GLFWwindow* w, double xoffset, double yoffset)
 {
-    // Forward to ImGui
-    ImGui_ImplGlfw_ScrollCallback(w, xoffset, yoffset);
-    ImGuiIO& io = ImGui::GetIO();
-    if (io.WantCaptureMouse)
-        return;
 
     auto* samplePtr = static_cast<SampleBase*>(glfwGetWindowUserPointer(w));
     if (!samplePtr)
@@ -481,7 +445,7 @@ int main()
     [view setLayer:[CAMetalLayer layer]];
     #endif
 
-    Diligent::ShadowsSample::IsRuntime = false;
+    Diligent::ShadowsSample::IsRuntime = true;
 
     // -------------------
     // Create Diligent Engine
@@ -500,46 +464,7 @@ int main()
         return -1;
     }
 
-    // -------------------
-    // Initialize ImGui
-    // -------------------
     ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; // Enable keyboard navigation
-    ImGui::StyleColorsDark();
-
-    // Initialize ImGui GLFW backend
-    if (!ImGui_ImplGlfw_InitForOther(window, true))
-    {
-        std::cerr << "Failed to initialize ImGui GLFW backend" << std::endl;
-        glfwDestroyWindow(window);
-        glfwTerminate();
-        return -1;
-    }
-
-    // Initialize ImGui Diligent backend
-    std::unique_ptr<ImGuiImplDiligent> imGuiImpl;
-    try
-    {
-        ImGuiDiligentCreateInfo imGuiCI(device, swapChain->GetDesc());
-        imGuiImpl = std::make_unique<ImGuiImplDiligent>(imGuiCI);
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Failed to initialize ImGui Diligent backend: " << e.what() << std::endl;
-        ImGui_ImplGlfw_Shutdown();
-        glfwDestroyWindow(window);
-        glfwTerminate();
-        return -1;
-    }
-    if (!imGuiImpl)
-    {
-        std::cerr << "Failed to initialize ImGui Diligent backend" << std::endl;
-        ImGui_ImplGlfw_Shutdown();
-        glfwDestroyWindow(window);
-        glfwTerminate();
-        return -1;
-    }
 
     // -------------------
     // Initialize sample
@@ -551,7 +476,6 @@ int main()
     initInfo.ppContexts = ppContexts;
     initInfo.NumImmediateCtx = 1;
     initInfo.pEngineFactory = factory;
-    initInfo.pImGui = imGuiImpl.get(); // Use raw pointer for SampleInitInfo
     sample->Initialize(initInfo);
     std::cout << "Initialized, forcing WindowResize..." << std::endl;
     int fbW, fbH;
@@ -611,28 +535,18 @@ int main()
     double currTime = glfwGetTime();
     double elapsed = currTime - lastTime;
     lastTime = currTime;
-        ImGui_ImplGlfw_NewFrame();
-        
-        // Set DisplaySize and scale for Retina
-        ImGuiIO& io = ImGui::GetIO();
-        io.DisplaySize = ImVec2((float)fbW, (float)fbH);
-        io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f); // keep 1.0 because we’re already using pixels
 
-        imGuiImpl->NewFrame(fbW, fbH, scDesc.PreTransform);
-
-    // Build UI, pass elapsed time so camera receives proper dt
-    sample->Update(currTime, elapsed, true);
+        // Build UI, pass elapsed time so camera receives proper dt
+        sample->Update(currTime, elapsed, true);
 
         
 
         // Render
-        ImGui::Render();
         sample->Render();
 
         ITextureView* pRTV = swapChain->GetCurrentBackBufferRTV();
         ITextureView* pDSV = swapChain->GetDepthBufferDSV();
         immediateContext->SetRenderTargets(1, &pRTV, pDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        imGuiImpl->Render(immediateContext);
 
         swapChain->Present(enableVsync ? 1 : 0);
     }
@@ -641,8 +555,6 @@ int main()
     // Cleanup
     // -------------------
     delete sample;
-    ImGui_ImplGlfw_Shutdown();
-    imGuiImpl.reset();
     glfwDestroyWindow(window);
     glfwTerminate();
 

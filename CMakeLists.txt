@@ -46,6 +46,10 @@ if(PLATFORM_MACOS)
     set_source_files_properties(src/main.cpp PROPERTIES COMPILE_FLAGS "-x objective-c++")
 endif()
 
+if(PLATFORM_MACOS)
+    set_source_files_properties(src/Runtime/Runtime.cpp PROPERTIES COMPILE_FLAGS "-x objective-c++")
+endif()
+
 # Executable
 add_executable(C6GE
     src/main.cpp
@@ -58,6 +62,26 @@ add_executable(C6GE
 
 # Include directories
 target_include_directories(C6GE PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentTools/NativeApp/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentSamples/ThirdParty/glfw/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentSamples/SampleBase/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentSamples/Tutorials/Common/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentTools/Imgui/src
+)
+
+add_executable(Runtime
+    src/Runtime/Runtime.cpp
+    src/Render/Render.cpp
+    src/Render/Features/Shadows/Shadows.cpp
+    src/Render/Features/Shadows/Shadows.h
+    external/DiligentEngine/DiligentSamples/Tutorials/Common/src/TexturedCube.cpp
+    external/DiligentEngine/DiligentTools/ThirdParty/imgui/backends/imgui_impl_glfw.cpp
+)
+
+# Include directories
+target_include_directories(Runtime PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine
     ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentTools/NativeApp/include
@@ -87,8 +111,16 @@ endif()
 
 target_link_libraries(C6GE PRIVATE ${DILIGENT_LIBS} ${PLATFORM_LIBRARIES})
 
+target_link_libraries(Runtime PRIVATE ${DILIGENT_LIBS} ${PLATFORM_LIBRARIES})
+
 # Add library directories
 target_link_directories(C6GE PRIVATE
+    ${CMAKE_BINARY_DIR}/external/DiligentEngine/DiligentTools/NativeApp/lib
+    ${CMAKE_BINARY_DIR}/external/DiligentEngine/DiligentSamples/SampleBase/lib
+    ${CMAKE_BINARY_DIR}/external/DiligentEngine/DiligentCore/Platforms/Apple
+)
+
+target_link_directories(Runtime PRIVATE
     ${CMAKE_BINARY_DIR}/external/DiligentEngine/DiligentTools/NativeApp/lib
     ${CMAKE_BINARY_DIR}/external/DiligentEngine/DiligentSamples/SampleBase/lib
     ${CMAKE_BINARY_DIR}/external/DiligentEngine/DiligentCore/Platforms/Apple
@@ -130,6 +162,21 @@ foreach(DLL_TARGET IN LISTS DILIGENT_DLL_TARGETS)
     endif()
 endforeach()
 
+foreach(DLL_TARGET IN LISTS DILIGENT_DLL_TARGETS)
+    if(TARGET ${DLL_TARGET})
+        add_custom_command(
+            TARGET Runtime POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "$<TARGET_FILE:${DLL_TARGET}>"
+                    "$<TARGET_FILE_DIR:Runtime>"
+        )
+    endif()
+endforeach()
+
 if(PLATFORM_WIN32)
 copy_required_dlls(C6GE DXC_REQUIRED YES)
+endif()
+
+if(PLATFORM_WIN32)
+copy_required_dlls(Runtime DXC_REQUIRED YES)
 endif()
