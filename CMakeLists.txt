@@ -49,6 +49,9 @@ endif()
 # Executable
 add_executable(C6GE
     src/main.cpp
+    src/Render/Render.cpp
+    src/Render/Features/Shadows/Shadows.cpp
+    src/Render/Features/Shadows/Shadows.h
     external/DiligentEngine/DiligentSamples/Tutorials/Common/src/TexturedCube.cpp
     external/DiligentEngine/DiligentTools/ThirdParty/imgui/backends/imgui_impl_glfw.cpp
 )
@@ -70,6 +73,7 @@ set(DILIGENT_LIBS
     DiligentFX
     Diligent-Imgui
     Diligent-SampleBase
+    Diligent-RenderStateNotation
     glfw
 )
 
