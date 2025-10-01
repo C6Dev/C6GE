@@ -5,6 +5,7 @@ C6GE is a game engine built on top of the Diligent Engine, providing cross-platf
 ## ⚠️ Early Development Warning
 
 **This engine is in very early development stages.** The codebase has already been completely rewritten at least 3 times, and you should expect significant changes - for better or worse. The goal is to create a great game engine, but the architecture and features are still evolving rapidly.
+This project is in early development. It is a learning project, and the code quality is evolving. Help is welcome if explained well and approved.
 
 ## Supported Rendering Engines
 
@@ -51,3 +52,32 @@ As this is an early-stage project, contributions and feedback are welcome, but p
 ## License
 
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+
+## Building the Engine
+To build C6GE, you will need to use CMake. Here are the commands for different build options:
+
+### Build just C6GE
+```bash
+mkdir build
+cd build
+cmake ..
+make C6GE
+```
+
+### Build both C6GE and Runtime
+```bash
+mkdir build
+cd build
+cmake ..
+make C6GE Runtime
+```
+
+### Build Diligent Samples
+```bash
+mkdir build
+cd build
+cmake ..
+make DiligentSamples
+```
+```
+You can find the samples in the `samples` directory. The renderer is based on the Sample Shadows tutorial.
