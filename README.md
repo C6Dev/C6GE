@@ -1,4 +1,4 @@
-# C6GE - C6 Game Engine
+# C6GE - Century6 Game Engine
 
 C6GE is a game engine built on top of the Diligent Engine, providing cross-platform rendering capabilities with support for modern graphics APIs.
 
