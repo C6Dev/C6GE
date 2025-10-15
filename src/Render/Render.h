@@ -28,99 +28,82 @@
 #pragma once
 
 #include "SampleBase.hpp"
-#include "BasicMath.hpp"
-#include "DXSDKMeshLoader.hpp"
 #include "FirstPersonCamera.hpp"
-#include "ShadowMapManager.hpp"
-#include "DiligentTools/RenderStateNotation/interface/RenderStateNotationLoader.h"
-#include <memory>
-#include "Render/Features/Shadows/Shadows.h"
+#include "DiligentTools/AssetLoader/interface/DXSDKMeshLoader.hpp"
+#include "AdvancedMath.hpp"
 
 namespace Diligent
 {
 
-#include "DiligentFX/Shaders/Common/public/BasicStructures.fxh"
-
-class ShadowsSample final : public SampleBase
+class C6GERender final : public SampleBase
 {
 public:
-    ~ShadowsSample();
-    virtual void ModifyEngineInitInfo(const ModifyEngineInitInfoAttribs& Attribs) override final;
-
     virtual void Initialize(const SampleInitInfo& InitInfo) override final;
+
+    void ModifyEngineInitInfo(const ModifyEngineInitInfoAttribs& Attribs) override final;
+
+    virtual ~C6GERender();
+
+    void UpdateUI();
+
+    void UpdateViewportUI();
+
+    void DXSDKMESH_VERTEX_ELEMENTtoInputLayoutDesc(const DXSDKMESH_VERTEX_ELEMENT* VertexElement,
+                                               Uint32 Stride,
+                                               InputLayoutDesc& Layout,
+                                               std::vector<LayoutElement>& Elements);
+
+    void CreateInstanceBuffer();
+
+    void CreatePipelineStates();
+
+    void CreateFramebuffer();
+
+    void ResizeFramebuffer(Uint32 Width, Uint32 Height);
+
+    void PopulateInstanceBuffer();
+
+    void DrawMesh(IDeviceContext* pCtx, bool bIsShadowPass, const ViewFrustumExt& Frustum);
+
+    void WindowResize(Uint32 Width, Uint32 Height) override final;
 
     virtual void Render() override final;
     virtual void Update(double CurrTime, double ElapsedTime, bool DoUpdateUI) override final;
 
-    virtual const Char* GetSampleName() const override final { return "Shadows Sample"; }
+    virtual const Char* GetSampleName() const override final { return "C6GERender"; }
 
-    virtual void WindowResize(Uint32 Width, Uint32 Height) override final;
+    // Get framebuffer texture for ImGui viewport
+    ITextureView* GetFramebufferSRV() const { return m_pFramebufferSRV; }
+    Uint32 GetFramebufferWidth() const { return m_FramebufferWidth; }
+    Uint32 GetFramebufferHeight() const { return m_FramebufferHeight; }
 
     static bool IsRuntime;
 
-protected:
-    virtual void UpdateUI() override final;
-
 private:
-    friend class ShadowsFeature;
-    void DrawMesh(IDeviceContext* pCtx, bool bIsShadowPass, const struct ViewFrustumExt& Frustum);
-    void CreatePipelineStates();
-    // Shadows are handled by ShadowsFeature
-
-    static void DXSDKMESH_VERTEX_ELEMENTtoInputLayoutDesc(const DXSDKMESH_VERTEX_ELEMENT* VertexElement,
-                                                          Uint32                          Stride,
-                                                          InputLayoutDesc&                Layout,
-                                                          std::vector<LayoutElement>&     Elements);
-
-    struct ShadowSettings
-    {
-        bool           SnapCascades         = true;
-        bool           StabilizeExtents     = true;
-        bool           EqualizeExtents      = true;
-        bool           SearchBestCascade    = true;
-        bool           FilterAcrossCascades = true;
-        int            Resolution           = 2048;
-        float          PartitioningFactor   = 0.95f;
-        TEXTURE_FORMAT Format               = TEX_FORMAT_D16_UNORM;
-        int            iShadowMode          = SHADOW_MODE_PCF;
-
-        bool Is32BitFilterableFmt = true;
-    } m_ShadowSettings;
-
-    bool m_PackMatrixRowMajor = true;
-
-    DXSDKMesh m_Mesh;
-
-    LightAttribs      m_LightAttribs;
+    RefCntAutoPtr<IPipelineState> m_pPSO;
+    RefCntAutoPtr<IShaderResourceBinding> m_pSRB;
+    RefCntAutoPtr<IBuffer> m_VSConstants;
+    RefCntAutoPtr<IBuffer> m_CubeVertexBuffer;
+    RefCntAutoPtr<IBuffer>                m_InstanceBuffer;
+    RefCntAutoPtr<ITextureView>           m_TextureSRV;
+    float4x4 m_WorldViewProjMatrix = float4x4::Identity();
     FirstPersonCamera m_Camera;
-    MouseState        m_LastMouseState;
+    RefCntAutoPtr<IBuffer> m_CubeIndexBuffer;
 
-    ShadowMapManager m_ShadowMapMgr;
+    // Framebuffer for off-screen rendering
+    RefCntAutoPtr<ITexture>     m_pFramebufferTexture;
+    RefCntAutoPtr<ITextureView> m_pFramebufferRTV;
+    RefCntAutoPtr<ITextureView> m_pFramebufferSRV;
+    RefCntAutoPtr<ITexture>     m_pFramebufferDepth;
+    RefCntAutoPtr<ITextureView> m_pFramebufferDSV;
+    Uint32                      m_FramebufferWidth = 800;
+    Uint32                      m_FramebufferHeight = 600;
 
-    RefCntAutoPtr<IBuffer>                             m_CameraAttribsCB;
-    RefCntAutoPtr<IBuffer>                             m_LightAttribsCB;
-    std::vector<Uint32>                                m_PSOIndex;
-    std::vector<RefCntAutoPtr<IPipelineState>>         m_RenderMeshPSO;
-    std::vector<RefCntAutoPtr<IPipelineState>>         m_RenderMeshShadowPSO;
-    std::vector<RefCntAutoPtr<IShaderResourceBinding>> m_SRBs;
-    std::vector<RefCntAutoPtr<IShaderResourceBinding>> m_ShadowSRBs;
-
-    RefCntAutoPtr<IRenderStateNotationLoader> m_pRSNLoader;
-
-    RefCntAutoPtr<ISampler> m_pComparisonSampler;
-    RefCntAutoPtr<ISampler> m_pFilterableShadowMapSampler;
-
-    // Dummy resources used when shadows are disabled to satisfy PSO bindings
-    RefCntAutoPtr<ITexture>     m_pDummyShadowTex;
-    RefCntAutoPtr<ITextureView> m_pDummyShadowMapSRV;
-    RefCntAutoPtr<ITexture>     m_pDummyFilterableShadowTex;
-    RefCntAutoPtr<ITextureView> m_pDummyFilterableShadowMapSRV;
-
-    // Save last enabled cascade count to restore when re-enabling shadows
-    int m_LastShadowCascadeCount = 4;
-
-    // Feature: Shadows
-    std::unique_ptr<ShadowsFeature> m_ShadowFeature;
+    float4x4             m_ViewProjMatrix;
+    float4x4             m_RotationMatrix;
+    int                  m_GridSize   = 5;
+    static constexpr int MaxGridSize  = 32;
+    static constexpr int MaxInstances = MaxGridSize * MaxGridSize * MaxGridSize;
 };
 
 } // namespace Diligent

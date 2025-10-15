@@ -15,6 +15,13 @@ set(DILIGENT_OPENGL_SUPPORTED OFF CACHE BOOL "Disable OpenGL backend" FORCE)
 set(DILIGENT_D3D11_SUPPORTED OFF CACHE BOOL "Disable Direct3D11 backend" FORCE)
 set(DILIGENT_D3D12_SUPPORTED OFF CACHE BOOL "Disable Direct3D12 backend" FORCE)
 
+# DiligentEngine will now use our docking ImGui via symlink
+
+# Disable Wayland support to avoid missing header issues
+set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "Build support for Wayland" FORCE)
+set(GLFW_BUILD_X11 ON CACHE BOOL "Build support for X11" FORCE)
+add_definitions(-D_GLFW_X11)
+
 # Add DiligentEngine
 add_subdirectory(external/DiligentEngine)
 
@@ -54,10 +61,7 @@ endif()
 add_executable(C6GE
     src/main.cpp
     src/Render/Render.cpp
-    src/Render/Features/Shadows/Shadows.cpp
-    src/Render/Features/Shadows/Shadows.h
     external/DiligentEngine/DiligentSamples/Tutorials/Common/src/TexturedCube.cpp
-    external/DiligentEngine/DiligentTools/ThirdParty/imgui/backends/imgui_impl_glfw.cpp
 )
 
 # Include directories
@@ -69,15 +73,13 @@ target_include_directories(C6GE PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentSamples/SampleBase/include
     ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentSamples/Tutorials/Common/src
     ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentTools/Imgui/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/external
 )
 
 add_executable(Runtime
     src/Runtime/Runtime.cpp
     src/Render/Render.cpp
-    src/Render/Features/Shadows/Shadows.cpp
-    src/Render/Features/Shadows/Shadows.h
     external/DiligentEngine/DiligentSamples/Tutorials/Common/src/TexturedCube.cpp
-    external/DiligentEngine/DiligentTools/ThirdParty/imgui/backends/imgui_impl_glfw.cpp
 )
 
 # Include directories

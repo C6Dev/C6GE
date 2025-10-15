@@ -34,617 +34,666 @@
 #include "GraphicsUtilities.h"
 #include "GraphicsAccessories.hpp"
 #include "AdvancedMath.hpp"
-#include "imgui.h"
+#include "DiligentTools/ThirdParty/imgui/imgui.h"
 #include "DiligentTools/ThirdParty/imGuIZMO.quat/imGuIZMO.h"
 #include "ImGuiUtils.hpp"
 #include "CallbackWrapper.hpp"
 #include "Utilities/interface/DiligentFXShaderSourceStreamFactory.hpp"
 #include "ShaderSourceFactoryUtils.hpp"
+#include "DiligentSamples/Tutorials/Common/src/TexturedCube.hpp"
+#include "BasicMath.hpp"
+#include "ColorConversion.h"
+#include "TextureUtilities.h"
+#include <random>
 
 namespace Diligent
 {
+    bool RenderShadows = true;
+    bool Diligent::C6GERender::IsRuntime = false;
 
-bool RenderShadows = true;
-bool Diligent::ShadowsSample::IsRuntime = false;
+    SampleBase *CreateSample()
+    {
+        return new C6GERender();
+    }
 
-SampleBase* CreateSample()
-{
-    return new ShadowsSample();
-}
+    C6GERender::~C6GERender()
+    {
+    }
 
-ShadowsSample::~ShadowsSample()
-{
-}
+    void C6GERender::ModifyEngineInitInfo(const ModifyEngineInitInfoAttribs &Attribs)
+    {
+        SampleBase::ModifyEngineInitInfo(Attribs);
 
-void ShadowsSample::ModifyEngineInitInfo(const ModifyEngineInitInfoAttribs& Attribs)
-{
-    SampleBase::ModifyEngineInitInfo(Attribs);
-
-    Attribs.EngineCI.Features.DepthClamp = DEVICE_FEATURE_STATE_OPTIONAL;
+        Attribs.EngineCI.Features.DepthClamp = DEVICE_FEATURE_STATE_OPTIONAL;
 
 #if D3D12_SUPPORTED
-    if (Attribs.DeviceType == RENDER_DEVICE_TYPE_D3D12)
-    {
-        EngineD3D12CreateInfo& D3D12CI          = static_cast<EngineD3D12CreateInfo&>(Attribs.EngineCI);
-        D3D12CI.GPUDescriptorHeapSize[1]        = 1024; // Sampler descriptors
-        D3D12CI.GPUDescriptorHeapDynamicSize[1] = 1024;
-    }
+        if (Attribs.DeviceType == RENDER_DEVICE_TYPE_D3D12)
+        {
+            EngineD3D12CreateInfo &D3D12CI = static_cast<EngineD3D12CreateInfo &>(Attribs.EngineCI);
+            D3D12CI.GPUDescriptorHeapSize[1] = 1024; // Sampler descriptors
+            D3D12CI.GPUDescriptorHeapDynamicSize[1] = 1024;
+        }
 #endif
-}
-
-void ShadowsSample::Initialize(const SampleInitInfo& InitInfo)
-{
-    if (IsRuntime == true)
-    {
-        std::cout << "IsRuntime" << std::endl;
-    }
-    else {
-        std::cout << "Not IsRuntime" << std::endl;
-    }
-    SampleBase::Initialize(InitInfo);
-
-    std::string MeshFileName = "Powerplant/Powerplant.sdkmesh";
-    m_Mesh.Create(MeshFileName.c_str());
-    std::string Directory;
-    FileSystem::GetPathComponents(MeshFileName, &Directory, nullptr);
-    m_Mesh.LoadGPUResources(Directory.c_str(), m_pDevice, m_pImmediateContext);
-
-    m_LightAttribs.ShadowAttribs.iNumCascades     = 4;
-    m_LightAttribs.ShadowAttribs.fFixedDepthBias  = 0.0025f;
-    m_LightAttribs.ShadowAttribs.iFixedFilterSize = 5;
-    m_LightAttribs.ShadowAttribs.fFilterWorldSize = 0.1f;
-
-    m_LightAttribs.f4Direction    = float3(-0.522699475f, -0.481321275f, -0.703671455f);
-    m_LightAttribs.f4Intensity    = float4(1, 0.8f, 0.5f, 1);
-    m_LightAttribs.f4AmbientLight = float4(0.125f, 0.125f, 0.125f, 1);
-
-    // Due to a bug, NVidia OpenGL driver crashes when compiling shaders with row-major matrices
-    // in nested structures.
-    m_PackMatrixRowMajor = !m_pDevice->GetDeviceInfo().IsGLDevice();
-
-    m_Camera.SetPos(float3(70, 10, 0.f));
-    m_Camera.SetRotation(PI_F / 2.f, 0);
-    m_Camera.SetRotationSpeed(0.005f);
-    m_Camera.SetMoveSpeed(5.f);
-    m_Camera.SetSpeedUpScales(5.f, 10.f);
-
-    RefCntAutoPtr<IRenderStateNotationParser> pRSNParser;
-    {
-        RefCntAutoPtr<IShaderSourceInputStreamFactory> pStreamFactory;
-        m_pEngineFactory->CreateDefaultShaderSourceStreamFactory("render_states", &pStreamFactory);
-
-        CreateRenderStateNotationParser({}, &pRSNParser);
-        pRSNParser->ParseFile("RenderStates.json", pStreamFactory);
     }
 
+    void C6GERender::Initialize(const SampleInitInfo &InitInfo)
     {
-        RefCntAutoPtr<IShaderSourceInputStreamFactory> pStreamFactory;
-        m_pEngineFactory->CreateDefaultShaderSourceStreamFactory("shaders", &pStreamFactory);
+        SampleBase::Initialize(InitInfo);
 
-        RefCntAutoPtr<IShaderSourceInputStreamFactory> pCompoundFactory =
-            CreateCompoundShaderSourceFactory({&DiligentFXShaderSourceStreamFactory::GetInstance(), pStreamFactory});
+        // Initialize camera position to look at the cube
+        m_Camera.SetPos(float3(0.f, 0.f, 5.f));
+        m_Camera.SetRotation(0.f, 0.f);
 
-        CreateRenderStateNotationLoader({m_pDevice, pRSNParser, pCompoundFactory}, &m_pRSNLoader);
+        CreatePipelineStates();
+
+        CreateFramebuffer();
+
+        CreateInstanceBuffer();
     }
 
-    CreateUniformBuffer(m_pDevice, sizeof(CameraAttribs), "Camera attribs buffer", &m_CameraAttribsCB);
-    CreateUniformBuffer(m_pDevice, sizeof(LightAttribs), "Light attribs buffer", &m_LightAttribsCB);
-    CreatePipelineStates();
-
-    // Feature: Shadows
-    m_ShadowFeature = std::make_unique<ShadowsFeature>(this);
-    if (RenderShadows)
+    void C6GERender::UpdateUI()
     {
-        m_ShadowFeature->InitShadows();
-    }
-    else
+        if(IsRuntime == true)
+            return;
+    
+    // Remove fixed positioning - let the window be freely movable and resizable
+    if (ImGui::Begin("Settings"))
     {
-        // Prepare material SRBs without shadow resources
-        m_ShadowFeature->InitializeResourceBindings();
-    }
-}
-
-void ShadowsSample::UpdateUI()
-{
-
-    if (!IsRuntime) 
-    {
-
-    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Settings", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
-    {
-        ImGui::gizmo3D("Light direction", reinterpret_cast<float3&>(m_LightAttribs.f4Direction), ImGui::GetTextLineHeight() * 10);
-
+        if (ImGui::SliderInt("Grid Size", &m_GridSize, 1, 32))
         {
-            constexpr int MinShadowMapSize = 512;
-            int           ShadowMapComboId = 0;
-            while ((MinShadowMapSize << ShadowMapComboId) != static_cast<int>(m_ShadowSettings.Resolution))
-                ++ShadowMapComboId;
-            if (ImGui::Combo("Shadow map size", &ShadowMapComboId,
-                             "512\0"
-                             "1024\0"
-                             "2048\0\0"))
-            {
-                m_ShadowSettings.Resolution = MinShadowMapSize << ShadowMapComboId;
-                if (m_ShadowFeature)
-                    m_ShadowFeature->InitShadows();
-            }
-        }
-
-        // Toggle shadows with safe init/deinit
-        static bool PrevRenderShadows = RenderShadows;
-        if (ImGui::Checkbox("Shadows", &RenderShadows))
-        {
-            const bool TurningOn  = RenderShadows && !PrevRenderShadows;
-            const bool TurningOff = !RenderShadows && PrevRenderShadows;
-
-            if (TurningOn)
-            {
-                // Restore cascade count and initialize shadow resources
-                if (m_LastShadowCascadeCount <= 0)
-                    m_LastShadowCascadeCount = 4;
-                m_LightAttribs.ShadowAttribs.iNumCascades = m_LastShadowCascadeCount;
-                // Initialize shadow resources and rebuild SRBs to bind shadow maps
-                if (m_ShadowFeature)
-                {
-                    m_ShadowFeature->InitShadows();
-                    m_ShadowFeature->InitializeResourceBindings();
-                }
-            }
-            else if (TurningOff)
-            {
-                // Save cascade count then set to zero to fully disable shadowing in shaders
-                m_LastShadowCascadeCount = m_LightAttribs.ShadowAttribs.iNumCascades;
-                m_LightAttribs.ShadowAttribs.iNumCascades = 0;
-                // Reset shadow resources and rebuild SRBs without shadow bindings
-                m_ShadowMapMgr = ShadowMapManager{};
-                if (m_ShadowFeature)
-                    m_ShadowFeature->InitializeResourceBindings();
-            }
-
-            PrevRenderShadows = RenderShadows;
-        }
-
-        if (ImGui::SliderInt("Num cascades", &m_LightAttribs.ShadowAttribs.iNumCascades, 1, 8))
-        {
-            if (m_ShadowFeature)
-                m_ShadowFeature->InitShadows();
-        }
-
-        {
-            int Is32Bit = m_ShadowSettings.Format == TEX_FORMAT_D16_UNORM ? 0 : 1;
-            if (ImGui::Combo("Shadow map format", &Is32Bit,
-                             "16-bit\0"
-                             "32-bit\0\0"))
-            {
-                m_ShadowSettings.Format = Is32Bit == 0 ? TEX_FORMAT_D16_UNORM : TEX_FORMAT_D32_FLOAT;
-                CreatePipelineStates();
-                if (m_ShadowFeature)
-                    m_ShadowFeature->InitShadows();
-            }
-        }
-
-        {
-            static_assert(SHADOW_MODE_PCF == 1 && SHADOW_MODE_VSM == 2 && SHADOW_MODE_EVSM2 == 3 && SHADOW_MODE_EVSM4 == 4, "Unexpected constant");
-            // clang-format off
-            const char* ShadowModes[]
-            {
-                "PCF",
-                "VSM",
-                "EVSM2",
-                "EVSM4"
-            };
-            // clang-format on
-            int iShadowModeComboItem = m_ShadowSettings.iShadowMode - 1;
-            if (ImGui::Combo("Shadow mode", &iShadowModeComboItem, ShadowModes, _countof(ShadowModes)))
-            {
-                m_ShadowSettings.iShadowMode = iShadowModeComboItem + 1;
-                CreatePipelineStates();
-                if (m_ShadowFeature)
-                    m_ShadowFeature->InitShadows();
-            }
-        }
-
-        {
-            // clang-format off
-            const std::pair<int, const char*> FilterSizes[] =
-            {
-                {0, "World-constant"},
-                {2, "Fixed 2x2"},
-                {3, "Fixed 3x3"},
-                {5, "Fixed 5x5"},
-                {7, "Fixed 7x7"}
-            };
-            // clang-format on
-            if (ImGui::Combo("Shadow filter size", &m_LightAttribs.ShadowAttribs.iFixedFilterSize, FilterSizes, _countof(FilterSizes)))
-            {
-                m_ShadowSettings.FilterAcrossCascades = m_LightAttribs.ShadowAttribs.iFixedFilterSize > 0;
-                CreatePipelineStates();
-            }
-        }
-
-        if (m_ShadowSettings.iShadowMode == SHADOW_MODE_VSM ||
-            m_ShadowSettings.iShadowMode == SHADOW_MODE_EVSM2 ||
-            m_ShadowSettings.iShadowMode == SHADOW_MODE_EVSM4)
-        {
-            if (ImGui::Checkbox("32-bit filterable Format", &m_ShadowSettings.Is32BitFilterableFmt))
-            {
-                if (m_ShadowFeature)
-                    m_ShadowFeature->InitShadows();
-            }
-        }
-
-        ImGui::SetNextItemOpen(true, ImGuiCond_FirstUseEver);
-        if (ImGui::TreeNode("Cascade allocation"))
-        {
-            if (ImGui::InputFloat("Partitioning Factor", &m_ShadowSettings.PartitioningFactor, 0.001f, 0.01f, "%.3f", ImGuiInputTextFlags_EnterReturnsTrue))
-            {
-                m_ShadowSettings.PartitioningFactor = clamp(m_ShadowSettings.PartitioningFactor, 0.f, 1.f);
-            }
-            // clang-format off
-            ImGui::Checkbox("Snap cascades",     &m_ShadowSettings.SnapCascades);
-            ImGui::Checkbox("Stabilize extents", &m_ShadowSettings.StabilizeExtents);
-            ImGui::Checkbox("Equalize extents",  &m_ShadowSettings.EqualizeExtents);
-            // clang-format on
-            if (ImGui::Checkbox("Use best cascade", &m_ShadowSettings.SearchBestCascade))
-            {
-                CreatePipelineStates();
-            }
-            ImGui::TreePop();
-        }
-
-        ImGui::SetNextItemOpen(true, ImGuiCond_FirstUseEver);
-        if (ImGui::TreeNode("Filtering"))
-        {
-            if (ImGui::Checkbox("Filter across cascades", &m_ShadowSettings.FilterAcrossCascades))
-                CreatePipelineStates();
-
-            if (m_ShadowSettings.FilterAcrossCascades)
-                ImGui::SliderFloat("Cascade transition region", &m_LightAttribs.ShadowAttribs.fCascadeTransitionRegion, 0, 0.5f);
-
-            if (m_LightAttribs.ShadowAttribs.iFixedFilterSize == 0)
-                ImGui::SliderFloat("Filter world size", &m_LightAttribs.ShadowAttribs.fFilterWorldSize, 0, 0.25f);
-
-            if (m_ShadowSettings.iShadowMode == SHADOW_MODE_PCF)
-            {
-                ImGui::SliderFloat("Max depth bias slope", &m_LightAttribs.ShadowAttribs.fReceiverPlaneDepthBiasClamp, 0, 20);
-                ImGui::SliderFloat("Fixed depth bias", &m_LightAttribs.ShadowAttribs.fFixedDepthBias, 0, 1, "%.4f", ImGuiSliderFlags_Logarithmic);
-            }
-
-            if (m_ShadowSettings.iShadowMode == SHADOW_MODE_EVSM2 ||
-                m_ShadowSettings.iShadowMode == SHADOW_MODE_EVSM4)
-                ImGui::SliderFloat("Positive EVSM Exponent", &m_LightAttribs.ShadowAttribs.fEVSMPositiveExponent, 0.1f, 40);
-
-            if (m_ShadowSettings.iShadowMode == SHADOW_MODE_EVSM4)
-                ImGui::SliderFloat("Negative EVSM Exponent", &m_LightAttribs.ShadowAttribs.fEVSMNegativeExponent, 0.1f, 40);
-
-            if (m_ShadowSettings.iShadowMode == SHADOW_MODE_VSM ||
-                m_ShadowSettings.iShadowMode == SHADOW_MODE_EVSM2 ||
-                m_ShadowSettings.iShadowMode == SHADOW_MODE_EVSM4)
-                ImGui::SliderFloat("Light bleeding reduction", &m_LightAttribs.ShadowAttribs.fVSMLightBleedingReduction, 0, 0.99f, "%.4f", ImGuiSliderFlags_Logarithmic);
-
-            if (m_ShadowSettings.iShadowMode == SHADOW_MODE_VSM)
-                ImGui::SliderFloat("VSM Bias", &m_LightAttribs.ShadowAttribs.fVSMBias, 0, 1, "%.4f", ImGuiSliderFlags_Logarithmic);
-
-            ImGui::TreePop();
-        }
-
-        ImGui::SetNextItemOpen(true, ImGuiCond_FirstUseEver);
-        if (ImGui::TreeNode("Visualization"))
-        {
-            ImGui::Checkbox("Visualize cascades", &m_LightAttribs.ShadowAttribs.bVisualizeCascades);
-            ImGui::Checkbox("Shadows only", &m_LightAttribs.ShadowAttribs.bVisualizeShadowing);
-            ImGui::TreePop();
+            PopulateInstanceBuffer();
         }
     }
     ImGui::End();
-}
-}
+    }
 
-
-void ShadowsSample::DXSDKMESH_VERTEX_ELEMENTtoInputLayoutDesc(const DXSDKMESH_VERTEX_ELEMENT* VertexElement,
-                                                              Uint32                          Stride,
-                                                              InputLayoutDesc&                Layout,
-                                                              std::vector<LayoutElement>&     Elements)
-{
-    Elements.clear();
-    for (Uint32 input_elem = 0; VertexElement[input_elem].Stream != 0xFF; ++input_elem)
+    void C6GERender::UpdateViewportUI()
     {
-        const DXSDKMESH_VERTEX_ELEMENT& SrcElem = VertexElement[input_elem];
-
-        Int32 InputIndex = -1;
-        switch (SrcElem.Usage)
+        // Create a fullscreen dockspace
+        ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(viewport->WorkPos);
+        ImGui::SetNextWindowSize(viewport->WorkSize);
+        ImGui::SetNextWindowViewport(viewport->ID);
+        
+        ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDocking;
+        window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
+        window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
+        
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+        
+        ImGui::Begin("DockSpaceWindow", nullptr, window_flags);
+        ImGui::PopStyleVar(3);
+        
+        // Create dockspace
+        ImGuiID dockspace_id = ImGui::GetID("MainDockSpace");
+        ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_None);
+        
+        // Setup default docking layout on first run
+        static bool first_time = true;
+        if (first_time)
         {
-            case DXSDKMESH_VERTEX_SEMANTIC_POSITION:
-                InputIndex = 0;
-                break;
-
-            case DXSDKMESH_VERTEX_SEMANTIC_NORMAL:
-                InputIndex = 1;
-                break;
-
-            case DXSDKMESH_VERTEX_SEMANTIC_TEXCOORD:
-                InputIndex = 2;
-                break;
+            first_time = false;
+            ImGui::DockBuilderRemoveNode(dockspace_id);
+            ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
+            ImGui::DockBuilderSetNodeSize(dockspace_id, viewport->WorkSize);
+            
+            // Split the dockspace
+            auto dock_left = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Left, 0.2f, nullptr, &dockspace_id);
+            auto dock_right = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Right, 0.25f, nullptr, &dockspace_id);
+            auto dock_down = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Down, 0.3f, nullptr, &dockspace_id);
+            
+            // Dock windows to specific nodes
+            ImGui::DockBuilderDockWindow("Viewport", dockspace_id);
+            ImGui::DockBuilderDockWindow("Scene", dock_left);
+            ImGui::DockBuilderDockWindow("Properties", dock_right);
+            ImGui::DockBuilderDockWindow("Console", dock_down);
+            
+            ImGui::DockBuilderFinish(dockspace_id);
         }
-
-        if (InputIndex >= 0)
+        
+        ImGui::End();
+        
+        // Create the viewport window (now docked but moveable)
+        ImGuiWindowFlags viewport_flags = ImGuiWindowFlags_None;
+        if (ImGui::Begin("Viewport", nullptr, viewport_flags))
         {
-            Uint32     NumComponents = 0;
-            VALUE_TYPE ValueType     = VT_UNDEFINED;
-            Bool       IsNormalized  = False;
-            switch (SrcElem.Type)
+            if (m_pFramebufferSRV)
             {
-                case DXSDKMESH_VERTEX_DATA_TYPE_FLOAT2:
-                    NumComponents = 2;
-                    ValueType     = VT_FLOAT32;
-                    IsNormalized  = False;
-                    break;
-
-                case DXSDKMESH_VERTEX_DATA_TYPE_FLOAT3:
-                    NumComponents = 3;
-                    ValueType     = VT_FLOAT32;
-                    IsNormalized  = False;
-                    break;
-
-                default:
-                    UNEXPECTED("Unsupported data type. Please add appropriate case statement.");
-            }
-            Elements.emplace_back(InputIndex, SrcElem.Stream, NumComponents, ValueType, IsNormalized, SrcElem.Offset, Stride);
-        }
-    }
-    Layout.LayoutElements = Elements.data();
-    Layout.NumElements    = static_cast<Uint32>(Elements.size());
-}
-
-void ShadowsSample::CreatePipelineStates()
-{
-    ShaderMacroHelper Macros;
-    Macros.AddShaderMacro("SHADOW_MODE", m_ShadowSettings.iShadowMode);
-    Macros.AddShaderMacro("PCF_FILTER_SIZE", m_LightAttribs.ShadowAttribs.iFixedFilterSize);
-    Macros.AddShaderMacro("FILTER_ACROSS_CASCADES", m_ShadowSettings.FilterAcrossCascades);
-    Macros.AddShaderMacro("BEST_CASCADE_SEARCH", m_ShadowSettings.SearchBestCascade);
-    Macros.AddShaderMacro("CONVERT_PS_OUTPUT_TO_GAMMA", m_ConvertPSOutputToGamma);
-
-    RefCntAutoPtr<IShader> pGeometryVS;
-    RefCntAutoPtr<IShader> pGeometryPS;
-    {
-        auto ModifyCI = MakeCallback([&](ShaderCreateInfo& ShaderCI) {
-            ShaderCI.Macros       = Macros;
-            ShaderCI.CompileFlags = m_PackMatrixRowMajor ? SHADER_COMPILE_FLAG_PACK_MATRIX_ROW_MAJOR : SHADER_COMPILE_FLAG_NONE;
-        });
-
-        m_pRSNLoader->LoadShader({"Mesh VS", false, false, ModifyCI, ModifyCI}, &pGeometryVS);
-        m_pRSNLoader->LoadShader({"Mesh PS", false, false, ModifyCI, ModifyCI}, &pGeometryPS);
-    }
-
-    Macros.AddShaderMacro("SHADOW_PASS", true);
-    RefCntAutoPtr<IShader> pShadowVS;
-    {
-        auto ModifyCI = MakeCallback([&](ShaderCreateInfo& ShaderCI) {
-            ShaderCI.Macros       = Macros;
-            ShaderCI.CompileFlags = m_PackMatrixRowMajor ? SHADER_COMPILE_FLAG_PACK_MATRIX_ROW_MAJOR : SHADER_COMPILE_FLAG_NONE;
-        });
-
-        m_pRSNLoader->LoadShader({"Mesh VS", false, false, ModifyCI, ModifyCI}, &pShadowVS);
-    }
-
-    m_PSOIndex.resize(m_Mesh.GetNumVBs());
-    m_RenderMeshPSO.clear();
-    m_RenderMeshShadowPSO.clear();
-    for (Uint32 vb = 0; vb < m_Mesh.GetNumVBs(); ++vb)
-    {
-        std::vector<LayoutElement> Elements;
-        InputLayoutDesc            InputLayout{};
-        DXSDKMESH_VERTEX_ELEMENTtoInputLayoutDesc(m_Mesh.VBElements(vb), m_Mesh.GetVertexStride(vb), InputLayout, Elements);
-
-        //  Try to find PSO with the same layout
-        Uint32 pso;
-        for (pso = 0; pso < m_RenderMeshPSO.size(); ++pso)
-        {
-            const InputLayoutDesc& PSOLayout = m_RenderMeshPSO[pso]->GetGraphicsPipelineDesc().InputLayout;
-            if (PSOLayout == InputLayout)
-                break;
-        }
-
-        m_PSOIndex[vb] = pso;
-        if (pso < static_cast<Uint32>(m_RenderMeshPSO.size()))
-            continue;
-
-        {
-            ShaderResourceVariableDesc Vars[] = {
-                {SHADER_TYPE_PIXEL, "g_tex2DDiffuse", SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE},
+                ImVec2 contentSize = ImGui::GetContentRegionAvail();
+                
+                // Resize framebuffer if viewport size changed
+                Uint32 newWidth = static_cast<Uint32>(std::max(1.0f, contentSize.x));
+                Uint32 newHeight = static_cast<Uint32>(std::max(1.0f, contentSize.y));
+                
+                if (newWidth != m_FramebufferWidth || newHeight != m_FramebufferHeight)
                 {
-                    SHADER_TYPE_PIXEL,
-                    m_ShadowSettings.iShadowMode == SHADOW_MODE_PCF ? "g_tex2DShadowMap" : "g_tex2DFilterableShadowMap",
-                    SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE,
-                    m_ShadowSettings.iShadowMode == SHADOW_MODE_PCF ? SHADER_VARIABLE_FLAG_UNFILTERABLE_FLOAT_TEXTURE_WEBGPU : SHADER_VARIABLE_FLAG_NONE,
-                }};
+                    ResizeFramebuffer(newWidth, newHeight);
+                }
+                
+                // Display the framebuffer texture at viewport size
+                ImGui::Image(
+                    reinterpret_cast<void*>(m_pFramebufferSRV.RawPtr()),
+                    contentSize
+                );
+            }
+            else
+            {
+                ImGui::Text("Framebuffer not ready");
+            }
+        }
+        ImGui::End();
+        
+        // Create additional docked windows
+        if (ImGui::Begin("Scene", nullptr, ImGuiWindowFlags_None))
+        {
+            ImGui::Text("Scene Hierarchy");
+            // Add scene hierarchy content here
+        }
+        ImGui::End();
+        
+        if (ImGui::Begin("Properties", nullptr, ImGuiWindowFlags_None))
+        {
+            ImGui::Text("Properties Panel");
+            // Add properties content here
+        }
+        ImGui::End();
+        
+        if (ImGui::Begin("Console", nullptr, ImGuiWindowFlags_None))
+        {
+            ImGui::Text("Console Output");
+            // Add console content here
+        }
+        ImGui::End();
+    }
 
-            auto ModifyCI = MakeCallback([&](PipelineStateCreateInfo& PipelineCI) {
-                GraphicsPipelineStateCreateInfo& GraphicsPipelineCI = static_cast<GraphicsPipelineStateCreateInfo&>(PipelineCI);
+    void C6GERender::DXSDKMESH_VERTEX_ELEMENTtoInputLayoutDesc(const DXSDKMESH_VERTEX_ELEMENT *VertexElement,
+                                                               Uint32 Stride,
+                                                               InputLayoutDesc &Layout,
+                                                               std::vector<LayoutElement> &Elements)
+    {
+    }
 
-                GraphicsPipelineCI.PSODesc.ResourceLayout.Variables    = Vars;
-                GraphicsPipelineCI.PSODesc.ResourceLayout.NumVariables = _countof(Vars);
+    void C6GERender::CreateInstanceBuffer()
+    {
+    // Create instance data buffer that will store transformation matrices
+    BufferDesc InstBuffDesc;
+    InstBuffDesc.Name = "Instance data buffer";
+    // Use default usage as this buffer will only be updated when grid size changes
+    InstBuffDesc.Usage     = USAGE_DEFAULT;
+    InstBuffDesc.BindFlags = BIND_VERTEX_BUFFER;
+    InstBuffDesc.Size      = sizeof(float4x4) * MaxInstances;
+    m_pDevice->CreateBuffer(InstBuffDesc, nullptr, &m_InstanceBuffer);
+    PopulateInstanceBuffer();
+    }
 
-                GraphicsPipelineCI.GraphicsPipeline.InputLayout      = InputLayout;
-                GraphicsPipelineCI.GraphicsPipeline.RTVFormats[0]    = m_pSwapChain->GetDesc().ColorBufferFormat;
-                GraphicsPipelineCI.GraphicsPipeline.DSVFormat        = m_pSwapChain->GetDesc().DepthBufferFormat;
-                GraphicsPipelineCI.GraphicsPipeline.NumRenderTargets = 1;
+    void C6GERender::CreatePipelineStates()
+    {
+        // Pipeline state object encompasses configuration of all GPU stages
 
-                GraphicsPipelineCI.pVS = pGeometryVS;
-                GraphicsPipelineCI.pPS = pGeometryPS;
-            });
+        GraphicsPipelineStateCreateInfo PSOCreateInfo;
 
-            RefCntAutoPtr<IPipelineState> pRenderMeshPSO;
-            m_pRSNLoader->LoadPipelineState({"Mesh PSO", PIPELINE_TYPE_GRAPHICS, false, false, ModifyCI, ModifyCI}, &pRenderMeshPSO);
+        // Pipeline state name is used by the engine to report issues.
+        // It is always a good idea to give objects descriptive names.
+        PSOCreateInfo.PSODesc.Name = "Cube PSO";
 
-            pRenderMeshPSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "cbCameraAttribs")->Set(m_CameraAttribsCB);
-            pRenderMeshPSO->GetStaticVariableByName(SHADER_TYPE_PIXEL, "cbLightAttribs")->Set(m_LightAttribsCB);
-            pRenderMeshPSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "cbLightAttribs")->Set(m_LightAttribsCB);
-            m_RenderMeshPSO.emplace_back(std::move(pRenderMeshPSO));
+        // This is a graphics pipeline
+        PSOCreateInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+
+        // clang-format off
+    // This tutorial will render to a single render target
+    PSOCreateInfo.GraphicsPipeline.NumRenderTargets             = 1;
+    // Set render target format which is the format of the swap chain's color buffer
+    PSOCreateInfo.GraphicsPipeline.RTVFormats[0]                = m_pSwapChain->GetDesc().ColorBufferFormat;
+    // Set depth buffer format which is the format of the swap chain's back buffer
+    PSOCreateInfo.GraphicsPipeline.DSVFormat                    = m_pSwapChain->GetDesc().DepthBufferFormat;
+    // Primitive topology defines what kind of primitives will be rendered by this pipeline state
+    PSOCreateInfo.GraphicsPipeline.PrimitiveTopology            = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    // Cull back faces
+    PSOCreateInfo.GraphicsPipeline.RasterizerDesc.CullMode      = CULL_MODE_BACK;
+    // Enable depth testing
+    PSOCreateInfo.GraphicsPipeline.DepthStencilDesc.DepthEnable = True;
+        // clang-format on
+
+        ShaderCreateInfo ShaderCI;
+        // Tell the system that the shader source code is in HLSL.
+        // For OpenGL, the engine will convert this into GLSL under the hood.
+        ShaderCI.SourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+
+        // OpenGL backend requires emulated combined HLSL texture samplers (g_Texture + g_Texture_sampler combination)
+        ShaderCI.Desc.UseCombinedTextureSamplers = true;
+
+        // Pack matrices in row-major order
+        ShaderCI.CompileFlags = SHADER_COMPILE_FLAG_PACK_MATRIX_ROW_MAJOR;
+
+        // Presentation engine always expects input in gamma space. Normally, pixel shader output is
+        // converted from linear to gamma space by the GPU. However, some platforms (e.g. Android in GLES mode,
+        // or Emscripten in WebGL mode) do not support gamma-correction. In this case the application
+        // has to do the conversion manually.
+        ShaderMacro Macros[] = {{"CONVERT_PS_OUTPUT_TO_GAMMA", m_ConvertPSOutputToGamma ? "1" : "0"}};
+        ShaderCI.Macros = {Macros, sizeof(Macros)/sizeof(Macros[0])};
+
+        // In this tutorial, we will load shaders from file. To be able to do that,
+        // we need to create a shader source stream factory
+        RefCntAutoPtr<IShaderSourceInputStreamFactory> pShaderSourceFactory;
+        m_pEngineFactory->CreateDefaultShaderSourceStreamFactory(nullptr, &pShaderSourceFactory);
+        ShaderCI.pShaderSourceStreamFactory = pShaderSourceFactory;
+        // Create a vertex shader
+        RefCntAutoPtr<IShader> pVS;
+        {
+            ShaderCI.Desc.ShaderType = SHADER_TYPE_VERTEX;
+            ShaderCI.EntryPoint = "main";
+            ShaderCI.Desc.Name = "Cube VS";
+            ShaderCI.FilePath = "cube.vsh";
+            m_pDevice->CreateShader(ShaderCI, &pVS);
+            // Create dynamic uniform buffer that will store our transformation matrix
+            // Dynamic buffers can be frequently updated by the CPU
+            BufferDesc CBDesc;
+            CBDesc.Name = "VS constants CB";
+            CBDesc.Size = sizeof(float4x4) * 2; // Need space for ViewProj and Rotation matrices
+            CBDesc.Usage = USAGE_DYNAMIC;
+            CBDesc.BindFlags = BIND_UNIFORM_BUFFER;
+            CBDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+            m_pDevice->CreateBuffer(CBDesc, nullptr, &m_VSConstants);
         }
 
+        // Create a pixel shader
+        RefCntAutoPtr<IShader> pPS;
         {
-            auto ModifyCI = MakeCallback([&](PipelineStateCreateInfo& PipelineCI) {
-                GraphicsPipelineStateCreateInfo& GraphicsPipelineCI = static_cast<GraphicsPipelineStateCreateInfo&>(PipelineCI);
+            ShaderCI.Desc.ShaderType = SHADER_TYPE_PIXEL;
+            ShaderCI.EntryPoint = "main";
+            ShaderCI.Desc.Name = "Cube PS";
+            ShaderCI.FilePath = "cube.psh";
+            m_pDevice->CreateShader(ShaderCI, &pPS);
 
-                GraphicsPipelineCI.GraphicsPipeline.InputLayout = InputLayout;
-                GraphicsPipelineCI.GraphicsPipeline.DSVFormat   = m_ShadowSettings.Format;
+            ShaderResourceVariableDesc Vars[] = 
+            {
+                {SHADER_TYPE_PIXEL, "g_Texture", SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE}
+            };
+            PSOCreateInfo.PSODesc.ResourceLayout.Variables    = Vars;
+            PSOCreateInfo.PSODesc.ResourceLayout.NumVariables = sizeof(Vars)/sizeof(Vars[0]);
+        }
 
-                GraphicsPipelineCI.pVS = pShadowVS;
-            });
+        SamplerDesc SamLinearClampDesc
+        {
+            FILTER_TYPE_LINEAR, FILTER_TYPE_LINEAR, FILTER_TYPE_LINEAR, 
+            TEXTURE_ADDRESS_CLAMP, TEXTURE_ADDRESS_CLAMP, TEXTURE_ADDRESS_CLAMP
+        };
+        ImmutableSamplerDesc ImtblSamplers[] = 
+        {
+            {SHADER_TYPE_PIXEL, "g_Texture", SamLinearClampDesc}
+        };
+        PSOCreateInfo.PSODesc.ResourceLayout.ImmutableSamplers    = ImtblSamplers;
+        PSOCreateInfo.PSODesc.ResourceLayout.NumImmutableSamplers = sizeof(ImtblSamplers)/sizeof(ImtblSamplers[0]);
 
-            RefCntAutoPtr<IPipelineState> pRenderMeshShadowPSO;
-            m_pRSNLoader->LoadPipelineState({"Mesh Shadow PSO", PIPELINE_TYPE_GRAPHICS, false, false, ModifyCI, ModifyCI}, &pRenderMeshShadowPSO);
-            pRenderMeshShadowPSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "cbCameraAttribs")->Set(m_CameraAttribsCB);
-            m_RenderMeshShadowPSO.emplace_back(std::move(pRenderMeshShadowPSO));
+    // clang-format off
+    // Define vertex shader input layout
+LayoutElement LayoutElems[] =
+{
+    // Per-vertex data - first buffer slot
+    // Attribute 0 - vertex position
+    LayoutElement{0, 0, 3, VT_FLOAT32, False},
+    // Attribute 1 - texture coordinates
+    LayoutElement{1, 0, 2, VT_FLOAT32, False},
+            
+    // Per-instance data - second buffer slot
+    // We will use four attributes to encode instance-specific 4x4 transformation matrix
+    // Attribute 2 - first row
+    LayoutElement{2, 1, 4, VT_FLOAT32, False, INPUT_ELEMENT_FREQUENCY_PER_INSTANCE},
+    // Attribute 3 - second row
+    LayoutElement{3, 1, 4, VT_FLOAT32, False, INPUT_ELEMENT_FREQUENCY_PER_INSTANCE},
+    // Attribute 4 - third row
+    LayoutElement{4, 1, 4, VT_FLOAT32, False, INPUT_ELEMENT_FREQUENCY_PER_INSTANCE},
+    // Attribute 5 - fourth row
+    LayoutElement{5, 1, 4, VT_FLOAT32, False, INPUT_ELEMENT_FREQUENCY_PER_INSTANCE}
+};
+        // clang-format on
+        PSOCreateInfo.GraphicsPipeline.InputLayout.LayoutElements = LayoutElems;
+        PSOCreateInfo.GraphicsPipeline.InputLayout.NumElements = sizeof(LayoutElems)/sizeof(LayoutElems[0]);
+
+        PSOCreateInfo.pVS = pVS;
+        PSOCreateInfo.pPS = pPS;
+
+        // Define variable type that will be used by default
+        PSOCreateInfo.PSODesc.ResourceLayout.DefaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+
+        m_pDevice->CreateGraphicsPipelineState(PSOCreateInfo, &m_pPSO);
+
+        // Since we did not explicitly specify the type for 'Constants' variable, default
+        // type (SHADER_RESOURCE_VARIABLE_TYPE_STATIC) will be used. Static variables never
+        // change and are bound directly through the pipeline state object.
+        m_pPSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "Constants")->Set(m_VSConstants);
+
+        // Load Texture
+        TextureLoadInfo loadInfo;
+        loadInfo.IsSRGB = true;
+        RefCntAutoPtr<ITexture> Tex;
+        CreateTextureFromFile("C6GELogo.png", loadInfo, m_pDevice, &Tex);
+
+        // Get shader resource view from the texture
+        m_TextureSRV = Tex->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+
+        // Create a shader resource binding object and bind all static resources in it
+        m_pPSO->CreateShaderResourceBinding(&m_pSRB, true);
+
+        // Bind the texture to the shader resource binding
+        m_pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_Texture")->Set(m_TextureSRV);
+
+        // Layout of this structure matches the one we defined in the pipeline state
+        struct Vertex
+        {
+            float3 pos;
+            float2 uv;
+        };
+
+        // Cube vertices
+
+        //      (-1,+1,+1)________________(+1,+1,+1)
+        //               /|              /|
+        //              / |             / |
+        //             /  |            /  |
+        //            /   |           /   |
+        //(-1,-1,+1) /____|__________/(+1,-1,+1)
+        //           |    |__________|____|
+        //           |   /(-1,+1,-1) |    /(+1,+1,-1)
+        //           |  /            |   /
+        //           | /             |  /
+        //           |/              | /
+        //           /_______________|/
+        //        (-1,-1,-1)       (+1,-1,-1)
+        //
+
+        constexpr Vertex CubeVerts[24] =
+            {
+                // Front face
+                {float3{-1, -1, +1}, float2{0, 1}}, // Bottom-left
+                {float3{+1, -1, +1}, float2{1, 1}}, // Bottom-right  
+                {float3{+1, +1, +1}, float2{1, 0}}, // Top-right
+                {float3{-1, +1, +1}, float2{0, 0}}, // Top-left
+                
+                // Back face
+                {float3{+1, -1, -1}, float2{0, 1}}, // Bottom-left
+                {float3{-1, -1, -1}, float2{1, 1}}, // Bottom-right
+                {float3{-1, +1, -1}, float2{1, 0}}, // Top-right
+                {float3{+1, +1, -1}, float2{0, 0}}, // Top-left
+                
+                // Left face
+                {float3{-1, -1, -1}, float2{0, 1}}, // Bottom-left
+                {float3{-1, -1, +1}, float2{1, 1}}, // Bottom-right
+                {float3{-1, +1, +1}, float2{1, 0}}, // Top-right
+                {float3{-1, +1, -1}, float2{0, 0}}, // Top-left
+                
+                // Right face
+                {float3{+1, -1, +1}, float2{0, 1}}, // Bottom-left
+                {float3{+1, -1, -1}, float2{1, 1}}, // Bottom-right
+                {float3{+1, +1, -1}, float2{1, 0}}, // Top-right
+                {float3{+1, +1, +1}, float2{0, 0}}, // Top-left
+                
+                // Top face
+                {float3{-1, +1, +1}, float2{0, 1}}, // Bottom-left
+                {float3{+1, +1, +1}, float2{1, 1}}, // Bottom-right
+                {float3{+1, +1, -1}, float2{1, 0}}, // Top-right
+                {float3{-1, +1, -1}, float2{0, 0}}, // Top-left
+                
+                // Bottom face
+                {float3{-1, -1, -1}, float2{0, 1}}, // Bottom-left
+                {float3{+1, -1, -1}, float2{1, 1}}, // Bottom-right
+                {float3{+1, -1, +1}, float2{1, 0}}, // Top-right
+                {float3{-1, -1, +1}, float2{0, 0}}, // Top-left
+            };
+
+        // Create a vertex buffer that stores cube vertices
+        BufferDesc VertBuffDesc;
+        VertBuffDesc.Name = "Cube vertex buffer";
+        VertBuffDesc.Usage = USAGE_IMMUTABLE;
+        VertBuffDesc.BindFlags = BIND_VERTEX_BUFFER;
+        VertBuffDesc.Size = sizeof(CubeVerts);
+        BufferData VBData;
+        VBData.pData = CubeVerts;
+        VBData.DataSize = sizeof(CubeVerts);
+        m_pDevice->CreateBuffer(VertBuffDesc, &VBData, &m_CubeVertexBuffer);
+
+    // clang-format off
+    constexpr Uint32 Indices[] =
+    {
+        // Front face
+        0, 1, 2,  0, 2, 3,
+        // Back face  
+        4, 5, 6,  4, 6, 7,
+        // Left face
+        8, 9, 10,  8, 10, 11,
+        // Right face
+        12, 13, 14,  12, 14, 15,
+        // Top face
+        16, 17, 18,  16, 18, 19,
+        // Bottom face
+        20, 21, 22,  20, 22, 23
+    };
+        // clang-format on
+
+        BufferDesc IndBuffDesc;
+        IndBuffDesc.Name = "Cube index buffer";
+        IndBuffDesc.Usage = USAGE_IMMUTABLE;
+        IndBuffDesc.BindFlags = BIND_INDEX_BUFFER;
+        IndBuffDesc.Size = sizeof(Indices);
+        BufferData IBData;
+        IBData.pData = Indices;
+        IBData.DataSize = sizeof(Indices);
+        m_pDevice->CreateBuffer(IndBuffDesc, &IBData, &m_CubeIndexBuffer);
+    }
+
+    void C6GERender::CreateFramebuffer()
+    {
+        // Create render target texture
+        TextureDesc RTTexDesc;
+        RTTexDesc.Name = "Framebuffer render target";
+        RTTexDesc.Type = RESOURCE_DIM_TEX_2D;
+        RTTexDesc.Width = m_FramebufferWidth;
+        RTTexDesc.Height = m_FramebufferHeight;
+        RTTexDesc.Format = m_pSwapChain->GetDesc().ColorBufferFormat; // Match swap chain format
+        RTTexDesc.Usage = USAGE_DEFAULT;
+        RTTexDesc.BindFlags = BIND_RENDER_TARGET | BIND_SHADER_RESOURCE;
+        RTTexDesc.MipLevels = 1;
+        RTTexDesc.SampleCount = 1;
+
+        m_pDevice->CreateTexture(RTTexDesc, nullptr, &m_pFramebufferTexture);
+
+        // Create render target view
+        TextureViewDesc RTVDesc;
+        RTVDesc.ViewType = TEXTURE_VIEW_RENDER_TARGET;
+        RTVDesc.Format = RTTexDesc.Format;
+        m_pFramebufferTexture->CreateView(RTVDesc, &m_pFramebufferRTV);
+
+        // Create shader resource view
+        TextureViewDesc SRVDesc;
+        SRVDesc.ViewType = TEXTURE_VIEW_SHADER_RESOURCE;
+        SRVDesc.Format = RTTexDesc.Format;
+        m_pFramebufferTexture->CreateView(SRVDesc, &m_pFramebufferSRV);
+
+        // Create depth buffer texture
+        TextureDesc DepthTexDesc;
+        DepthTexDesc.Name = "Framebuffer depth buffer";
+        DepthTexDesc.Type = RESOURCE_DIM_TEX_2D;
+        DepthTexDesc.Width = m_FramebufferWidth;
+        DepthTexDesc.Height = m_FramebufferHeight;
+        DepthTexDesc.Format = m_pSwapChain->GetDesc().DepthBufferFormat; // Match swap chain depth format
+        DepthTexDesc.Usage = USAGE_DEFAULT;
+        DepthTexDesc.BindFlags = BIND_DEPTH_STENCIL;
+        DepthTexDesc.MipLevels = 1;
+        DepthTexDesc.SampleCount = 1;
+
+        m_pDevice->CreateTexture(DepthTexDesc, nullptr, &m_pFramebufferDepth);
+
+        // Create depth-stencil view
+        TextureViewDesc DSVDesc;
+        DSVDesc.ViewType = TEXTURE_VIEW_DEPTH_STENCIL;
+        DSVDesc.Format = DepthTexDesc.Format;
+        m_pFramebufferDepth->CreateView(DSVDesc, &m_pFramebufferDSV);
+    }
+
+    void C6GERender::ResizeFramebuffer(Uint32 Width, Uint32 Height)
+    {
+        if (Width == m_FramebufferWidth && Height == m_FramebufferHeight)
+            return; // No need to resize
+
+        m_FramebufferWidth = Width;
+        m_FramebufferHeight = Height;
+
+        // Release old resources
+        m_pFramebufferTexture.Release();
+        m_pFramebufferRTV.Release();
+        m_pFramebufferSRV.Release();
+        m_pFramebufferDepth.Release();
+        m_pFramebufferDSV.Release();
+
+        // Recreate framebuffer with new size
+        CreateFramebuffer();
+    }
+
+    void C6GERender::PopulateInstanceBuffer()
+    {
+    // Populate instance data buffer
+    const size_t          zGridSize = static_cast<size_t>(m_GridSize);
+    std::vector<float4x4> InstanceData(zGridSize * zGridSize * zGridSize);
+
+    float fGridSize = static_cast<float>(m_GridSize);
+
+    std::mt19937 gen; // Standard mersenne_twister_engine. Use default seed
+                      // to generate consistent distribution.
+
+    std::uniform_real_distribution<float> scale_distr(0.3f, 1.0f);
+    std::uniform_real_distribution<float> offset_distr(-0.15f, +0.15f);
+    std::uniform_real_distribution<float> rot_distr(-PI_F, +PI_F);
+
+    float BaseScale = 0.6f / fGridSize;
+    int   instId    = 0;
+    for (int x = 0; x < m_GridSize; ++x)
+    {
+        for (int y = 0; y < m_GridSize; ++y)
+        {
+            for (int z = 0; z < m_GridSize; ++z)
+            {
+                // Add random offset from central position in the grid
+                float xOffset = 2.f * (x + 0.5f + offset_distr(gen)) / fGridSize - 1.f;
+                float yOffset = 2.f * (y + 0.5f + offset_distr(gen)) / fGridSize - 1.f;
+                float zOffset = 2.f * (z + 0.5f + offset_distr(gen)) / fGridSize - 1.f;
+                // Random scale
+                float scale = BaseScale * scale_distr(gen);
+                // Random rotation
+                float4x4 rotation = float4x4::RotationX(rot_distr(gen));
+                rotation *= float4x4::RotationY(rot_distr(gen));
+                rotation *= float4x4::RotationZ(rot_distr(gen));
+                // Combine rotation, scale and translation
+                float4x4 matrix        = rotation * float4x4::Scale(scale, scale, scale) * float4x4::Translation(xOffset, yOffset, zOffset);
+                InstanceData[instId++] = matrix;
+            }
         }
     }
-}
+    // Update instance data buffer
+    Uint32 DataSize = static_cast<Uint32>(sizeof(InstanceData[0]) * InstanceData.size());
+    m_pImmediateContext->UpdateBuffer(m_InstanceBuffer, 0, DataSize, InstanceData.data(), RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    }
 
-
-
-
-// Render a frame
-void ShadowsSample::Render()
-{
-    if (RenderShadows && m_ShadowFeature)
-        m_ShadowFeature->RenderShadows();
-
-    // Reset default framebuffer
-    ITextureView* pRTV = m_pSwapChain->GetCurrentBackBufferRTV();
-    ITextureView* pDSV = m_pSwapChain->GetDepthBufferDSV();
+    // Render a frame
+    void C6GERender::Render()
+    {
+    // Render to framebuffer instead of swap chain
+    ITextureView* pRTV = m_pFramebufferRTV;
+    ITextureView* pDSV = m_pFramebufferDSV;
+    
+    // Set the render targets BEFORE clearing them to avoid warnings
     m_pImmediateContext->SetRenderTargets(1, &pRTV, pDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-
-    // Clear the back buffer
-    const float ClearColor[] = {0.23f, 0.5f, 0.74f, 1.0f};
-    m_pImmediateContext->ClearRenderTarget(pRTV, ClearColor, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    
+    // Clear the framebuffer
+    float4 ClearColor = {0.350f, 0.350f, 0.350f, 1.0f};
+    if (m_ConvertPSOutputToGamma)
+    {
+        // If manual gamma correction is required, we need to clear the render target with sRGB color
+        ClearColor = LinearToSRGB(ClearColor);
+    }
+    m_pImmediateContext->ClearRenderTarget(pRTV, ClearColor.Data(), RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     m_pImmediateContext->ClearDepthStencil(pDSV, CLEAR_DEPTH_FLAG, 1.f, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
     {
-        MapHelper<LightAttribs> LightData(m_pImmediateContext, m_LightAttribsCB, MAP_WRITE, MAP_FLAG_DISCARD);
-        *LightData = m_LightAttribs;
+        // Map the buffer and write current world-view-projection matrix
+        MapHelper<float4x4> CBConstants(m_pImmediateContext, m_VSConstants, MAP_WRITE, MAP_FLAG_DISCARD);
+        CBConstants[0] = m_ViewProjMatrix;
+        CBConstants[1] = m_RotationMatrix;
     }
+
+    // Bind vertex, instance and index buffers
+    const Uint64 offsets[] = {0, 0};
+    IBuffer*     pBuffs[]  = {m_CubeVertexBuffer, m_InstanceBuffer};
+    m_pImmediateContext->SetVertexBuffers(0, sizeof(pBuffs)/sizeof(pBuffs[0]), pBuffs, offsets, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+    m_pImmediateContext->SetIndexBuffer(m_CubeIndexBuffer, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    // Set the pipeline state
+    m_pImmediateContext->SetPipelineState(m_pPSO);
+    // Commit shader resources. RESOURCE_STATE_TRANSITION_MODE_TRANSITION mode
+    // makes sure that resources are transitioned to required states.
+    m_pImmediateContext->CommitShaderResources(m_pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    DrawIndexedAttribs DrawAttrs;       // This is an indexed draw call
+    DrawAttrs.IndexType    = VT_UINT32; // Index type
+    DrawAttrs.NumIndices   = 36;
+    DrawAttrs.NumInstances = m_GridSize * m_GridSize * m_GridSize; // The number of instances
+    // Verify the state of vertex and index buffers
+    DrawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
+    m_pImmediateContext->DrawIndexed(DrawAttrs);
+    }
+
+    void C6GERender::DrawMesh(IDeviceContext *pCtx, bool bIsShadowPass, const ViewFrustumExt &Frustum)
+    {
+    }
+
+    void C6GERender::Update(double CurrTime, double ElapsedTime, bool DoUpdateUI)
+    {
+    SampleBase::Update(CurrTime, ElapsedTime, DoUpdateUI);
+
+    // Set cube view matrix
+    float4x4 View = float4x4::RotationX(-0.6f) * float4x4::Translation(0.f, 0.f, 4.0f);
 
     // Get pretransform matrix that rotates the scene according the surface orientation
     float4x4 SrfPreTransform = GetSurfacePretransformMatrix(float3{0, 0, 1});
 
-    const float4x4  CameraView     = m_Camera.GetViewMatrix() * SrfPreTransform;
-    const float4x4& CameraWorld    = m_Camera.GetWorldMatrix();
-    float3          CameraWorldPos = float3::MakeVector(CameraWorld[3]);
-    const float4x4& Proj           = m_Camera.GetProjMatrix();
+    // Get projection matrix adjusted to the current screen orientation
+    float4x4 Proj = GetAdjustedProjectionMatrix(PI_F / 4.0f, 0.1f, 100.f);
 
-    float4x4 CameraViewProj = CameraView * Proj;
+    // Compute view-projection matrix
+    m_ViewProjMatrix = View * SrfPreTransform * Proj;
 
-    {
-        MapHelper<CameraAttribs> CamAttribs(m_pImmediateContext, m_CameraAttribsCB, MAP_WRITE, MAP_FLAG_DISCARD);
-        WriteShaderMatrix(&CamAttribs->mProj, Proj, !m_PackMatrixRowMajor);
-        WriteShaderMatrix(&CamAttribs->mViewProj, CameraViewProj, !m_PackMatrixRowMajor);
-        WriteShaderMatrix(&CamAttribs->mViewProjInv, CameraViewProj.Inverse(), !m_PackMatrixRowMajor);
-        CamAttribs->f4Position = float4(CameraWorldPos, 1);
+    // Global rotation matrix
+    m_RotationMatrix = float4x4::RotationY(static_cast<float>(CurrTime) * 1.0f) * float4x4::RotationX(-static_cast<float>(CurrTime) * 0.25f);
     }
 
-    ViewFrustumExt Frutstum;
-    ExtractViewFrustumPlanesFromMatrix(CameraViewProj, Frutstum, m_pDevice->GetDeviceInfo().IsGLDevice());
-    DrawMesh(m_pImmediateContext, false, Frutstum);
-}
-
-
-void ShadowsSample::DrawMesh(IDeviceContext* pCtx, bool bIsShadowPass, const ViewFrustumExt& Frustum)
-{
-    // Note that Vulkan requires shadow map to be transitioned to DEPTH_READ state, not SHADER_RESOURCE
-    auto& SRBs = (bIsShadowPass ? m_ShadowSRBs : m_SRBs);
-    if (SRBs.empty() || m_PSOIndex.empty() ||
-        (bIsShadowPass ? m_RenderMeshShadowPSO.empty() : m_RenderMeshPSO.empty()))
+    void C6GERender::WindowResize(Uint32 Width, Uint32 Height)
     {
-        return; // Nothing to draw or resources not initialized
-    }
+        if (!m_pSwapChain || !m_pDevice)
+            return;
 
-    pCtx->TransitionShaderResources(SRBs[0]);
-
-    for (Uint32 meshIdx = 0; meshIdx < m_Mesh.GetNumMeshes(); ++meshIdx)
-    {
-        const DXSDKMESH_MESH& SubMesh = m_Mesh.GetMesh(meshIdx);
-        BoundBox              BB;
-        BB.Min = SubMesh.BoundingBoxCenter - SubMesh.BoundingBoxExtents * 0.5f;
-        BB.Max = SubMesh.BoundingBoxCenter + SubMesh.BoundingBoxExtents * 0.5f;
-        // Notice that for shadow pass we test against frustum with open near plane
-        if (GetBoxVisibility(Frustum, BB, bIsShadowPass ? FRUSTUM_PLANE_FLAG_OPEN_NEAR : FRUSTUM_PLANE_FLAG_FULL_FRUSTUM) == BoxVisibility::Invisible)
-            continue;
-
-        IBuffer* pVBs[] = {m_Mesh.GetMeshVertexBuffer(meshIdx, 0)};
-        pCtx->SetVertexBuffers(0, 1, pVBs, nullptr, RESOURCE_STATE_TRANSITION_MODE_VERIFY, SET_VERTEX_BUFFERS_FLAG_RESET);
-
-        IBuffer*   pIB      = m_Mesh.GetMeshIndexBuffer(meshIdx);
-        VALUE_TYPE IBFormat = m_Mesh.GetIBFormat(meshIdx);
-
-        pCtx->SetIndexBuffer(pIB, 0, RESOURCE_STATE_TRANSITION_MODE_VERIFY);
-
-        Uint32 VBIndex0 = SubMesh.VertexBuffers[0];
-        if (VBIndex0 >= m_PSOIndex.size())
-            continue;
-        Uint32 PSOIndex = m_PSOIndex[VBIndex0];
-        auto&  PSOArray = (bIsShadowPass ? m_RenderMeshShadowPSO : m_RenderMeshPSO);
-        if (PSOIndex >= PSOArray.size())
-            continue;
-        auto&  pPSO     = PSOArray[PSOIndex];
-        pCtx->SetPipelineState(pPSO);
-
-        // Draw all subsets
-        for (Uint32 subsetIdx = 0; subsetIdx < SubMesh.NumSubsets; ++subsetIdx)
+        float NearPlane = 0.1f;
+        float FarPlane = 250.f;
+        float AspectRatio = static_cast<float>(Width) / static_cast<float>(Height);
+        m_Camera.SetProjAttribs(NearPlane, FarPlane, AspectRatio, PI_F / 4.f,
+                                m_pSwapChain->GetDesc().PreTransform, m_pDevice->GetDeviceInfo().NDC.MinZ == -1);
+        
+        // Resize framebuffer if dimensions changed
+        if (Width != m_FramebufferWidth || Height != m_FramebufferHeight)
         {
-            const DXSDKMESH_SUBSET& Subset = m_Mesh.GetSubset(meshIdx, subsetIdx);
-            if (Subset.MaterialID < SRBs.size())
-                pCtx->CommitShaderResources(SRBs[Subset.MaterialID], RESOURCE_STATE_TRANSITION_MODE_VERIFY);
-            else
-                continue;
-
-            DrawIndexedAttribs drawAttrs(static_cast<Uint32>(Subset.IndexCount), IBFormat, DRAW_FLAG_VERIFY_ALL);
-            drawAttrs.FirstIndexLocation = static_cast<Uint32>(Subset.IndexStart);
-            pCtx->DrawIndexed(drawAttrs);
+            m_FramebufferWidth = Width;
+            m_FramebufferHeight = Height;
+            
+            // Release old framebuffer resources
+            m_pFramebufferTexture.Release();
+            m_pFramebufferRTV.Release();
+            m_pFramebufferSRV.Release();
+            m_pFramebufferDepth.Release();
+            m_pFramebufferDSV.Release();
+            
+            // Recreate framebuffer with new dimensions
+            CreateFramebuffer();
         }
     }
-}
-
-void ShadowsSample::Update(double CurrTime, double ElapsedTime, bool DoUpdateUI)
-{
-    SampleBase::Update(CurrTime, ElapsedTime, DoUpdateUI);
-
-    m_Camera.Update(m_InputController, static_cast<float>(ElapsedTime));
-    {
-        const MouseState& mouseState = m_InputController.GetMouseState();
-        if (m_LastMouseState.PosX >= 0 &&
-            m_LastMouseState.PosY >= 0 &&
-            (m_LastMouseState.ButtonFlags & MouseState::BUTTON_FLAG_RIGHT) != 0)
-        {
-            constexpr float LightRotationSpeed = 0.001f;
-
-            float   fYawDelta   = (mouseState.PosX - m_LastMouseState.PosX) * LightRotationSpeed;
-            float   fPitchDelta = (mouseState.PosY - m_LastMouseState.PosY) * LightRotationSpeed;
-            float3& f3LightDir  = reinterpret_cast<float3&>(m_LightAttribs.f4Direction);
-
-            f3LightDir = float4(f3LightDir, 0) *
-                float4x4::RotationArbitrary(m_Camera.GetWorldUp(), fYawDelta) *
-                float4x4::RotationArbitrary(m_Camera.GetWorldRight(), fPitchDelta);
-        }
-
-        m_LastMouseState = mouseState;
-    }
-
-    if (RenderShadows && m_ShadowFeature)
-    {
-        m_ShadowFeature->UpdateShadows();
-    }
-}
-
-void ShadowsSample::WindowResize(Uint32 Width, Uint32 Height)
-{
-    float NearPlane   = 0.1f;
-    float FarPlane    = 250.f;
-    float AspectRatio = static_cast<float>(Width) / static_cast<float>(Height);
-    m_Camera.SetProjAttribs(NearPlane, FarPlane, AspectRatio, PI_F / 4.f,
-                            m_pSwapChain->GetDesc().PreTransform, m_pDevice->GetDeviceInfo().NDC.MinZ == -1);
-}
 
 } // namespace Diligent
