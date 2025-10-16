@@ -27,94 +27,140 @@
 
 #pragma once
 
+#include <atomic>
+#include <vector>
+#include <thread>
+#include <mutex>
 #include "SampleBase.hpp"
 #include "FirstPersonCamera.hpp"
 #include "DiligentTools/AssetLoader/interface/DXSDKMeshLoader.hpp"
 #include "AdvancedMath.hpp"
+#include "BasicMath.hpp"
+#include "ThreadSignal.hpp"
 
 namespace Diligent
 {
 
-class C6GERender final : public SampleBase
-{
-    // Play/pause icon textures
-    RefCntAutoPtr<ITextureView> m_PlayIconSRV;
-    RefCntAutoPtr<ITextureView> m_PauseIconSRV;
-public:
-    // Play/pause state for editor runtime
-    enum class PlayState { Paused, Playing };
-    static PlayState playState;
+    class C6GERender final : public SampleBase
+    {
+        // Play/pause icon textures
+        RefCntAutoPtr<ITextureView> m_PlayIconSRV;
+        RefCntAutoPtr<ITextureView> m_PauseIconSRV;
 
-    static void TogglePlayState();
-    static bool IsPlaying() { return playState == PlayState::Playing; }
-    static bool IsPaused() { return playState == PlayState::Paused; }
-    virtual void Initialize(const SampleInitInfo& InitInfo) override final;
+    public:
+        // Play/pause state for editor runtime
+        enum class PlayState
+        {
+            Paused,
+            Playing
+        };
+        static PlayState playState;
 
-    void ModifyEngineInitInfo(const ModifyEngineInitInfoAttribs& Attribs) override final;
+        static void TogglePlayState();
+        static bool IsPlaying() { return playState == PlayState::Playing; }
+        static bool IsPaused() { return playState == PlayState::Paused; }
+        virtual void Initialize(const SampleInitInfo &InitInfo) override final;
 
-    virtual ~C6GERender();
+        void ModifyEngineInitInfo(const ModifyEngineInitInfoAttribs &Attribs) override final;
 
-    void UpdateUI();
+        virtual ~C6GERender();
 
-    void UpdateViewportUI();
+        void UpdateUI();
 
-    void DXSDKMESH_VERTEX_ELEMENTtoInputLayoutDesc(const DXSDKMESH_VERTEX_ELEMENT* VertexElement,
-                                               Uint32 Stride,
-                                               InputLayoutDesc& Layout,
-                                               std::vector<LayoutElement>& Elements);
+        void UpdateViewportUI();
 
-    void CreatePipelineStates();
+        void DXSDKMESH_VERTEX_ELEMENTtoInputLayoutDesc(const DXSDKMESH_VERTEX_ELEMENT *VertexElement,
+                                                       Uint32 Stride,
+                                                       InputLayoutDesc &Layout,
+                                                       std::vector<LayoutElement> &Elements);
 
-    void CreateInstanceBuffer();
+        void Multithreading();
 
-    void LoadTextures();
+        void CreatePipelineState(std::vector<StateTransitionDesc> &Barriers);
 
-    void PopulateInstanceBuffer();
+        void CreateInstanceBuffer();
 
-    void CreateFramebuffer();
+        void LoadTextures(std::vector<StateTransitionDesc> &Barriers);
 
-    void ResizeFramebuffer(Uint32 Width, Uint32 Height);
+        void PopulateInstanceBuffer();
 
-    void WindowResize(Uint32 Width, Uint32 Height) override final;
+        void StartWorkerThreads(size_t NumThreads);
 
-    virtual void Render() override final;
-    virtual void Update(double CurrTime, double ElapsedTime, bool DoUpdateUI) override final;
+        void StopWorkerThreads();
 
-    virtual const Char* GetSampleName() const override final { return "C6GERender"; }
+    static void WorkerThreadFunc(C6GERender *pThis, Uint32 ThreadNum);
 
-    // Get framebuffer texture for ImGui viewport
-    ITextureView* GetFramebufferSRV() const { return m_pFramebufferSRV; }
-    Uint32 GetFramebufferWidth() const { return m_FramebufferWidth; }
-    Uint32 GetFramebufferHeight() const { return m_FramebufferHeight; }
+        void RenderSubset(IDeviceContext *pCtx, Uint32 Subset);
 
-    static bool IsRuntime;
+        void CreateFramebuffer();
 
-private:
-    RefCntAutoPtr<IPipelineState> m_pPSO;
-    RefCntAutoPtr<IShaderResourceBinding> m_pSRB;
-    RefCntAutoPtr<IBuffer> m_VSConstants;
-    RefCntAutoPtr<IBuffer> m_CubeVertexBuffer;
-    RefCntAutoPtr<IBuffer>                m_InstanceBuffer;
-    RefCntAutoPtr<ITextureView>           m_TextureSRV;
-    float4x4 m_WorldViewProjMatrix = float4x4::Identity();
-    FirstPersonCamera m_Camera;
-    RefCntAutoPtr<IBuffer> m_CubeIndexBuffer;
+        void ResizeFramebuffer(Uint32 Width, Uint32 Height);
 
-    // Framebuffer for off-screen rendering
-    RefCntAutoPtr<ITexture>     m_pFramebufferTexture;
-    RefCntAutoPtr<ITextureView> m_pFramebufferRTV;
-    RefCntAutoPtr<ITextureView> m_pFramebufferSRV;
-    RefCntAutoPtr<ITexture>     m_pFramebufferDepth;
-    RefCntAutoPtr<ITextureView> m_pFramebufferDSV;
-    Uint32                      m_FramebufferWidth = 800;
-    Uint32                      m_FramebufferHeight = 600;
+        void WindowResize(Uint32 Width, Uint32 Height) override final;
 
-    float4x4             m_ViewProjMatrix;
-    float4x4             m_RotationMatrix;
-    int                  m_GridSize   = 5;
-    static constexpr int MaxGridSize  = 32;
-    static constexpr int MaxInstances = MaxGridSize * MaxGridSize * MaxGridSize;
-    static constexpr int NumTextures  = 4;
-};
+        virtual void Render() override final;
+        virtual void Update(double CurrTime, double ElapsedTime, bool DoUpdateUI) override final;
+
+        virtual const Char *GetSampleName() const override final { return "C6GERender"; }
+
+        // Get framebuffer texture for ImGui viewport
+        ITextureView *GetFramebufferSRV() const { return m_pFramebufferSRV; }
+        Uint32 GetFramebufferWidth() const { return m_FramebufferWidth; }
+        Uint32 GetFramebufferHeight() const { return m_FramebufferHeight; }
+
+        static bool IsRuntime;
+
+    private:
+        Threading::Signal m_RenderSubsetSignal;
+        Threading::Signal m_ExecuteCommandListsSignal;
+        Threading::Signal m_GotoNextFrameSignal;
+        std::atomic_int m_NumThreadsCompleted;
+        std::atomic_int m_NumThreadsReady;
+        std::vector<std::thread> m_WorkerThreads;
+    // Raw pointers to deferred contexts assigned to worker threads.
+    // These are non-owning pointers into SampleBase::m_pDeferredContexts.
+    std::vector<IDeviceContext*> m_WorkerDeferredCtxs;
+        FirstPersonCamera m_Camera;
+
+        std::vector<RefCntAutoPtr<ICommandList>> m_CmdLists;
+        std::vector<ICommandList *> m_CmdListPtrs;
+
+        RefCntAutoPtr<IPipelineState> m_pPSO;
+        RefCntAutoPtr<IBuffer> m_CubeVertexBuffer;
+        RefCntAutoPtr<IBuffer> m_CubeIndexBuffer;
+        RefCntAutoPtr<IBuffer> m_InstanceConstants;
+        RefCntAutoPtr<IBuffer> m_VSConstants;
+
+        // Framebuffer for off-screen rendering
+        RefCntAutoPtr<ITexture> m_pFramebufferTexture;
+        RefCntAutoPtr<ITextureView> m_pFramebufferRTV;
+        RefCntAutoPtr<ITextureView> m_pFramebufferSRV;
+        RefCntAutoPtr<ITexture> m_pFramebufferDepth;
+        RefCntAutoPtr<ITextureView> m_pFramebufferDSV;
+        Uint32 m_FramebufferWidth = 800;
+        Uint32 m_FramebufferHeight = 600;
+
+        static constexpr int NumTextures = 4;
+
+        RefCntAutoPtr<IShaderResourceBinding> m_SRB[NumTextures];
+        RefCntAutoPtr<ITextureView> m_TextureSRV[NumTextures];
+
+        float4x4 m_ViewProjMatrix;
+        float4x4 m_RotationMatrix;
+        int m_GridSize = 5;
+
+        int m_MaxThreads = 8;
+        int m_NumWorkerThreads = 4;
+
+        struct InstanceData
+        {
+            float4x4 Matrix;
+            int TextureInd = 0;
+        };
+        std::vector<InstanceData> m_Instances;
+
+        static constexpr size_t MaxInstances = 32 * 32 * 32;
+        Diligent::RefCntAutoPtr<Diligent::IBuffer> m_InstanceBuffer;
+    };
 
 } // namespace Diligent

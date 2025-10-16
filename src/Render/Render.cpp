@@ -51,6 +51,8 @@ namespace Diligent
 #include "ColorConversion.h"
 #include "TextureUtilities.h"
 #include <random>
+#include <string>
+#include <algorithm>
 
 namespace Diligent
 {
@@ -91,6 +93,13 @@ namespace Diligent
 
         Attribs.EngineCI.Features.DepthClamp = DEVICE_FEATURE_STATE_OPTIONAL;
 
+        // Request deferred contexts from the engine so worker threads can use them.
+        // Reserve at least 2 deferred contexts or (hardware_concurrency - 1), whichever is larger.
+        {
+            Uint32 NumDeferred = std::max(std::thread::hardware_concurrency() > 1 ? std::thread::hardware_concurrency() - 1 : 1u, 2u);
+            Attribs.EngineCI.NumDeferredContexts = NumDeferred;
+        }
+
 #if D3D12_SUPPORTED
         if (Attribs.DeviceType == RENDER_DEVICE_TYPE_D3D12)
         {
@@ -101,9 +110,23 @@ namespace Diligent
 #endif
     }
 
+    void C6GERender::Multithreading()
+    {
+        // TODO: StopWorkerThreads();
+    }
+
     void C6GERender::Initialize(const SampleInitInfo &InitInfo)
     {
         SampleBase::Initialize(InitInfo);
+
+        // Limit maximum worker threads to the number of valid (non-null) deferred contexts provided by the engine.
+        int NumValidDeferredCtx = 0;
+        for (size_t i = 0; i < m_pDeferredContexts.size(); ++i)
+            if (m_pDeferredContexts[i])
+                ++NumValidDeferredCtx;
+        m_MaxThreads = NumValidDeferredCtx;
+        if (m_NumWorkerThreads > m_MaxThreads)
+            m_NumWorkerThreads = m_MaxThreads;
 
         // Load play/pause icons (after m_pDevice is valid)
         TextureLoadInfo loadInfo;
@@ -129,10 +152,27 @@ namespace Diligent
         m_Camera.SetPos(float3(0.f, 0.f, 5.f));
         m_Camera.SetRotation(0.f, 0.f);
 
-        CreatePipelineStates();
+        std::vector<StateTransitionDesc> Barriers;
+
+        CreatePipelineState(Barriers);
 
         CreateInstanceBuffer();
-        LoadTextures();
+        LoadTextures(Barriers);
+
+        // Execute all barriers after LoadTextures so texture transitions are included in Barriers
+        if (!Barriers.empty())
+            m_pImmediateContext->TransitionResourceStates(static_cast<Uint32>(Barriers.size()), Barriers.data());
+
+        // Ensure dynamic uniform buffers are allocated on Vulkan backend by mapping them once.
+        // Memory for dynamic buffers is allocated when they are first mapped.
+        if (m_InstanceConstants)
+        {
+            MapHelper<float4x4> InitInstCB(m_pImmediateContext, m_InstanceConstants, MAP_WRITE, MAP_FLAG_DISCARD);
+            // Initialize with identity to allocate memory; actual data will be updated per-draw.
+            *InitInstCB = float4x4::Identity();
+        }
+
+        // TODO: StartWorkerThreads(m_NumWorkerThreads);
 
         // Ensure framebuffer is created after swap chain and device are ready.
         if (m_pSwapChain)
@@ -243,6 +283,30 @@ namespace Diligent
                 {
                     PopulateInstanceBuffer();
                 }
+            }
+            {
+                // Show diagnostics about deferred contexts so the user knows why worker threads may be unavailable
+                int totalDeferred = static_cast<int>(m_pDeferredContexts.size());
+                int validDeferred = 0;
+                for (size_t i = 0; i < m_pDeferredContexts.size(); ++i)
+                    if (m_pDeferredContexts[i])
+                        ++validDeferred;
+
+                ImGui::Text("Deferred contexts: %d total, %d valid", totalDeferred, validDeferred);
+                if (validDeferred == 0)
+                {
+                    ImGui::TextWrapped("Worker threads are not available because no valid deferred contexts were provided by the engine for the current backend.\nIf you expect worker threads to be available, rebuild after enabling deferred contexts in ModifyEngineInitInfo or use a backend that supports deferred contexts (Vulkan/D3D12).\n");
+                }
+
+                // Allow the user to change the slider up to the total number of deferred contexts
+                // even if some of them are null. Starting threads will only use valid contexts.
+                ImGui::BeginDisabled(totalDeferred == 0);
+                if (ImGui::SliderInt("Worker Threads", &m_NumWorkerThreads, 0, totalDeferred))
+                {
+                    StopWorkerThreads();
+                    StartWorkerThreads(m_NumWorkerThreads);
+                }
+                ImGui::EndDisabled();
             }
             ImGui::End();
         }
@@ -431,34 +495,8 @@ namespace Diligent
     {
     }
 
-    void C6GERender::CreatePipelineStates()
+    void C6GERender::CreatePipelineState(std::vector<StateTransitionDesc> &Barriers)
     {
-        // clang-format off
-        // Define vertex shader input layout
-        // This tutorial uses two types of input: per-vertex data and per-instance data.
-        LayoutElement LayoutElems[] =
-        {
-            // Per-vertex data - first buffer slot
-            // Attribute 0 - vertex position
-            LayoutElement{0, 0, 3, VT_FLOAT32, False},
-            // Attribute 1 - texture coordinates
-            LayoutElement{1, 0, 2, VT_FLOAT32, False},
-
-            // Per-instance data - second buffer slot
-            // We will use four attributes to encode instance-specific 4x4 transformation matrix
-            // Attribute 2 - first row
-            LayoutElement{2, 1, 4, VT_FLOAT32, False, INPUT_ELEMENT_FREQUENCY_PER_INSTANCE},
-            // Attribute 3 - second row
-            LayoutElement{3, 1, 4, VT_FLOAT32, False, INPUT_ELEMENT_FREQUENCY_PER_INSTANCE},
-            // Attribute 4 - third row
-            LayoutElement{4, 1, 4, VT_FLOAT32, False, INPUT_ELEMENT_FREQUENCY_PER_INSTANCE},
-            // Attribute 5 - fourth row
-            LayoutElement{5, 1, 4, VT_FLOAT32, False, INPUT_ELEMENT_FREQUENCY_PER_INSTANCE},
-            // Attribute 6 - texture array index
-            LayoutElement{6, 1, 1, VT_FLOAT32, False, INPUT_ELEMENT_FREQUENCY_PER_INSTANCE},
-        };
-        // clang-format on
-
         // Create a shader source stream factory to load shaders from files.
         RefCntAutoPtr<IShaderSourceInputStreamFactory> pShaderSourceFactory;
         m_pEngineFactory->CreateDefaultShaderSourceStreamFactory(nullptr, &pShaderSourceFactory);
@@ -470,23 +508,23 @@ namespace Diligent
         CubePsoCI.pShaderSourceFactory = pShaderSourceFactory;
         CubePsoCI.VSFilePath = "cube.vsh";
         CubePsoCI.PSFilePath = "cube.psh";
-        CubePsoCI.ExtraLayoutElements = LayoutElems;
-        CubePsoCI.NumExtraLayoutElements = (sizeof(LayoutElems) / sizeof(LayoutElems[0]));
+        CubePsoCI.Components = GEOMETRY_PRIMITIVE_VERTEX_FLAG_POS_TEX;
 
         m_pPSO = TexturedCube::CreatePipelineState(CubePsoCI, m_ConvertPSOutputToGamma);
 
         // Create dynamic uniform buffer that will store our transformation matrix
         // Dynamic buffers can be frequently updated by the CPU
         CreateUniformBuffer(m_pDevice, sizeof(float4x4) * 2, "VS constants CB", &m_VSConstants);
+        CreateUniformBuffer(m_pDevice, sizeof(float4x4), "Instance constants CB", &m_InstanceConstants);
+        // Explicitly transition the buffers to RESOURCE_STATE_CONSTANT_BUFFER state
+        Barriers.emplace_back(m_VSConstants, RESOURCE_STATE_UNKNOWN, RESOURCE_STATE_CONSTANT_BUFFER, STATE_TRANSITION_FLAG_UPDATE_STATE);
+        Barriers.emplace_back(m_InstanceConstants, RESOURCE_STATE_UNKNOWN, RESOURCE_STATE_CONSTANT_BUFFER, STATE_TRANSITION_FLAG_UPDATE_STATE);
 
-        // Since we did not explicitly specify the type for 'Constants' variable, default
-        // type (SHADER_RESOURCE_VARIABLE_TYPE_STATIC) will be used. Static variables
+        // Since we did not explicitly specify the type for 'Constants' and 'InstanceData' variables,
+        // default type (SHADER_RESOURCE_VARIABLE_TYPE_STATIC) will be used. Static variables
         // never change and are bound directly to the pipeline state object.
         m_pPSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "Constants")->Set(m_VSConstants);
-
-        // Since we are using mutable variable, we must create a shader resource binding object
-        // http://diligentgraphics.com/2016/03/23/resource-binding-model-in-diligent-engine-2-0/
-        m_pPSO->CreateShaderResourceBinding(&m_pSRB, true);
+        m_pPSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "InstanceData")->Set(m_InstanceConstants);
     }
 
     void C6GERender::CreateFramebuffer()
@@ -582,57 +620,38 @@ namespace Diligent
         PopulateInstanceBuffer();
     }
 
-    void C6GERender::LoadTextures()
+    void C6GERender::LoadTextures(std::vector<StateTransitionDesc> &Barriers)
     {
-        std::vector<RefCntAutoPtr<ITextureLoader>> TexLoaders(NumTextures);
         // Load textures
         for (int tex = 0; tex < NumTextures; ++tex)
         {
-            // Create loader for the current texture
+            // Load current texture
             std::stringstream FileNameSS;
             FileNameSS << "C6GELogo" << tex << ".png";
-            const auto FileName = FileNameSS.str();
-            TextureLoadInfo LoadInfo;
-            LoadInfo.IsSRGB = true;
+            std::string FileName = FileNameSS.str();
 
-            CreateTextureLoaderFromFile(FileName.c_str(), IMAGE_FILE_FORMAT_UNKNOWN, LoadInfo, &TexLoaders[tex]);
-            VERIFY_EXPR(TexLoaders[tex]);
-            VERIFY(tex == 0 || TexLoaders[tex]->GetTextureDesc() == TexLoaders[0]->GetTextureDesc(), "All textures must be same size");
+            RefCntAutoPtr<ITexture> SrcTex = TexturedCube::LoadTexture(m_pDevice, FileName.c_str());
+            // Get shader resource view from the texture
+            m_TextureSRV[tex] = SrcTex->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+            // Transition textures to shader resource state
+            Barriers.emplace_back(SrcTex, RESOURCE_STATE_UNKNOWN, RESOURCE_STATE_SHADER_RESOURCE, STATE_TRANSITION_FLAG_UPDATE_STATE);
         }
 
-        TextureDesc TexArrDesc = TexLoaders[0]->GetTextureDesc();
-        TexArrDesc.ArraySize = NumTextures;
-        TexArrDesc.Type = RESOURCE_DIM_TEX_2D_ARRAY;
-        TexArrDesc.Usage = USAGE_DEFAULT;
-        TexArrDesc.BindFlags = BIND_SHADER_RESOURCE;
-
-        // Prepare initialization data
-        std::vector<TextureSubResData> SubresData(TexArrDesc.ArraySize * TexArrDesc.MipLevels);
-        for (Uint32 slice = 0; slice < TexArrDesc.ArraySize; ++slice)
-        {
-            for (Uint32 mip = 0; mip < TexArrDesc.MipLevels; ++mip)
-            {
-                SubresData[slice * TexArrDesc.MipLevels + mip] = TexLoaders[slice]->GetSubresourceData(mip, 0);
-            }
-        }
-        TextureData InitData{SubresData.data(), TexArrDesc.MipLevels * TexArrDesc.ArraySize};
-
-        // Create the texture array
-        RefCntAutoPtr<ITexture> pTexArray;
-        m_pDevice->CreateTexture(TexArrDesc, &InitData, &pTexArray);
-
-        // Get shader resource view from the texture array
-        m_TextureSRV = pTexArray->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
         // Set texture SRV in the SRB
-        m_pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_Texture")->Set(m_TextureSRV);
+        for (int tex = 0; tex < NumTextures; ++tex)
+        {
+            // Create one Shader Resource Binding for every texture
+            // http://diligentgraphics.com/2016/03/23/resource-binding-model-in-diligent-engine-2-0/
+            m_pPSO->CreateShaderResourceBinding(&m_SRB[tex], true);
+            m_SRB[tex]->GetVariableByName(SHADER_TYPE_PIXEL, "g_Texture")->Set(m_TextureSRV[tex]);
+        }
     }
 
     void C6GERender::PopulateInstanceBuffer()
     {
-        // Populate instance data buffer
         const size_t zGridSize = static_cast<size_t>(m_GridSize);
-        std::vector<InstanceData> Instances(zGridSize * zGridSize * zGridSize);
-
+        m_Instances.resize(zGridSize * zGridSize * zGridSize);
+        // Populate instance data buffer
         float fGridSize = static_cast<float>(m_GridSize);
 
         std::mt19937 gen; // Standard mersenne_twister_engine. Use default seed
@@ -664,16 +683,234 @@ namespace Diligent
                     // Combine rotation, scale and translation
                     float4x4 matrix = rotation * float4x4::Scale(scale, scale, scale) * float4x4::Translation(xOffset, yOffset, zOffset);
 
-                    InstanceData &CurrInst = Instances[instId++];
+                    InstanceData &CurrInst = m_Instances[instId++];
                     CurrInst.Matrix = matrix;
                     // Texture array index
-                    CurrInst.TextureInd = static_cast<float>(tex_distr(gen));
+                    CurrInst.TextureInd = tex_distr(gen);
                 }
             }
         }
-        // Update instance data buffer
-        Uint32 DataSize = static_cast<Uint32>(sizeof(Instances[0]) * Instances.size());
-        m_pImmediateContext->UpdateBuffer(m_InstanceBuffer, 0, DataSize, Instances.data(), RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    }
+
+    void C6GERender::StartWorkerThreads(size_t NumThreads)
+    {
+        // If the engine did not provide enough deferred contexts, clamp the number of worker threads.
+        if (NumThreads > m_pDeferredContexts.size())
+        {
+            // Reduce the requested number of threads to the available deferred contexts.
+            NumThreads = m_pDeferredContexts.size();
+            // Keep m_NumWorkerThreads consistent with the actual started threads.
+            m_NumWorkerThreads = static_cast<int>(NumThreads);
+            // Log a warning to help debugging.
+            std::cerr << "[C6GE] Warning: Requested worker threads exceed available deferred contexts. Clamping to " << NumThreads << "\n";
+        }
+
+    // If engine did not provide any deferred contexts, do not start worker threads.
+    std::cerr << "[C6GE] m_pDeferredContexts.size()=" << m_pDeferredContexts.size() << "\n";
+    if (m_pDeferredContexts.empty())
+    {
+        std::cerr << "[C6GE] No deferred contexts available from engine; skipping worker thread start\n";
+        m_NumWorkerThreads = 0;
+        return;
+    }
+
+    // Collect indices of available (non-null) deferred contexts
+    std::vector<Uint32> AvailableCtxIndices;
+    for (Uint32 i = 0; i < m_pDeferredContexts.size(); ++i)
+    {
+        if (m_pDeferredContexts[i])
+            AvailableCtxIndices.push_back(i);
+        else
+            std::cerr << "[C6GE] Warning: m_pDeferredContexts[" << i << "] is null\n";
+    }
+
+    if (AvailableCtxIndices.empty())
+    {
+        std::cerr << "[C6GE] No valid deferred contexts found; skipping worker thread start\n";
+        m_NumWorkerThreads = 0;
+        return;
+    }
+
+    // Clamp requested threads to number of available deferred contexts
+    size_t ThreadsToStart = std::min(NumThreads, AvailableCtxIndices.size());
+    std::cerr << "[C6GE] Starting " << ThreadsToStart << " worker threads (requested " << NumThreads << ")\n";
+
+    // Reset thread counters before launching worker threads
+    m_NumThreadsCompleted.store(0);
+    m_NumThreadsReady.store(0);
+
+    m_WorkerThreads.resize(ThreadsToStart);
+    // Prepare non-owning raw pointers to deferred contexts for worker threads
+    m_WorkerDeferredCtxs.clear();
+    m_WorkerDeferredCtxs.resize(ThreadsToStart, nullptr);
+    // Resize command list vector to match actual started threads
+    m_CmdLists.resize(ThreadsToStart);
+
+    for (Uint32 t = 0; t < ThreadsToStart; ++t)
+    {
+        Uint32 ctxIdx = AvailableCtxIndices[t];
+        m_WorkerDeferredCtxs[t] = m_pDeferredContexts[ctxIdx];
+    std::cerr << "[C6GE] Launching worker thread " << t << " mapped to deferred context index " << ctxIdx
+          << " ptr=" << (void*)m_WorkerDeferredCtxs[t] << "\n";
+        m_WorkerThreads[t] = std::thread(&C6GERender::WorkerThreadFunc, this, t);
+    }
+    // Keep m_NumWorkerThreads consistent
+    m_NumWorkerThreads = static_cast<int>(ThreadsToStart);
+    }
+
+    void C6GERender::StopWorkerThreads()
+    {
+        // Ensure the render-subset signal is in a known state before triggering workers to exit.
+        if (m_RenderSubsetSignal.IsTriggered())
+        {
+            std::cerr << "[C6GE] Warning: RenderSubsetSignal already triggered when stopping worker threads - resetting\n";
+            m_RenderSubsetSignal.Reset();
+        }
+        m_RenderSubsetSignal.Trigger(true, -1);
+
+        for (std::thread &thread : m_WorkerThreads)
+        {
+            if (thread.joinable())
+            {
+                std::cerr << "[C6GE] Joining worker thread\n";
+                thread.join();
+            }
+        }
+        m_RenderSubsetSignal.Reset();
+        m_WorkerThreads.clear();
+        m_CmdLists.clear();
+        m_WorkerDeferredCtxs.clear();
+        std::cerr << "[C6GE] All worker threads stopped\n";
+    }
+
+    void C6GERender::WorkerThreadFunc(C6GERender *pThis, Uint32 ThreadId)
+    {
+        // Every thread should use its own deferred context. Prefer the per-worker
+        // raw pointers populated in StartWorkerThreads, fallback to the base class
+        // deferred contexts vector if necessary.
+        IDeviceContext *pDeferredCtx = nullptr;
+        if (ThreadId < pThis->m_WorkerDeferredCtxs.size())
+            pDeferredCtx = pThis->m_WorkerDeferredCtxs[ThreadId];
+        if (!pDeferredCtx && ThreadId < pThis->m_pDeferredContexts.size())
+            pDeferredCtx = pThis->m_pDeferredContexts[ThreadId];
+        const int NumWorkerThreads = static_cast<int>(pThis->m_WorkerThreads.size());
+        // If no deferred context is available, exit the thread cleanly.
+        if (!pDeferredCtx)
+        {
+            std::cerr << "[C6GE] WorkerThread " << ThreadId << " has no deferred context and will exit\n";
+            return;
+        }
+        std::cerr << "[C6GE] WorkerThread " << ThreadId << " started. deferredCtx=" << (void*)pDeferredCtx << "\n";
+        for (;;)
+        {
+            // Wait for the signal
+            std::cerr << "[C6GE] WorkerThread " << ThreadId << " waiting on RenderSubsetSignal\n";
+            int SignaledValue = pThis->m_RenderSubsetSignal.Wait(true, NumWorkerThreads);
+            std::cerr << "[C6GE] WorkerThread " << ThreadId << " woke with SignaledValue=" << SignaledValue << "\n";
+            if (SignaledValue < 0)
+                return;
+
+            pDeferredCtx->Begin(0);
+            std::cerr << "[C6GE] WorkerThread " << ThreadId << " Begin() called\n";
+
+            // Render current subset using the deferred context
+            pThis->RenderSubset(pDeferredCtx, 1 + ThreadId);
+
+            // Finish command list
+            RefCntAutoPtr<ICommandList> pCmdList;
+            pDeferredCtx->FinishCommandList(&pCmdList);
+            pThis->m_CmdLists[ThreadId] = pCmdList;
+
+            {
+                // Atomically increment the number of completed threads
+                const int NumThreadsCompleted = pThis->m_NumThreadsCompleted.fetch_add(1) + 1;
+                if (NumThreadsCompleted == NumWorkerThreads)
+                    pThis->m_ExecuteCommandListsSignal.Trigger();
+            }
+
+            pThis->m_GotoNextFrameSignal.Wait(true, NumWorkerThreads);
+
+            // Call FinishFrame() to release dynamic resources allocated by deferred contexts
+            // IMPORTANT: we must wait until the command lists are submitted for execution
+            //            because FinishFrame() invalidates all dynamic resources.
+            // IMPORTANT: In Metal backend FinishFrame must be called from the same
+            //            thread that issued rendering commands.
+            pDeferredCtx->FinishFrame();
+            std::cerr << "[C6GE] WorkerThread " << ThreadId << " FinishFrame() called\n";
+
+            pThis->m_NumThreadsReady.fetch_add(1);
+                std::cerr << "[C6GE] WorkerThread " << ThreadId << " incremented NumThreadsReady\n";
+            // We must wait until all threads reach this point, because
+            // m_GotoNextFrameSignal must be unsignaled before we proceed to
+            // RenderSubsetSignal to avoid one thread going through the loop twice in
+            // a row.
+            while (pThis->m_NumThreadsReady.load() < NumWorkerThreads)
+                std::this_thread::yield();
+            VERIFY_EXPR(!pThis->m_GotoNextFrameSignal.IsTriggered());
+        }
+    }
+
+    void C6GERender::RenderSubset(IDeviceContext *pCtx, Uint32 Subset)
+    {
+        // Deferred contexts start in default state. We must bind everything to the context.
+        // Render targets are set and transitioned to correct states by the main thread, here we only verify the states.
+        ITextureView *pRTV = m_pSwapChain->GetCurrentBackBufferRTV();
+        // Use TRANSITION mode so deferred contexts can transition the back buffer and depth
+        // from COPY_DEST (upload) to RENDER_TARGET/DEPTH_WRITE as needed.
+        pCtx->SetRenderTargets(1, &pRTV, m_pSwapChain->GetDepthBufferDSV(), RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+        {
+            // Map the buffer and write current world-view-projection matrix
+
+            // Since this is a dynamic buffer, it must be mapped in every context before
+            // it can be used even though the matrices are the same.
+            MapHelper<float4x4> CBConstants(pCtx, m_VSConstants, MAP_WRITE, MAP_FLAG_DISCARD);
+            CBConstants[0] = m_ViewProjMatrix;
+            CBConstants[1] = m_RotationMatrix;
+        }
+
+        // Bind vertex and index buffers. This must be done for every context
+        IBuffer *pBuffs[] = {m_CubeVertexBuffer};
+        pCtx->SetVertexBuffers(0, _countof(pBuffs), pBuffs, nullptr, RESOURCE_STATE_TRANSITION_MODE_VERIFY, SET_VERTEX_BUFFERS_FLAG_RESET);
+        pCtx->SetIndexBuffer(m_CubeIndexBuffer, 0, RESOURCE_STATE_TRANSITION_MODE_VERIFY);
+
+        DrawIndexedAttribs DrawAttrs;    // This is an indexed draw call
+        DrawAttrs.IndexType = VT_UINT32; // Index type
+        DrawAttrs.NumIndices = 36;
+        DrawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
+
+        // Set the pipeline state
+        pCtx->SetPipelineState(m_pPSO);
+        Uint32 NumSubsets = Uint32{1} + static_cast<Uint32>(m_WorkerThreads.size());
+        Uint32 NumInstances = static_cast<Uint32>(m_Instances.size());
+        Uint32 SusbsetSize = NumInstances / NumSubsets;
+        Uint32 StartInst = SusbsetSize * Subset;
+        Uint32 EndInst = (Subset < NumSubsets - 1) ? SusbsetSize * (Subset + 1) : NumInstances;
+        for (size_t inst = StartInst; inst < EndInst; ++inst)
+        {
+            const InstanceData &CurrInstData = m_Instances[inst];
+            // Shader resources have been explicitly transitioned to correct states, so
+            // RESOURCE_STATE_TRANSITION_MODE_TRANSITION mode is not needed.
+            // Instead, we use RESOURCE_STATE_TRANSITION_MODE_VERIFY mode to
+            // verify that all resources are in correct states. This mode only has effect
+            // in debug and development builds.
+            // Allow automatic transitions if the texture is still in COPY_DEST state
+            // (e.g., just uploaded). TRANSITION will change the resource state to SHADER_RESOURCE.
+            pCtx->CommitShaderResources(m_SRB[CurrInstData.TextureInd], RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+            {
+                // Map the buffer and write current world-view-projection matrix
+                MapHelper<float4x4> InstData(pCtx, m_InstanceConstants, MAP_WRITE, MAP_FLAG_DISCARD);
+                if (InstData == nullptr)
+                {
+                    LOG_ERROR_MESSAGE("Failed to map instance data buffer");
+                    break;
+                }
+                *InstData = CurrInstData.Matrix;
+            }
+
+            pCtx->DrawIndexed(DrawAttrs);
+        }
     }
 
     void C6GERender::ResizeFramebuffer(Uint32 Width, Uint32 Height)
@@ -699,7 +936,6 @@ namespace Diligent
     // Render a frame
     void C6GERender::Render()
     {
-
         // Guard: Only render if framebuffer has valid size
         if (m_FramebufferWidth == 0 || m_FramebufferHeight == 0 || !m_pFramebufferRTV || !m_pFramebufferDSV)
         {
@@ -732,14 +968,78 @@ namespace Diligent
         m_pImmediateContext->SetIndexBuffer(m_CubeIndexBuffer, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
         m_pImmediateContext->SetPipelineState(m_pPSO);
-        m_pImmediateContext->CommitShaderResources(m_pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        m_pImmediateContext->CommitShaderResources(m_SRB[0].RawPtr(), RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
         DrawIndexedAttribs DrawAttrs;
         DrawAttrs.IndexType = VT_UINT32;
         DrawAttrs.NumIndices = 36;
         DrawAttrs.NumInstances = m_GridSize * m_GridSize * m_GridSize;
         DrawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
+
+        // Map the dynamic instance constant buffer per-frame to ensure Vulkan backend
+        // allocates and updates dynamic buffer memory for this frame.
+        if (m_InstanceConstants)
+        {
+            MapHelper<float4x4> PerFrameInstCB(m_pImmediateContext, m_InstanceConstants, MAP_WRITE, MAP_FLAG_DISCARD);
+            // The actual instance transform will be set in RenderSubset for deferred contexts.
+            // For the immediate context (main thread) we can leave it as identity or reuse current rotation.
+            *PerFrameInstCB = m_RotationMatrix;
+        }
+
         m_pImmediateContext->DrawIndexed(DrawAttrs);
+
+        ITextureView *pBackBufferRTV = m_pSwapChain->GetCurrentBackBufferRTV();
+        ITextureView *pBackBufferDSV = m_pSwapChain->GetDepthBufferDSV();
+        // Clear the back buffer
+        float4 BackClearColor = {0.350f, 0.350f, 0.350f, 1.0f};
+        if (m_ConvertPSOutputToGamma)
+        {
+            // If manual gamma correction is required, we need to clear the render target with sRGB color
+            BackClearColor = LinearToSRGB(BackClearColor);
+        }
+        // Bind the swap-chain back buffer and depth-stencil view before clearing.
+        m_pImmediateContext->SetRenderTargets(1, &pBackBufferRTV, pBackBufferDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        m_pImmediateContext->ClearRenderTarget(pBackBufferRTV, BackClearColor.Data(), RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        m_pImmediateContext->ClearDepthStencil(pBackBufferDSV, CLEAR_DEPTH_FLAG, 1.f, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+        if (!m_WorkerThreads.empty())
+        {
+            // Avoid double-triggering the signal; Trigger will ASSERT when the signal
+            // value is non-zero or threads haven't been awakened and the signal wasn't reset.
+            if (m_RenderSubsetSignal.IsTriggered())
+            {
+                std::cerr << "[C6GE] Warning: RenderSubsetSignal already triggered, skipping Trigger() this frame\n";
+            }
+            else
+            {
+                m_NumThreadsCompleted.store(0);
+                m_RenderSubsetSignal.Trigger(true);
+            }
+        }
+
+        RenderSubset(m_pImmediateContext, 0);
+
+        if (!m_WorkerThreads.empty())
+        {
+            m_ExecuteCommandListsSignal.Wait(true, 1);
+
+            m_CmdListPtrs.resize(m_CmdLists.size());
+            for (Uint32 i = 0; i < m_CmdLists.size(); ++i)
+                m_CmdListPtrs[i] = m_CmdLists[i];
+
+            m_pImmediateContext->ExecuteCommandLists(static_cast<Uint32>(m_CmdListPtrs.size()), m_CmdListPtrs.data());
+
+            for (auto &cmdList : m_CmdLists)
+            {
+                // Release command lists now to release all outstanding references.
+                // In d3d11 mode, command lists hold references to the swap chain's back buffer
+                // that cause swap chain resize to fail.
+                cmdList.Release();
+            }
+
+            m_NumThreadsReady.store(0);
+            m_GotoNextFrameSignal.Trigger(true);
+        }
     }
 
     void C6GERender::Update(double CurrTime, double ElapsedTime, bool DoUpdateUI)
@@ -750,7 +1050,7 @@ namespace Diligent
         if (!IsPlaying())
             return;
 
-        // Set cube view matrix
+        // Set the cube view matrix
         float4x4 View = float4x4::RotationX(-0.6f) * float4x4::Translation(0.f, 0.f, 4.0f);
 
         // Get pretransform matrix that rotates the scene according the surface orientation

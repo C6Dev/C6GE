@@ -770,7 +770,9 @@ int main()
     RefCntAutoPtr<IRenderDevice> device;
     RefCntAutoPtr<IDeviceContext> immediateContext;
     RefCntAutoPtr<ISwapChain> swapChain;
-    IDeviceContext* ppContexts[1] = {nullptr};
+    // Create array for 1 immediate context + several deferred contexts
+    constexpr Uint32 NumDeferredCtx = 4; // Tunable: number of deferred contexts (worker threads)
+    IDeviceContext* ppContexts[1 + NumDeferredCtx] = {nullptr};
 
     if (!InitializeDiligentEngine(window, factory, device, immediateContext, swapChain, ppContexts))
     {
@@ -800,6 +802,7 @@ int main()
     // Load a larger font (Roboto-Medium.ttf is available in external/imgui/misc/fonts/)
     ImGuiIO& io_font = ImGui::GetIO();
     io_font.Fonts->Clear();
+    io_font.Fonts->AddFontFromFileTTF("Roboto-Medium.ttf", 10.0f * font_scale);
     io_font.Fonts->AddFontFromFileTTF("Roboto-Medium.ttf", 18.0f * font_scale);
     // Optionally, add default font as fallback
     // io_font.Fonts->AddFontDefault();
@@ -838,6 +841,7 @@ int main()
     initInfo.pSwapChain = swapChain;
     initInfo.ppContexts = ppContexts;
     initInfo.NumImmediateCtx = 1;
+    initInfo.NumDeferredCtx = NumDeferredCtx;
     initInfo.pEngineFactory = factory;
     initInfo.pImGui = imGuiImpl.get(); // Use raw pointer for SampleInitInfo
     sample->Initialize(initInfo);
