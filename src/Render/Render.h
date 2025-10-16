@@ -63,17 +63,17 @@ public:
                                                InputLayoutDesc& Layout,
                                                std::vector<LayoutElement>& Elements);
 
+    void CreatePipelineStates();
+
     void CreateInstanceBuffer();
 
-    void CreatePipelineStates();
+    void LoadTextures();
+
+    void PopulateInstanceBuffer();
 
     void CreateFramebuffer();
 
     void ResizeFramebuffer(Uint32 Width, Uint32 Height);
-
-    void PopulateInstanceBuffer();
-
-    void DrawMesh(IDeviceContext* pCtx, bool bIsShadowPass, const ViewFrustumExt& Frustum);
 
     void WindowResize(Uint32 Width, Uint32 Height) override final;
 
@@ -114,6 +114,7 @@ private:
     int                  m_GridSize   = 5;
     static constexpr int MaxGridSize  = 32;
     static constexpr int MaxInstances = MaxGridSize * MaxGridSize * MaxGridSize;
+    static constexpr int NumTextures  = 4;
 };
 
 } // namespace Diligent
