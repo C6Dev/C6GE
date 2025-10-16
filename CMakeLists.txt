@@ -62,6 +62,7 @@ add_executable(C6GE
     src/main.cpp
     src/Render/Render.cpp
     external/DiligentEngine/DiligentSamples/Tutorials/Common/src/TexturedCube.cpp
+    src/EditorTheme/EditorTheme.cpp
 )
 
 # Include directories
@@ -80,6 +81,7 @@ add_executable(Runtime
     src/Runtime/Runtime.cpp
     src/Render/Render.cpp
     external/DiligentEngine/DiligentSamples/Tutorials/Common/src/TexturedCube.cpp
+    src/EditorTheme/EditorTheme.cpp
 )
 
 # Include directories

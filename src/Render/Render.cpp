@@ -1,3 +1,8 @@
+#include <atomic>
+
+namespace Diligent {
+    bool RenderSettingsOpen = false;
+}
 /*
  *  Copyright 2019-2025 Diligent Graphics LLC
  *  Copyright 2015-2019 Egor Yusov
@@ -50,6 +55,7 @@ namespace Diligent
 {
     bool RenderShadows = true;
     bool Diligent::C6GERender::IsRuntime = false;
+    extern bool RenderSettingsOpen;
 
     SampleBase *CreateSample()
     {
@@ -97,20 +103,24 @@ namespace Diligent
             return;
     
     // Remove fixed positioning - let the window be freely movable and resizable
-    if (ImGui::Begin("Settings"))
-    {
-        if (ImGui::SliderInt("Grid Size", &m_GridSize, 1, 32))
+
+    if(RenderSettingsOpen) {
+        if (ImGui::Begin("Render Settings", &RenderSettingsOpen, ImGuiWindowFlags_NoCollapse))
         {
-            PopulateInstanceBuffer();
+            if (ImGui::SliderInt("Grid Size", &m_GridSize, 1, 32))
+            {
+                PopulateInstanceBuffer();
+            }
         }
+        ImGui::End();
     }
-    ImGui::End();
     }
 
     void C6GERender::UpdateViewportUI()
     {
+    {
         // Create a fullscreen dockspace
-        ImGuiViewport* viewport = ImGui::GetMainViewport();
+    auto* viewport = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(viewport->WorkPos);
         ImGui::SetNextWindowSize(viewport->WorkSize);
         ImGui::SetNextWindowViewport(viewport->ID);
@@ -126,6 +136,79 @@ namespace Diligent
         ImGui::Begin("DockSpaceWindow", nullptr, window_flags);
         ImGui::PopStyleVar(3);
         
+    // Main menu bar and settings tab logic
+    static bool open_settings = false;
+    static float font_size = 16.0f;
+    static ImVec4 bg_color = ImVec4(0.07f, 0.07f, 0.07f, 1.0f);
+    static ImVec4 text_color = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+
+        if (ImGui::BeginMainMenuBar())
+        {
+            if (ImGui::BeginMenu("File"))
+            {
+                if (ImGui::MenuItem("Settings"))
+                {
+                    open_settings = true;
+                }
+                if (ImGui::MenuItem("Exit"))
+                {
+                    // TODO: Implement exit logic if needed
+                }
+                ImGui::EndMenu();
+            }
+            ImGui::EndMainMenuBar();
+        }
+
+        if (open_settings)
+        {
+            ImGui::SetNextWindowDockID(ImGui::GetID("MainDockSpace"), ImGuiCond_Once);
+            ImGui::SetNextWindowSize(ImVec2(480, 360), ImGuiCond_FirstUseEver);
+            if (ImGui::Begin("Settings", &open_settings, ImGuiWindowFlags_NoCollapse))
+            {
+                ImGui::SameLine();
+                ImGui::Text("Settings");
+                ImGui::Separator();
+                if (ImGui::BeginTabBar("SettingsTabBar"))
+                {
+                    if (ImGui::BeginTabItem("Appearance"))
+                    {
+                        ImGui::Text("Appearance Settings");
+                        ImGui::SliderFloat("Font Size", &font_size, 10.0f, 32.0f);
+                        ImGui::ColorEdit4("Background Color", (float*)&bg_color);
+                        ImGui::ColorEdit4("Text Color", (float*)&text_color);
+                        if (ImGui::Button("Apply", ImVec2(0,0)))
+                        {
+                            ImGui::GetStyle().Colors[ImGuiCol_WindowBg] = bg_color;
+                            ImGui::GetStyle().Colors[ImGuiCol_Text] = text_color;
+                            auto& io = ImGui::GetIO();
+                            io.FontGlobalScale = font_size / 16.0f;
+                        }
+                        if (ImGui::Button("Open Render Settings", ImVec2(0,0)))
+                        {
+                            RenderSettingsOpen = true;
+                        }
+                        ImGui::EndTabItem();
+                    }
+                    if (ImGui::BeginTabItem("Shortcuts"))
+                    {
+                        ImGui::Text("Shortcut settings coming soon...");
+                        ImGui::EndTabItem();
+                    }
+                    if (ImGui::BeginTabItem("About"))
+                    {
+                        ImGui::Text("C6GE Century6 Game Engine");
+                        ImGui::Separator();
+                        ImGui::Text("License: Apache 2.0");
+                        ImGui::Text("Version: V0.1 Beta");
+                        ImGui::Text("Century6.com/C6GE");
+                        ImGui::EndTabItem();
+                    }
+                    ImGui::EndTabBar();
+                }
+            }
+            ImGui::End();
+        }
+        
         // Create dockspace
         ImGuiID dockspace_id = ImGui::GetID("MainDockSpace");
         ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_None);
@@ -140,15 +223,16 @@ namespace Diligent
             ImGui::DockBuilderSetNodeSize(dockspace_id, viewport->WorkSize);
             
             // Split the dockspace
-            auto dock_left = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Left, 0.2f, nullptr, &dockspace_id);
-            auto dock_right = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Right, 0.25f, nullptr, &dockspace_id);
-            auto dock_down = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Down, 0.3f, nullptr, &dockspace_id);
+            auto dock_left = ImGui::DockBuilderSplitNode(dockspace_id, (ImGuiDir)ImGuiDir_Left, 0.2f, nullptr, &dockspace_id);
+            auto dock_right = ImGui::DockBuilderSplitNode(dockspace_id, (ImGuiDir)ImGuiDir_Right, 0.25f, nullptr, &dockspace_id);
+            auto dock_down = ImGui::DockBuilderSplitNode(dockspace_id, (ImGuiDir)ImGuiDir_Down, 0.3f, nullptr, &dockspace_id);
             
             // Dock windows to specific nodes
             ImGui::DockBuilderDockWindow("Viewport", dockspace_id);
             ImGui::DockBuilderDockWindow("Scene", dock_left);
             ImGui::DockBuilderDockWindow("Properties", dock_right);
             ImGui::DockBuilderDockWindow("Console", dock_down);
+            ImGui::DockBuilderDockWindow("Settings", dock_right);
             
             ImGui::DockBuilderFinish(dockspace_id);
         }
@@ -161,7 +245,7 @@ namespace Diligent
         {
             if (m_pFramebufferSRV)
             {
-                ImVec2 contentSize = ImGui::GetContentRegionAvail();
+                auto contentSize = ImGui::GetContentRegionAvail();
                 
                 // Resize framebuffer if viewport size changed
                 Uint32 newWidth = static_cast<Uint32>(std::max(1.0f, contentSize.x));
@@ -206,6 +290,7 @@ namespace Diligent
             // Add console content here
         }
         ImGui::End();
+    }
     }
 
     void C6GERender::DXSDKMESH_VERTEX_ELEMENTtoInputLayoutDesc(const DXSDKMESH_VERTEX_ELEMENT *VertexElement,

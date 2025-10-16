@@ -98,6 +98,8 @@
 // Use unified input controller that aliases to the platform-specific implementation
 #include "DiligentSamples/SampleBase/include/InputController.hpp"
 
+#include "EditorTheme/EditorTheme.h"
+
 
 using namespace Diligent;
 
@@ -788,6 +790,23 @@ int main()
     // Note: ViewportsEnable disabled due to compatibility issues with DiligentEngine
     ImGui::StyleColorsDark();
 
+    // --- DPI/UI scaling: Make UI bigger ---
+    float xscale = 1.0f, yscale = 1.0f;
+#if GLFW_VERSION_MAJOR > 3 || (GLFW_VERSION_MAJOR == 3 && GLFW_VERSION_MINOR >= 3)
+    glfwGetWindowContentScale(window, &xscale, &yscale);
+#endif
+    float font_scale = xscale; // Use xscale for font and style scaling
+
+    // Load a larger font (Roboto-Medium.ttf is available in external/imgui/misc/fonts/)
+    ImGuiIO& io_font = ImGui::GetIO();
+    io_font.Fonts->Clear();
+    io_font.Fonts->AddFontFromFileTTF("Roboto-Medium.ttf", 18.0f * font_scale);
+    // Optionally, add default font as fallback
+    // io_font.Fonts->AddFontDefault();
+    // Scale all style sizes
+    ImGui::GetStyle().ScaleAllSizes(font_scale);
+    // Rebuild font atlas
+
     // Initialize ImGui Diligent backend (DiligentEngine handles GLFW integration internally)
     std::unique_ptr<ImGuiImplDiligent> imGuiImpl;
     try
@@ -845,6 +864,7 @@ int main()
     glfwSetMouseButtonCallback(window, GLFWMouseButtonCallbackMac);
     glfwSetCursorPosCallback(window, GLFWCursorPosCallbackMac);
     glfwSetScrollCallback(window, GLFWScrollCallbackMac);
+    glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, GLFW_TRUE);
 #elif defined(__linux__)
     // Register Linux callbacks that forward into InputControllerLinux
     glfwSetKeyCallback(window, GLFWKeyCallbackLinux);
@@ -854,6 +874,7 @@ int main()
     glfwSetScrollCallback(window, GLFWScrollCallbackLinux);
 #endif
 
+EditorTheme::SetupImGuiStyle();
     
     // -------------------
     // Main loop
@@ -889,10 +910,14 @@ int main()
         double elapsed = currTime - lastTime;
         lastTime = currTime;
         
-        // Set DisplaySize and scale for Retina
-        ImGuiIO& io = ImGui::GetIO();
-        io.DisplaySize = ImVec2((float)fbW, (float)fbH);
-        io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f); // keep 1.0 because we’re already using pixels
+    // Set DisplaySize and scale for Retina/HiDPI
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2((float)fbW, (float)fbH);
+#if defined(__APPLE__) || defined(__linux__)
+    io.DisplayFramebufferScale = ImVec2(dpiScaleX, dpiScaleY);
+#else
+    io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+#endif
 
         imGuiImpl->NewFrame(fbW, fbH, scDesc.PreTransform);
 
