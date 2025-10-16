@@ -37,7 +37,17 @@ namespace Diligent
 
 class C6GERender final : public SampleBase
 {
+    // Play/pause icon textures
+    RefCntAutoPtr<ITextureView> m_PlayIconSRV;
+    RefCntAutoPtr<ITextureView> m_PauseIconSRV;
 public:
+    // Play/pause state for editor runtime
+    enum class PlayState { Paused, Playing };
+    static PlayState playState;
+
+    static void TogglePlayState();
+    static bool IsPlaying() { return playState == PlayState::Playing; }
+    static bool IsPaused() { return playState == PlayState::Paused; }
     virtual void Initialize(const SampleInitInfo& InitInfo) override final;
 
     void ModifyEngineInitInfo(const ModifyEngineInitInfoAttribs& Attribs) override final;

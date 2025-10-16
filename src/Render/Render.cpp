@@ -41,7 +41,7 @@ namespace Diligent {
 #include "AdvancedMath.hpp"
 #include "DiligentTools/ThirdParty/imgui/imgui.h"
 #include "DiligentTools/ThirdParty/imGuIZMO.quat/imGuIZMO.h"
-#include "ImGuiUtils.hpp"
+
 #include "CallbackWrapper.hpp"
 #include "Utilities/interface/DiligentFXShaderSourceStreamFactory.hpp"
 #include "ShaderSourceFactoryUtils.hpp"
@@ -55,6 +55,12 @@ namespace Diligent
 {
     bool RenderShadows = true;
     bool Diligent::C6GERender::IsRuntime = false;
+    Diligent::C6GERender::PlayState Diligent::C6GERender::playState = Diligent::C6GERender::PlayState::Paused;
+
+    void Diligent::C6GERender::TogglePlayState() {
+        if (playState == PlayState::Paused) playState = PlayState::Playing;
+        else playState = PlayState::Paused;
+    }
     extern bool RenderSettingsOpen;
 
     SampleBase *CreateSample()
@@ -86,6 +92,26 @@ namespace Diligent
     {
         SampleBase::Initialize(InitInfo);
 
+        // Load play/pause icons (after m_pDevice is valid)
+        TextureLoadInfo loadInfo;
+        loadInfo.IsSRGB = true;
+        RefCntAutoPtr<ITexture> playTex, pauseTex;
+        CreateTextureFromFile("Editor/PlayIcon.png", loadInfo, m_pDevice, &playTex);
+        if (!playTex)
+            std::cerr << "[C6GE] Failed to load Editor/PlayIcon.png" << std::endl;
+        else if (auto srv = playTex->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE))
+            m_PlayIconSRV = srv;
+        else
+            std::cerr << "[C6GE] Failed to get SRV for PlayIcon.png" << std::endl;
+
+        CreateTextureFromFile("Editor/PauseIcon.png", loadInfo, m_pDevice, &pauseTex);
+        if (!pauseTex)
+            std::cerr << "[C6GE] Failed to load Editor/PauseIcon.png" << std::endl;
+        else if (auto srv = pauseTex->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE))
+            m_PauseIconSRV = srv;
+        else
+            std::cerr << "[C6GE] Failed to get SRV for PauseIcon.png" << std::endl;
+
         // Initialize camera position to look at the cube
         m_Camera.SetPos(float3(0.f, 0.f, 5.f));
         m_Camera.SetRotation(0.f, 0.f);
@@ -101,6 +127,62 @@ namespace Diligent
     {
         if(IsRuntime == true)
             return;
+
+        try {
+            if (!ImGui::GetCurrentContext()) {
+                std::cerr << "[C6GE] ImGui context is null in UpdateUI, skipping play/pause bar." << std::endl;
+                return;
+            }
+            // Play/Pause bar at the top inside the viewport
+            ImGui::SetNextWindowBgAlpha(0.85f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 6));
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 4));
+            // Calculate position for play/pause bar (centered in viewport)
+            float x = 0.0f, y = 0.0f;
+            if (ImGui::FindWindowByName("Viewport")) {
+                ImGuiWindow* vpWin = ImGui::FindWindowByName("Viewport");
+                ImVec2 vpPos = vpWin->Pos;
+                ImVec2 vpSize = vpWin->Size;
+                const float iconSize = 40.0f;
+                const float windowPad = 12.0f;
+                float barWidth = iconSize + 2 * windowPad;
+                x = vpPos.x + (vpSize.x - barWidth) * 0.5f;
+                y = vpPos.y + 44.0f;
+            }
+            ImGui::SetNextWindowPos(ImVec2(x, y), ImGuiCond_Always);
+            ImGui::Begin("PlayPauseBar", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus);
+            // Ensure play/pause bar is always above the viewport
+            if (ImGui::FindWindowByName("PlayPauseBar")) {
+                ImGui::BringWindowToDisplayFront(ImGui::FindWindowByName("PlayPauseBar"));
+            }
+
+            bool usedIcon = false;
+            const float iconSize = 40.0f;
+            if (m_PlayIconSRV && m_PauseIconSRV) {
+                auto playSRV = m_PlayIconSRV.RawPtr();
+                auto pauseSRV = m_PauseIconSRV.RawPtr();
+                if (playSRV && pauseSRV) {
+                    ImTextureRef icon = IsPaused() ? ImTextureRef(playSRV) : ImTextureRef(pauseSRV);
+                    if (ImGui::ImageButton("##playpause", icon, ImVec2(iconSize, iconSize))) {
+                        TogglePlayState();
+                    }
+                    usedIcon = true;
+                }
+            }
+            if (!usedIcon) {
+                // Fallback: use text button
+                if (ImGui::Button(IsPaused() ? "Play" : "Pause", ImVec2(iconSize * 2, iconSize))) {
+                    TogglePlayState();
+                }
+            }
+            ImGui::End();
+            ImGui::PopStyleVar(3);
+        } catch (const std::exception& e) {
+            std::cerr << "[C6GE] Exception in UpdateUI play/pause bar: " << e.what() << std::endl;
+        } catch (...) {
+            std::cerr << "[C6GE] Unknown exception in UpdateUI play/pause bar." << std::endl;
+        }
     
     // Remove fixed positioning - let the window be freely movable and resizable
 
@@ -735,6 +817,9 @@ LayoutElement LayoutElems[] =
     void C6GERender::Update(double CurrTime, double ElapsedTime, bool DoUpdateUI)
     {
     SampleBase::Update(CurrTime, ElapsedTime, DoUpdateUI);
+
+    // Only update scene if playing
+    if (!IsPlaying()) return;
 
     // Set cube view matrix
     float4x4 View = float4x4::RotationX(-0.6f) * float4x4::Translation(0.f, 0.f, 4.0f);
