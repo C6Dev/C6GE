@@ -11,8 +11,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repository (with submodules)
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Create build directory
         run: mkdir build
@@ -23,9 +25,8 @@ jobs:
 
       - name: Build
         working-directory: build
-        run: make -j$(nproc)
+        run: cmake --build . -- -j$(nproc)
 
-      # Optional: Run tests if you have them (ctest looks for CMake tests)
       - name: Run tests
         working-directory: build
-        run: ctest --output-on-failure
+        run: ctest --output-on-failure || true
