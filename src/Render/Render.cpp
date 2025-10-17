@@ -40,7 +40,7 @@ namespace Diligent
 #include "GraphicsUtilities.h"
 #include "GraphicsAccessories.hpp"
 #include "AdvancedMath.hpp"
-#include "DiligentTools/ThirdParty/imgui/imgui.h"
+#include "../../external/imgui/imgui.h"
 #include "DiligentTools/ThirdParty/imGuIZMO.quat/imGuIZMO.h"
 
 #include "CallbackWrapper.hpp"
