@@ -65,7 +65,7 @@ namespace Diligent
 
         virtual ~C6GERender();
 
-        void UpdateUI();
+    void UpdateUI() override;
 
         void UpdateViewportUI();
 
@@ -73,24 +73,6 @@ namespace Diligent
                                                        Uint32 Stride,
                                                        InputLayoutDesc &Layout,
                                                        std::vector<LayoutElement> &Elements);
-
-        void Multithreading();
-
-        void CreatePipelineState(std::vector<StateTransitionDesc> &Barriers);
-
-        void CreateInstanceBuffer();
-
-        void LoadTextures(std::vector<StateTransitionDesc> &Barriers);
-
-        void PopulateInstanceBuffer();
-
-        void StartWorkerThreads(size_t NumThreads);
-
-        void StopWorkerThreads();
-
-    static void WorkerThreadFunc(C6GERender *pThis, Uint32 ThreadNum);
-
-        void RenderSubset(IDeviceContext *pCtx, Uint32 Subset);
 
         void CreateFramebuffer();
 
@@ -111,25 +93,37 @@ namespace Diligent
         static bool IsRuntime;
 
     private:
-        Threading::Signal m_RenderSubsetSignal;
-        Threading::Signal m_ExecuteCommandListsSignal;
-        Threading::Signal m_GotoNextFrameSignal;
-        std::atomic_int m_NumThreadsCompleted;
-        std::atomic_int m_NumThreadsReady;
-        std::vector<std::thread> m_WorkerThreads;
-    // Raw pointers to deferred contexts assigned to worker threads.
-    // These are non-owning pointers into SampleBase::m_pDeferredContexts.
-    std::vector<IDeviceContext*> m_WorkerDeferredCtxs;
-        FirstPersonCamera m_Camera;
+    void CreateCubePSO();
+    void CreatePlanePSO();
+    void CreateShadowMapVisPSO();
+    void CreateShadowMap();
+    void RenderShadowMap();
+    void RenderCube(const float4x4& CameraViewProj, bool IsShadowPass);
+    void RenderPlane();
+    void RenderShadowMapVis();
 
-        std::vector<RefCntAutoPtr<ICommandList>> m_CmdLists;
-        std::vector<ICommandList *> m_CmdListPtrs;
+    RefCntAutoPtr<IPipelineState>         m_pCubePSO;
+    RefCntAutoPtr<IPipelineState>         m_pCubeShadowPSO;
+    RefCntAutoPtr<IPipelineState>         m_pPlanePSO;
+    RefCntAutoPtr<IPipelineState>         m_pShadowMapVisPSO;
+    RefCntAutoPtr<IBuffer>                m_CubeVertexBuffer;
+    RefCntAutoPtr<IBuffer>                m_CubeIndexBuffer;
+    RefCntAutoPtr<IBuffer>                m_VSConstants;
+    RefCntAutoPtr<ITextureView>           m_TextureSRV;
+    RefCntAutoPtr<IShaderResourceBinding> m_CubeSRB;
+    RefCntAutoPtr<IShaderResourceBinding> m_CubeShadowSRB;
+    RefCntAutoPtr<IShaderResourceBinding> m_PlaneSRB;
+    RefCntAutoPtr<IShaderResourceBinding> m_ShadowMapVisSRB;
+    RefCntAutoPtr<ITextureView>           m_ShadowMapDSV;
+    RefCntAutoPtr<ITextureView>           m_ShadowMapSRV;
+    FirstPersonCamera m_Camera;
 
-        RefCntAutoPtr<IPipelineState> m_pPSO;
-        RefCntAutoPtr<IBuffer> m_CubeVertexBuffer;
-        RefCntAutoPtr<IBuffer> m_CubeIndexBuffer;
-        RefCntAutoPtr<IBuffer> m_InstanceConstants;
-        RefCntAutoPtr<IBuffer> m_VSConstants;
+    float4x4       m_CubeWorldMatrix;
+    float4x4       m_CameraViewProjMatrix;
+    float4x4       m_WorldToShadowMapUVDepthMatr;
+    float3         m_LightDirection  = normalize(float3(-0.49f, -0.60f, 0.64f));
+    Uint32         m_ShadowMapSize   = 512;
+    TEXTURE_FORMAT m_ShadowMapFormat = TEX_FORMAT_D16_UNORM;
 
         // Framebuffer for off-screen rendering
         RefCntAutoPtr<ITexture> m_pFramebufferTexture;
@@ -139,28 +133,6 @@ namespace Diligent
         RefCntAutoPtr<ITextureView> m_pFramebufferDSV;
         Uint32 m_FramebufferWidth = 800;
         Uint32 m_FramebufferHeight = 600;
-
-        static constexpr int NumTextures = 4;
-
-        RefCntAutoPtr<IShaderResourceBinding> m_SRB[NumTextures];
-        RefCntAutoPtr<ITextureView> m_TextureSRV[NumTextures];
-
-        float4x4 m_ViewProjMatrix;
-        float4x4 m_RotationMatrix;
-        int m_GridSize = 5;
-
-        int m_MaxThreads = 8;
-        int m_NumWorkerThreads = 4;
-
-        struct InstanceData
-        {
-            float4x4 Matrix;
-            int TextureInd = 0;
-        };
-        std::vector<InstanceData> m_Instances;
-
-        static constexpr size_t MaxInstances = 32 * 32 * 32;
-        Diligent::RefCntAutoPtr<Diligent::IBuffer> m_InstanceBuffer;
     };
 
 } // namespace Diligent
