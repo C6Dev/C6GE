@@ -21,6 +21,11 @@ void main(in  uint    VertId : SV_VertexID,
 
     PSIn.Pos          = mul(Pos[VertId], g_CameraViewProj);
     float4 ShadowMapPos = mul(Pos[VertId], g_WorldToShadowMapUVDepth);
-    PSIn.ShadowMapPos = ShadowMapPos.xyz / ShadowMapPos.w;
+    float3 sm = ShadowMapPos.xyz / ShadowMapPos.w;
+    // Clamp UVs and depth to [0,1] to avoid sampling outside shadow map and
+    // precision issues at edges that may produce stray shadows.
+    sm.xy = clamp(sm.xy, 0.0, 1.0);
+    sm.z = clamp(sm.z, 0.0, 1.0);
+    PSIn.ShadowMapPos = sm;
     PSIn.NdotL        = saturate(dot(float3(0.0, 1.0, 0.0), -g_LightDirection.xyz));
 }

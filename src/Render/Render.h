@@ -95,25 +95,28 @@ namespace Diligent
     private:
     void CreateCubePSO();
     void CreatePlanePSO();
-    void CreateShadowMapVisPSO();
+    // Shadow map visualization creation removed
     void CreateShadowMap();
     void RenderShadowMap();
     void RenderCube(const float4x4& CameraViewProj, bool IsShadowPass);
     void RenderPlane();
-    void RenderShadowMapVis();
+    // Shadow map visualization removed
 
     RefCntAutoPtr<IPipelineState>         m_pCubePSO;
     RefCntAutoPtr<IPipelineState>         m_pCubeShadowPSO;
     RefCntAutoPtr<IPipelineState>         m_pPlanePSO;
-    RefCntAutoPtr<IPipelineState>         m_pShadowMapVisPSO;
+    RefCntAutoPtr<IPipelineState>         m_pPlaneNoShadowPSO;
+    // Shadow map visualization PSO removed
     RefCntAutoPtr<IBuffer>                m_CubeVertexBuffer;
     RefCntAutoPtr<IBuffer>                m_CubeIndexBuffer;
     RefCntAutoPtr<IBuffer>                m_VSConstants;
+    float                                  m_LineWidth = 1.0f;
     RefCntAutoPtr<ITextureView>           m_TextureSRV;
     RefCntAutoPtr<IShaderResourceBinding> m_CubeSRB;
     RefCntAutoPtr<IShaderResourceBinding> m_CubeShadowSRB;
     RefCntAutoPtr<IShaderResourceBinding> m_PlaneSRB;
-    RefCntAutoPtr<IShaderResourceBinding> m_ShadowMapVisSRB;
+    RefCntAutoPtr<IShaderResourceBinding> m_PlaneNoShadowSRB;
+    // Visualization SRB removed
     RefCntAutoPtr<ITextureView>           m_ShadowMapDSV;
     RefCntAutoPtr<ITextureView>           m_ShadowMapSRV;
     FirstPersonCamera m_Camera;
@@ -124,6 +127,7 @@ namespace Diligent
     float3         m_LightDirection  = normalize(float3(-0.49f, -0.60f, 0.64f));
     Uint32         m_ShadowMapSize   = 512;
     TEXTURE_FORMAT m_ShadowMapFormat = TEX_FORMAT_D16_UNORM;
+    // Shadow visualization removed. Use RenderShadows to enable/disable shadowing.
 
         // Framebuffer for off-screen rendering
         RefCntAutoPtr<ITexture> m_pFramebufferTexture;

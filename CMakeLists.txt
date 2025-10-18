@@ -7,15 +7,20 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Enable DiligentTools and Samples
 set(DILIGENT_TOOLS ON CACHE BOOL "Enable DiligentTools" FORCE)
 set(DILIGENT_BUILD_SAMPLES ON CACHE BOOL "Enable Diligent Samples" FORCE)
+set(DILIGENT_BUILD_NATIVE_APP ON CACHE BOOL "Enable Diligent NativeApp" FORCE)
+set(DILIGENT_MACOS_PLATFORM ON CACHE BOOL "Enable macOS platform" FORCE)
+set(DILIGENT_METAL_SUPPORTED ON CACHE BOOL "Enable Metal backend" FORCE)
+set(DILIGENT_VULKAN_SUPPORTED ON CACHE BOOL "Enable Vulkan backend" FORCE)
+set(DILIGENT_OPENGL_SUPPORTED OFF CACHE BOOL "Disable OpenGL backend" FORCE)
+set(DILIGENT_D3D11_SUPPORTED OFF CACHE BOOL "Disable Direct3D11 backend" FORCE)
+set(DILIGENT_D3D12_SUPPORTED OFF CACHE BOOL "Disable Direct3D12 backend" FORCE)
 
 # DiligentEngine will now use our docking ImGui via symlink
 
 # Disable Wayland support to avoid missing header issues
-if (UNIX AND NOT APPLE)
 set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "Build support for Wayland" FORCE)
 set(GLFW_BUILD_X11 ON CACHE BOOL "Build support for X11" FORCE)
 add_definitions(-D_GLFW_X11)
-endif()
 
 # Add DiligentEngine
 add_subdirectory(external/DiligentEngine)
@@ -58,6 +63,8 @@ add_executable(C6GE
     src/Render/Render.cpp
     external/DiligentEngine/DiligentSamples/Tutorials/Common/src/TexturedCube.cpp
     src/EditorTheme/EditorTheme.cpp
+    # ImGui platform backend for GLFW (required for multi-viewport platform windows)
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends/imgui_impl_glfw.cpp
 )
 
 # Include directories
@@ -68,8 +75,10 @@ target_include_directories(C6GE PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentSamples/ThirdParty/glfw/include
     ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentSamples/SampleBase/include
     ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentSamples/Tutorials/Common/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
-    ${CMAKE_CURRENT_SOURCE_DIR}/external
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentTools/Imgui/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentTools/ThirdParty/imgui/backends
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends
+    
 )
 
 add_executable(Runtime
@@ -77,6 +86,8 @@ add_executable(Runtime
     src/Render/Render.cpp
     external/DiligentEngine/DiligentSamples/Tutorials/Common/src/TexturedCube.cpp
     src/EditorTheme/EditorTheme.cpp
+    # ImGui platform backend for GLFW (required for multi-viewport platform windows)
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends/imgui_impl_glfw.cpp
 )
 
 # Include directories
@@ -87,7 +98,9 @@ target_include_directories(Runtime PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentSamples/ThirdParty/glfw/include
     ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentSamples/SampleBase/include
     ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentSamples/Tutorials/Common/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentTools/Imgui/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentTools/ThirdParty/imgui/backends
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends
 )
 
 # Link libraries
@@ -102,16 +115,11 @@ set(DILIGENT_LIBS
 
 if(PLATFORM_MACOS)
     list(APPEND DILIGENT_LIBS Diligent-ApplePlatform)
-    list(APPEND DILIGENT_LIBS Diligent-GraphicsEngineMetal-static)
 elseif(PLATFORM_WIN32)
     list(APPEND DILIGENT_LIBS Diligent-Win32Platform)
 elseif(PLATFORM_LINUX)
     list(APPEND DILIGENT_LIBS Diligent-LinuxPlatform)
 endif()
-
-target_include_directories(Diligent-SampleBase PRIVATE
-    ${CMAKE_SOURCE_DIR}/external/DiligentEngine/DiligentCore/Graphics/GraphicsEngineMetal/interface
-)
 
 target_link_libraries(C6GE PRIVATE ${DILIGENT_LIBS} ${PLATFORM_LIBRARIES})
 
@@ -146,7 +154,9 @@ set(DILIGENT_DLL_TARGETS
     Diligent-GraphicsEngineGLES-shared
 )
 
-if(PLATFORM_WIN32)
+if(PLATFORM_MACOS)
+    list(APPEND DILIGENT_DLL_TARGETS Diligent-GraphicsEngineMtl-shared)
+elseif(PLATFORM_WIN32)
     list(APPEND DILIGENT_DLL_TARGETS
         Diligent-GraphicsEngineD3D11-shared
         Diligent-GraphicsEngineD3D12-shared

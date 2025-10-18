@@ -11,7 +11,9 @@ struct PlanePSOutput
 void main(in  PlanePSInput  PSIn,
           out PlanePSOutput PSOut)
 {
-    float LightAmount = g_ShadowMap.SampleCmp(g_ShadowMap_sampler, PSIn.ShadowMapPos.xy, max(PSIn.ShadowMapPos.z, 1e-7));
+    // Apply a tiny bias to depth comparison to reduce shadow acne/edge artifacts.
+    const float shadowBias = 1e-3;
+    float LightAmount = g_ShadowMap.SampleCmp(g_ShadowMap_sampler, PSIn.ShadowMapPos.xy, max(PSIn.ShadowMapPos.z - shadowBias, 1e-7));
     float3 Color = float3(1.0, 1.0, 1.0) * (PSIn.NdotL * LightAmount * 0.8 + 0.2);
 #if CONVERT_PS_OUTPUT_TO_GAMMA
     // Use fast approximation for gamma correction.

@@ -770,9 +770,7 @@ int main()
     RefCntAutoPtr<IRenderDevice> device;
     RefCntAutoPtr<IDeviceContext> immediateContext;
     RefCntAutoPtr<ISwapChain> swapChain;
-    // Create array for 1 immediate context + several deferred contexts
-    constexpr Uint32 NumDeferredCtx = 4; // Tunable: number of deferred contexts (worker threads)
-    IDeviceContext* ppContexts[1 + NumDeferredCtx] = {nullptr};
+    IDeviceContext* ppContexts[1] = {nullptr};
 
     if (!InitializeDiligentEngine(window, factory, device, immediateContext, swapChain, ppContexts))
     {
@@ -841,7 +839,6 @@ int main()
     initInfo.pSwapChain = swapChain;
     initInfo.ppContexts = ppContexts;
     initInfo.NumImmediateCtx = 1;
-    initInfo.NumDeferredCtx = NumDeferredCtx;
     initInfo.pEngineFactory = factory;
     initInfo.pImGui = imGuiImpl.get(); // Use raw pointer for SampleInitInfo
     sample->Initialize(initInfo);

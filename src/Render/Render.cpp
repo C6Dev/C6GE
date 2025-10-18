@@ -32,11 +32,6 @@ namespace Diligent
  */
 
 #include "Render.h"
-#include <cstddef>
-
-#ifndef _countof
-#define _countof(arr) (sizeof(arr)/sizeof(arr[0]))
-#endif
 #include "MapHelper.hpp"
 #include "FileSystem.hpp"
 #include "ShaderMacroHelper.hpp"
@@ -45,7 +40,7 @@ namespace Diligent
 #include "GraphicsUtilities.h"
 #include "GraphicsAccessories.hpp"
 #include "AdvancedMath.hpp"
-#include "../../external/imgui/imgui.h"
+#include "DiligentTools/ThirdParty/imgui/imgui.h"
 #include "DiligentTools/ThirdParty/imGuIZMO.quat/imGuIZMO.h"
 
 #include "CallbackWrapper.hpp"
@@ -54,17 +49,14 @@ namespace Diligent
 #include "DiligentSamples/Tutorials/Common/src/TexturedCube.hpp"
 #include "BasicMath.hpp"
 #include "ColorConversion.h"
-
 #include "TextureUtilities.h"
 #include <random>
 #include <string>
 #include <algorithm>
 
-using namespace Diligent;
-
 namespace Diligent
 {
-    bool RenderShadows = true;
+    bool RenderShadows = false;
     bool Diligent::C6GERender::IsRuntime = false;
     Diligent::C6GERender::PlayState Diligent::C6GERender::playState = Diligent::C6GERender::PlayState::Paused;
 
@@ -82,6 +74,25 @@ namespace Diligent
         return new C6GERender();
     }
 
+    namespace
+    {
+
+        struct Constants
+        {
+            // Match HLSL cbuffer 'Constants' in cube.vsh:
+            // cbuffer Constants
+            // {
+            //     float4x4 g_WorldViewProj;
+            //     float4x4 g_NormalTranform;
+            //     float4   g_LightDirection;
+            // };
+            float4x4 g_WorldViewProj;
+            float4x4 g_NormalTranform;
+            float4   g_LightDirection;
+        };
+
+    } // namespace
+
     C6GERender::~C6GERender()
     {
     }
@@ -92,13 +103,6 @@ namespace Diligent
 
         Attribs.EngineCI.Features.DepthClamp = DEVICE_FEATURE_STATE_OPTIONAL;
 
-        // Request deferred contexts from the engine so worker threads can use them.
-        // Reserve at least 2 deferred contexts or (hardware_concurrency - 1), whichever is larger.
-        {
-            Uint32 NumDeferred = std::max(std::thread::hardware_concurrency() > 1 ? std::thread::hardware_concurrency() - 1 : 1u, 2u);
-            Attribs.EngineCI.NumDeferredContexts = NumDeferred;
-        }
-
 #if D3D12_SUPPORTED
         if (Attribs.DeviceType == RENDER_DEVICE_TYPE_D3D12)
         {
@@ -107,317 +111,6 @@ namespace Diligent
             D3D12CI.GPUDescriptorHeapDynamicSize[1] = 1024;
         }
 #endif
-    }
-
-    void C6GERender::CreateCubePSO() 
-    {
-        // Create a shader source stream factory to load shaders from files.
-        RefCntAutoPtr<IShaderSourceInputStreamFactory> pShaderSourceFactory;
-        m_pEngineFactory->CreateDefaultShaderSourceStreamFactory(nullptr, &pShaderSourceFactory);
-
-        TexturedCube::CreatePSOInfo CubePsoCI;
-        CubePsoCI.pDevice              = m_pDevice;
-        CubePsoCI.RTVFormat            = m_pSwapChain->GetDesc().ColorBufferFormat;
-        CubePsoCI.DSVFormat            = m_pSwapChain->GetDesc().DepthBufferFormat;
-        CubePsoCI.pShaderSourceFactory = pShaderSourceFactory;
-        CubePsoCI.VSFilePath           = "cube.vsh";
-        CubePsoCI.PSFilePath           = "cube.psh";
-        CubePsoCI.Components           = GEOMETRY_PRIMITIVE_VERTEX_FLAG_ALL;
-
-    m_pCubePSO = TexturedCube::CreatePipelineState(CubePsoCI, m_ConvertPSOutputToGamma);
-
-    // Since we did not explicitly specify the type for 'Constants' variable, default
-    // type (SHADER_RESOURCE_VARIABLE_TYPE_STATIC) will be used. Static variables never
-    // change and are bound directly through the pipeline state object.
-    m_pCubePSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "Constants")->Set(m_VSConstants);
-
-    // Since we are using mutable variable, we must create a shader resource binding object
-    // http://diligentgraphics.com/2016/03/23/resource-binding-model-in-diligent-engine-2-0/
-    m_pCubePSO->CreateShaderResourceBinding(&m_CubeSRB, true);
-
-
-    // Create shadow pass PSO
-    GraphicsPipelineStateCreateInfo PSOCreateInfo;
-
-    PSOCreateInfo.PSODesc.Name = "Cube shadow PSO";
-
-    // This is a graphics pipeline
-    PSOCreateInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
-
-    // clang-format off
-    // Shadow pass doesn't use any render target outputs
-    PSOCreateInfo.GraphicsPipeline.NumRenderTargets             = 0;
-    PSOCreateInfo.GraphicsPipeline.RTVFormats[0]                = TEX_FORMAT_UNKNOWN;
-    // The DSV format is the shadow map format
-    PSOCreateInfo.GraphicsPipeline.DSVFormat                    = m_ShadowMapFormat;
-    PSOCreateInfo.GraphicsPipeline.PrimitiveTopology            = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    // Cull back faces
-    PSOCreateInfo.GraphicsPipeline.RasterizerDesc.CullMode      = CULL_MODE_BACK;
-    // Enable depth testing
-    PSOCreateInfo.GraphicsPipeline.DepthStencilDesc.DepthEnable = True;
-    // clang-format on
-
-    ShaderCreateInfo ShaderCI;
-    ShaderCI.pShaderSourceStreamFactory = pShaderSourceFactory;
-    // Tell the system that the shader source code is in HLSL.
-    // For OpenGL, the engine will convert this into GLSL under the hood.
-    ShaderCI.SourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
-    // OpenGL backend requires emulated combined HLSL texture samplers (g_Texture + g_Texture_sampler combination)
-    ShaderCI.Desc.UseCombinedTextureSamplers = true;
-    // Pack matrices in row-major order
-    ShaderCI.CompileFlags = SHADER_COMPILE_FLAG_PACK_MATRIX_ROW_MAJOR;
-
-    // Create shadow vertex shader
-    RefCntAutoPtr<IShader> pShadowVS;
-    {
-        ShaderCI.Desc.ShaderType = SHADER_TYPE_VERTEX;
-        ShaderCI.EntryPoint      = "main";
-        ShaderCI.Desc.Name       = "Cube Shadow VS";
-        ShaderCI.FilePath        = "cube_shadow.vsh";
-        m_pDevice->CreateShader(ShaderCI, &pShadowVS);
-    }
-    PSOCreateInfo.pVS = pShadowVS;
-
-    // We don't use pixel shader as we are only interested in populating the depth buffer
-    PSOCreateInfo.pPS = nullptr;
-
-    // clang-format off
-    // Define vertex shader input layout
-    LayoutElement LayoutElems[] =
-    {
-        // Attribute 0 - vertex position
-        LayoutElement{0, 0, 3, VT_FLOAT32, False},
-        // Attribute 1 - normal
-        LayoutElement{2, 0, 3, VT_FLOAT32, False},
-        // Attribute 2 - texture coordinates
-        LayoutElement{1, 0, 2, VT_FLOAT32, False}
-    };
-    // clang-format on
-
-    PSOCreateInfo.GraphicsPipeline.InputLayout.LayoutElements = LayoutElems;
-        PSOCreateInfo.GraphicsPipeline.InputLayout.NumElements    = sizeof(LayoutElems)/sizeof(LayoutElems[0]);
-
-    PSOCreateInfo.PSODesc.ResourceLayout.DefaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
-
-    if (m_pDevice->GetDeviceInfo().Features.DepthClamp)
-    {
-        // Disable depth clipping to render objects that are closer than near
-        // clipping plane. This is not required for this tutorial, but real applications
-        // will most likely want to do this.
-        PSOCreateInfo.GraphicsPipeline.RasterizerDesc.DepthClipEnable = False;
-    }
-
-    m_pDevice->CreateGraphicsPipelineState(PSOCreateInfo, &m_pCubeShadowPSO);
-    m_pCubeShadowPSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "Constants")->Set(m_VSConstants);
-    m_pCubeShadowPSO->CreateShaderResourceBinding(&m_CubeShadowSRB, true);
-    }
-
-    void C6GERender::CreatePlanePSO() 
-    {
-        GraphicsPipelineStateCreateInfo PSOCreateInfo;
-
-    // Pipeline state name is used by the engine to report issues.
-    // It is always a good idea to give objects descriptive names.
-    PSOCreateInfo.PSODesc.Name = "Plane PSO";
-
-    // This is a graphics pipeline
-    PSOCreateInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
-
-    // clang-format off
-    // This tutorial renders to a single render target
-    PSOCreateInfo.GraphicsPipeline.NumRenderTargets             = 1;
-    // Set render target format which is the format of the swap chain's color buffer
-    PSOCreateInfo.GraphicsPipeline.RTVFormats[0]                = m_pSwapChain->GetDesc().ColorBufferFormat;
-    // Set depth buffer format which is the format of the swap chain's back buffer
-    PSOCreateInfo.GraphicsPipeline.DSVFormat                    = m_pSwapChain->GetDesc().DepthBufferFormat;
-    // Primitive topology defines what kind of primitives will be rendered by this pipeline state
-    PSOCreateInfo.GraphicsPipeline.PrimitiveTopology            = PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
-    // No cull
-    PSOCreateInfo.GraphicsPipeline.RasterizerDesc.CullMode      = CULL_MODE_NONE;
-    // Enable depth testing
-    PSOCreateInfo.GraphicsPipeline.DepthStencilDesc.DepthEnable = True;
-    // clang-format on
-
-    ShaderCreateInfo ShaderCI;
-    // Tell the system that the shader source code is in HLSL.
-    // For OpenGL, the engine will convert this into GLSL under the hood.
-    ShaderCI.SourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
-
-    // OpenGL backend requires emulated combined HLSL texture samplers (g_Texture + g_Texture_sampler combination)
-    ShaderCI.Desc.UseCombinedTextureSamplers = true;
-
-    // Pack matrices in row-major order
-    ShaderCI.CompileFlags = SHADER_COMPILE_FLAG_PACK_MATRIX_ROW_MAJOR;
-
-    // Presentation engine always expects input in gamma space. Normally, pixel shader output is
-    // converted from linear to gamma space by the GPU. However, some platforms (e.g. Android in GLES mode,
-    // or Emscripten in WebGL mode) do not support gamma-correction. In this case the application
-    // has to do the conversion manually.
-    ShaderMacro Macros[] = {{"CONVERT_PS_OUTPUT_TO_GAMMA", m_ConvertPSOutputToGamma ? "1" : "0"}};
-        ShaderCI.Macros      = {Macros, sizeof(Macros)/sizeof(Macros[0])};
-
-    // Create a shader source stream factory to load shaders from files.
-    RefCntAutoPtr<IShaderSourceInputStreamFactory> pShaderSourceFactory;
-    m_pEngineFactory->CreateDefaultShaderSourceStreamFactory(nullptr, &pShaderSourceFactory);
-    ShaderCI.pShaderSourceStreamFactory = pShaderSourceFactory;
-    // Create plane vertex shader
-    RefCntAutoPtr<IShader> pPlaneVS;
-    {
-        ShaderCI.Desc.ShaderType = SHADER_TYPE_VERTEX;
-        ShaderCI.EntryPoint      = "main";
-        ShaderCI.Desc.Name       = "Plane VS";
-        ShaderCI.FilePath        = "plane.vsh";
-        m_pDevice->CreateShader(ShaderCI, &pPlaneVS);
-    }
-
-    // Create plane pixel shader
-    RefCntAutoPtr<IShader> pPlanePS;
-    {
-        ShaderCI.Desc.ShaderType = SHADER_TYPE_PIXEL;
-        ShaderCI.EntryPoint      = "main";
-        ShaderCI.Desc.Name       = "Plane PS";
-        ShaderCI.FilePath        = "plane.psh";
-        m_pDevice->CreateShader(ShaderCI, &pPlanePS);
-    }
-
-    PSOCreateInfo.pVS = pPlaneVS;
-    PSOCreateInfo.pPS = pPlanePS;
-
-    // Define variable type that will be used by default
-    PSOCreateInfo.PSODesc.ResourceLayout.DefaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
-
-    // clang-format off
-    // Shader variables should typically be mutable, which means they are expected
-    // to change on a per-instance basis
-    ShaderResourceVariableDesc Vars[] =
-    {
-        {SHADER_TYPE_PIXEL, "g_ShadowMap", SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE}
-    };
-    // clang-format on
-    PSOCreateInfo.PSODesc.ResourceLayout.Variables    = Vars;
-        PSOCreateInfo.PSODesc.ResourceLayout.NumVariables = sizeof(Vars)/sizeof(Vars[0]);
-
-    // Define immutable comparison sampler for g_ShadowMap. Immutable samplers should be used whenever possible
-    SamplerDesc ComparsionSampler;
-    ComparsionSampler.ComparisonFunc = COMPARISON_FUNC_LESS;
-    ComparsionSampler.MinFilter      = FILTER_TYPE_COMPARISON_LINEAR;
-    ComparsionSampler.MagFilter      = FILTER_TYPE_COMPARISON_LINEAR;
-    ComparsionSampler.MipFilter      = FILTER_TYPE_COMPARISON_LINEAR;
-    // clang-format off
-    ImmutableSamplerDesc ImtblSamplers[] =
-    {
-        {SHADER_TYPE_PIXEL, "g_ShadowMap", ComparsionSampler}
-    };
-    // clang-format on
-    PSOCreateInfo.PSODesc.ResourceLayout.ImmutableSamplers    = ImtblSamplers;
-        PSOCreateInfo.PSODesc.ResourceLayout.NumImmutableSamplers = sizeof(ImtblSamplers)/sizeof(ImtblSamplers[0]);
-
-    m_pDevice->CreateGraphicsPipelineState(PSOCreateInfo, &m_pPlanePSO);
-
-    // Since we did not explicitly specify the type for 'Constants' variable, default
-    // type (SHADER_RESOURCE_VARIABLE_TYPE_STATIC) will be used. Static variables never
-    // change and are bound directly through the pipeline state object.
-    m_pPlanePSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "Constants")->Set(m_VSConstants);
-    }
-
-    void C6GERender::CreateShadowMapVisPSO() 
-    {
-        GraphicsPipelineStateCreateInfo PSOCreateInfo;
-
-    PSOCreateInfo.PSODesc.Name = "Shadow Map Vis PSO";
-
-    // This is a graphics pipeline
-    PSOCreateInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
-
-    // clang-format off
-    // This tutorial renders to a single render target
-    PSOCreateInfo.GraphicsPipeline.NumRenderTargets             = 1;
-    // Set render target format which is the format of the swap chain's color buffer
-    PSOCreateInfo.GraphicsPipeline.RTVFormats[0]                = m_pSwapChain->GetDesc().ColorBufferFormat;
-    // Set depth buffer format which is the format of the swap chain's back buffer
-    PSOCreateInfo.GraphicsPipeline.DSVFormat                    = m_pSwapChain->GetDesc().DepthBufferFormat;
-    // Primitive topology defines what kind of primitives will be rendered by this pipeline state
-    PSOCreateInfo.GraphicsPipeline.PrimitiveTopology            = PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
-    // No cull
-    PSOCreateInfo.GraphicsPipeline.RasterizerDesc.CullMode      = CULL_MODE_NONE;
-    // Disable depth testing
-    PSOCreateInfo.GraphicsPipeline.DepthStencilDesc.DepthEnable = False;
-    // clang-format on
-
-    ShaderCreateInfo ShaderCI;
-    // Tell the system that the shader source code is in HLSL.
-    // For OpenGL, the engine will convert this into GLSL under the hood.
-    ShaderCI.SourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
-
-    // OpenGL backend requires emulated combined HLSL texture samplers (g_Texture + g_Texture_sampler combination)
-    ShaderCI.Desc.UseCombinedTextureSamplers = true;
-
-    // Presentation engine always expects input in gamma space. Normally, pixel shader output is
-    // converted from linear to gamma space by the GPU. However, some platforms (e.g. Android in GLES mode,
-    // or Emscripten in WebGL mode) do not support gamma-correction. In this case the application
-    // has to do the conversion manually.
-    ShaderMacro Macros[] = {{"CONVERT_PS_OUTPUT_TO_GAMMA", m_ConvertPSOutputToGamma ? "1" : "0"}};
-    ShaderCI.Macros      = {Macros, sizeof(Macros)/sizeof(Macros[0])};
-
-    // Create a shader source stream factory to load shaders from files.
-    RefCntAutoPtr<IShaderSourceInputStreamFactory> pShaderSourceFactory;
-    m_pEngineFactory->CreateDefaultShaderSourceStreamFactory(nullptr, &pShaderSourceFactory);
-    ShaderCI.pShaderSourceStreamFactory = pShaderSourceFactory;
-    // Create shadow map visualization vertex shader
-    RefCntAutoPtr<IShader> pShadowMapVisVS;
-    {
-        ShaderCI.Desc.ShaderType = SHADER_TYPE_VERTEX;
-        ShaderCI.EntryPoint      = "main";
-        ShaderCI.Desc.Name       = "Shadow Map Vis VS";
-        ShaderCI.FilePath        = "shadow_map_vis.vsh";
-        m_pDevice->CreateShader(ShaderCI, &pShadowMapVisVS);
-    }
-
-    // Create shadow map visualization pixel shader
-    RefCntAutoPtr<IShader> pShadowMapVisPS;
-    {
-        ShaderCI.Desc.ShaderType = SHADER_TYPE_PIXEL;
-        ShaderCI.EntryPoint      = "main";
-        ShaderCI.Desc.Name       = "Shadow Map Vis PS";
-        ShaderCI.FilePath        = "shadow_map_vis.psh";
-        m_pDevice->CreateShader(ShaderCI, &pShadowMapVisPS);
-    }
-
-    PSOCreateInfo.pVS = pShadowMapVisVS;
-    PSOCreateInfo.pPS = pShadowMapVisPS;
-
-    // Define variable type that will be used by default
-    PSOCreateInfo.PSODesc.ResourceLayout.DefaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE;
-
-    ShaderResourceVariableDesc Variables[] =
-        {
-            {SHADER_TYPE_PIXEL, "g_ShadowMap", SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE, SHADER_VARIABLE_FLAG_UNFILTERABLE_FLOAT_TEXTURE_WEBGPU},
-        };
-    PSOCreateInfo.PSODesc.ResourceLayout.Variables    = Variables;
-    PSOCreateInfo.PSODesc.ResourceLayout.NumVariables = sizeof(Variables)/sizeof(Variables[0]);
-
-    // clang-format off
-    SamplerDesc SamLinearClampDesc
-    {
-        FILTER_TYPE_LINEAR, FILTER_TYPE_LINEAR, FILTER_TYPE_LINEAR,
-        TEXTURE_ADDRESS_CLAMP, TEXTURE_ADDRESS_CLAMP, TEXTURE_ADDRESS_CLAMP
-    };
-    ImmutableSamplerDesc ImtblSamplers[] =
-    {
-        {SHADER_TYPE_PIXEL, "g_ShadowMap", SamLinearClampDesc}
-    };
-    // clang-format on
-
-    // Sampling depth textures is not supported on all GLES devices.
-    // Setting non-comparison sampler for shadow map makes the Load() function
-    // always return 0.
-    if (m_pDevice->GetDeviceInfo().Type != RENDER_DEVICE_TYPE_GLES)
-    {
-        PSOCreateInfo.PSODesc.ResourceLayout.ImmutableSamplers    = ImtblSamplers;
-    PSOCreateInfo.PSODesc.ResourceLayout.NumImmutableSamplers = sizeof(ImtblSamplers)/sizeof(ImtblSamplers[0]);
-    }
-
-    m_pDevice->CreateGraphicsPipelineState(PSOCreateInfo, &m_pShadowMapVisPSO);
     }
 
     void C6GERender::Initialize(const SampleInitInfo &InitInfo)
@@ -448,15 +141,17 @@ namespace Diligent
         m_Camera.SetPos(float3(0.f, 0.f, 5.f));
         m_Camera.SetRotation(0.f, 0.f);
 
-        std::vector<StateTransitionDesc> Barriers;
-    // Create dynamic uniform buffer that will store our transformation matrices
-    // Dynamic buffers can be frequently updated by the CPU
-    CreateUniformBuffer(m_pDevice, sizeof(float4x4) * 2 + sizeof(float4), "VS constants CB", &m_VSConstants);
-    Barriers.emplace_back(m_VSConstants, RESOURCE_STATE_UNKNOWN, RESOURCE_STATE_CONSTANT_BUFFER, STATE_TRANSITION_FLAG_UPDATE_STATE);
+        CreateCubePSO();
 
-    CreateCubePSO();
+        // Create plane and shadow-related PSOs
     CreatePlanePSO();
-    CreateShadowMapVisPSO();
+
+        // Load textured cube with normals (required for lighting)
+        m_CubeVertexBuffer = TexturedCube::CreateVertexBuffer(m_pDevice, GEOMETRY_PRIMITIVE_VERTEX_FLAG_ALL);
+        m_CubeIndexBuffer = TexturedCube::CreateIndexBuffer(m_pDevice);
+        m_TextureSRV = TexturedCube::LoadTexture(m_pDevice, "C6GELogo.png")->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+        if (m_CubeSRB)
+            m_CubeSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_Texture")->Set(m_TextureSRV);
 
         // Ensure framebuffer is created after swap chain and device are ready.
         if (m_pSwapChain)
@@ -475,26 +170,13 @@ namespace Diligent
             }
         }
 
-        CreateFramebuffer();
+    CreateFramebuffer();
 
-        // Load cube
-
-    // In this tutorial we need vertices with normals
-    m_CubeVertexBuffer = TexturedCube::CreateVertexBuffer(m_pDevice, GEOMETRY_PRIMITIVE_VERTEX_FLAG_ALL);
-    // Load index buffer
-    m_CubeIndexBuffer = TexturedCube::CreateIndexBuffer(m_pDevice);
-    // Explicitly transition vertex and index buffers to required states
-    Barriers.emplace_back(m_CubeVertexBuffer, RESOURCE_STATE_UNKNOWN, RESOURCE_STATE_VERTEX_BUFFER, STATE_TRANSITION_FLAG_UPDATE_STATE);
-    Barriers.emplace_back(m_CubeIndexBuffer, RESOURCE_STATE_UNKNOWN, RESOURCE_STATE_INDEX_BUFFER, STATE_TRANSITION_FLAG_UPDATE_STATE);
-    // Load texture
-    RefCntAutoPtr<ITexture> CubeTexture = TexturedCube::LoadTexture(m_pDevice, "C6GELogo.png");
-    m_CubeSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_Texture")->Set(CubeTexture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE));
-    // Transition the texture to shader resource state
-    Barriers.emplace_back(CubeTexture, RESOURCE_STATE_UNKNOWN, RESOURCE_STATE_SHADER_RESOURCE, STATE_TRANSITION_FLAG_UPDATE_STATE);
-
+    // Create shadow map and bind it to plane SRB / shadow-visualization SRB
     CreateShadowMap();
 
-    m_pImmediateContext->TransitionResourceStates(static_cast<Uint32>(Barriers.size()), Barriers.data());
+    // Cube vertex/index buffers were already created with normals above. Keep them.
+    printf("[Initialize] Cube VB=%p IB=%p\n", (void *)m_CubeVertexBuffer.RawPtr(), (void *)m_CubeIndexBuffer.RawPtr());
     }
 
     void C6GERender::UpdateUI()
@@ -577,38 +259,11 @@ namespace Diligent
         {
             if (ImGui::Begin("Render Settings", &RenderSettingsOpen, ImGuiWindowFlags_NoCollapse))
             {
-        constexpr int MinShadowMapSize = 256;
-        int           ShadowMapComboId = 0;
-        while ((MinShadowMapSize << ShadowMapComboId) != static_cast<int>(m_ShadowMapSize))
-            ++ShadowMapComboId;
-        if (ImGui::Combo("Shadow map size", &ShadowMapComboId,
-                         "256\0"
-                         "512\0"
-                         "1024\0\0"))
-        {
-            m_ShadowMapSize = MinShadowMapSize << ShadowMapComboId;
-            CreateShadowMap();
-        }
-        ImGui::gizmo3D("##LightDirection", m_LightDirection, ImGui::GetTextLineHeight() * 10);
-            }
-            {
-                // Show diagnostics about deferred contexts so the user knows why worker threads may be unavailable
-                int totalDeferred = static_cast<int>(m_pDeferredContexts.size());
-                int validDeferred = 0;
-                for (size_t i = 0; i < m_pDeferredContexts.size(); ++i)
-                    if (m_pDeferredContexts[i])
-                        ++validDeferred;
-
-                ImGui::Text("Deferred contexts: %d total, %d valid", totalDeferred, validDeferred);
-                if (validDeferred == 0)
+                ImGui::SliderFloat("Line Width", &m_LineWidth, 1.f, 10.f);
+                if (ImGui::CollapsingHeader("Shadows", ImGuiTreeNodeFlags_DefaultOpen))
                 {
-                    ImGui::TextWrapped("Worker threads are not available because no valid deferred contexts were provided by the engine for the current backend.\nIf you expect worker threads to be available, rebuild after enabling deferred contexts in ModifyEngineInitInfo or use a backend that supports deferred contexts (Vulkan/D3D12).\n");
+                    ImGui::Checkbox("Shadow Maps", &RenderShadows);
                 }
-
-                // Allow the user to change the slider up to the total number of deferred contexts
-                // even if some of them are null. Starting threads will only use valid contexts.
-                ImGui::BeginDisabled(totalDeferred == 0);
-                ImGui::EndDisabled();
             }
             ImGui::End();
         }
@@ -617,6 +272,19 @@ namespace Diligent
     void C6GERender::UpdateViewportUI()
     {
         {
+            // Safety: ensure ImGui context exists and docking is enabled before using DockBuilder APIs
+            if (ImGui::GetCurrentContext() == nullptr)
+            {
+                // ImGui context not ready yet; skip UI update this frame
+                std::cerr << "[C6GE] ImGui context not ready, skipping viewport UI update." << std::endl;
+                return;
+            }
+            if (!(ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_DockingEnable))
+            {
+                // Docking not enabled; skip dockspace setup
+                std::cerr << "[C6GE] ImGui docking not enabled, skipping viewport UI update." << std::endl;
+                return;
+            }
             // Create a fullscreen dockspace
             auto *viewport = ImGui::GetMainViewport();
             ImGui::SetNextWindowPos(viewport->WorkPos);
@@ -716,23 +384,39 @@ namespace Diligent
             if (first_time)
             {
                 first_time = false;
-                ImGui::DockBuilderRemoveNode(dockspace_id);
-                ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
-                ImGui::DockBuilderSetNodeSize(dockspace_id, viewport->WorkSize);
+                // Validate viewport and dockspace id before using DockBuilder APIs
+                if (viewport == nullptr)
+                {
+                    std::cerr << "[C6GE] UpdateViewportUI: main viewport is null, skipping dock setup." << std::endl;
+                }
+                else if (viewport->WorkSize.x <= 0.0f || viewport->WorkSize.y <= 0.0f)
+                {
+                    std::cerr << "[C6GE] UpdateViewportUI: invalid viewport WorkSize=" << viewport->WorkSize.x << "," << viewport->WorkSize.y << ", skipping dock setup." << std::endl;
+                }
+                else if (dockspace_id == 0)
+                {
+                    std::cerr << "[C6GE] UpdateViewportUI: dockspace id is 0, skipping dock setup." << std::endl;
+                }
+                else
+                {
+                    ImGui::DockBuilderRemoveNode(dockspace_id);
+                    ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
+                    ImGui::DockBuilderSetNodeSize(dockspace_id, viewport->WorkSize);
 
-                // Split the dockspace
-                auto dock_left = ImGui::DockBuilderSplitNode(dockspace_id, (ImGuiDir)ImGuiDir_Left, 0.2f, nullptr, &dockspace_id);
-                auto dock_right = ImGui::DockBuilderSplitNode(dockspace_id, (ImGuiDir)ImGuiDir_Right, 0.25f, nullptr, &dockspace_id);
-                auto dock_down = ImGui::DockBuilderSplitNode(dockspace_id, (ImGuiDir)ImGuiDir_Down, 0.3f, nullptr, &dockspace_id);
+                    // Split the dockspace
+                    auto dock_left = ImGui::DockBuilderSplitNode(dockspace_id, (ImGuiDir)ImGuiDir_Left, 0.2f, nullptr, &dockspace_id);
+                    auto dock_right = ImGui::DockBuilderSplitNode(dockspace_id, (ImGuiDir)ImGuiDir_Right, 0.25f, nullptr, &dockspace_id);
+                    auto dock_down = ImGui::DockBuilderSplitNode(dockspace_id, (ImGuiDir)ImGuiDir_Down, 0.3f, nullptr, &dockspace_id);
 
-                // Dock windows to specific nodes
-                ImGui::DockBuilderDockWindow("Viewport", dockspace_id);
-                ImGui::DockBuilderDockWindow("Scene", dock_left);
-                ImGui::DockBuilderDockWindow("Properties", dock_right);
-                ImGui::DockBuilderDockWindow("Console", dock_down);
-                ImGui::DockBuilderDockWindow("Settings", dock_right);
+                    // Dock windows to specific nodes
+                    ImGui::DockBuilderDockWindow("Viewport", dockspace_id);
+                    ImGui::DockBuilderDockWindow("Scene", dock_left);
+                    ImGui::DockBuilderDockWindow("Properties", dock_right);
+                    ImGui::DockBuilderDockWindow("Console", dock_down);
+                    ImGui::DockBuilderDockWindow("Settings", dock_right);
 
-                ImGui::DockBuilderFinish(dockspace_id);
+                    ImGui::DockBuilderFinish(dockspace_id);
+                }
             }
 
             ImGui::End();
@@ -790,172 +474,317 @@ namespace Diligent
         }
     }
 
-    void C6GERender::CreateShadowMap() 
-    {
-        TextureDesc SMDesc;
-    SMDesc.Name      = "Shadow map";    
-    SMDesc.Type      = RESOURCE_DIM_TEX_2D;
-    SMDesc.Width     = m_ShadowMapSize;
-    SMDesc.Height    = m_ShadowMapSize;
-    SMDesc.Format    = m_ShadowMapFormat;
-    SMDesc.BindFlags = BIND_SHADER_RESOURCE | BIND_DEPTH_STENCIL;
-    RefCntAutoPtr<ITexture> ShadowMap;
-    m_pDevice->CreateTexture(SMDesc, nullptr, &ShadowMap);
-    m_ShadowMapSRV = ShadowMap->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
-    m_ShadowMapDSV = ShadowMap->GetDefaultView(TEXTURE_VIEW_DEPTH_STENCIL);
-
-    // Create SRBs that use shadow map as mutable variable
-    m_PlaneSRB.Release();
-    m_pPlanePSO->CreateShaderResourceBinding(&m_PlaneSRB, true);
-    m_PlaneSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_ShadowMap")->Set(m_ShadowMapSRV);
-
-    m_ShadowMapVisSRB.Release();
-    m_pShadowMapVisPSO->CreateShaderResourceBinding(&m_ShadowMapVisSRB, true);
-    m_ShadowMapVisSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_ShadowMap")->Set(m_ShadowMapSRV);
-    }
-
-    void C6GERender::RenderShadowMap() 
-    {
-        float3 f3LightSpaceX, f3LightSpaceY, f3LightSpaceZ;
-    f3LightSpaceZ = normalize(m_LightDirection);
-
-    float min_cmp = std::min(std::min(std::abs(m_LightDirection.x), std::abs(m_LightDirection.y)), std::abs(m_LightDirection.z));
-    if (min_cmp == std::abs(m_LightDirection.x))
-        f3LightSpaceX = float3(1, 0, 0);
-    else if (min_cmp == std::abs(m_LightDirection.y))
-        f3LightSpaceX = float3(0, 1, 0);
-    else
-        f3LightSpaceX = float3(0, 0, 1);
-
-    f3LightSpaceY = cross(f3LightSpaceZ, f3LightSpaceX);
-    f3LightSpaceX = cross(f3LightSpaceY, f3LightSpaceZ);
-    f3LightSpaceX = normalize(f3LightSpaceX);
-    f3LightSpaceY = normalize(f3LightSpaceY);
-
-    float4x4 WorldToLightViewSpaceMatr = float4x4::ViewFromBasis(f3LightSpaceX, f3LightSpaceY, f3LightSpaceZ);
-
-    // For this tutorial we know that the scene center is at (0,0,0).
-    // Real applications will want to compute tight bounds
-
-    float3 f3SceneCenter = float3(0, 0, 0);
-    float  SceneRadius   = std::sqrt(3.f);
-    float3 f3MinXYZ      = f3SceneCenter - float3(SceneRadius, SceneRadius, SceneRadius);
-    float3 f3MaxXYZ      = f3SceneCenter + float3(SceneRadius, SceneRadius, SceneRadius * 5);
-    float3 f3SceneExtent = f3MaxXYZ - f3MinXYZ;
-
-    const RenderDeviceInfo& DevInfo = m_pDevice->GetDeviceInfo();
-
-    const bool IsGL = DevInfo.IsGLDevice();
-    float4     f4LightSpaceScale;
-    f4LightSpaceScale.x = 2.f / f3SceneExtent.x;
-    f4LightSpaceScale.y = 2.f / f3SceneExtent.y;
-    f4LightSpaceScale.z = (IsGL ? 2.f : 1.f) / f3SceneExtent.z;
-    // Apply bias to shift the extent to [-1,1]x[-1,1]x[0,1] for DX or to [-1,1]x[-1,1]x[-1,1] for GL
-    // Find bias such that f3MinXYZ -> (-1,-1,0) for DX or (-1,-1,-1) for GL
-    float4 f4LightSpaceScaledBias;
-    f4LightSpaceScaledBias.x = -f3MinXYZ.x * f4LightSpaceScale.x - 1.f;
-    f4LightSpaceScaledBias.y = -f3MinXYZ.y * f4LightSpaceScale.y - 1.f;
-    f4LightSpaceScaledBias.z = -f3MinXYZ.z * f4LightSpaceScale.z + (IsGL ? -1.f : 0.f);
-
-    float4x4 ScaleMatrix      = float4x4::Scale(f4LightSpaceScale.x, f4LightSpaceScale.y, f4LightSpaceScale.z);
-    float4x4 ScaledBiasMatrix = float4x4::Translation(f4LightSpaceScaledBias.x, f4LightSpaceScaledBias.y, f4LightSpaceScaledBias.z);
-
-    // Note: bias is applied after scaling!
-    float4x4 ShadowProjMatr = ScaleMatrix * ScaledBiasMatrix;
-
-    // Adjust the world to light space transformation matrix
-    float4x4 WorldToLightProjSpaceMatr = WorldToLightViewSpaceMatr * ShadowProjMatr;
-
-    const NDCAttribs& NDC           = DevInfo.GetNDCAttribs();
-    float4x4          ProjToUVScale = float4x4::Scale(0.5f, NDC.YtoVScale, NDC.ZtoDepthScale);
-    float4x4          ProjToUVBias  = float4x4::Translation(0.5f, 0.5f, NDC.GetZtoDepthBias());
-
-    m_WorldToShadowMapUVDepthMatr = WorldToLightProjSpaceMatr * ProjToUVScale * ProjToUVBias;
-
-    RenderCube(WorldToLightProjSpaceMatr, true);
-    }
-
-    void C6GERender::RenderCube(const float4x4& CameraViewProj, bool IsShadowPass) 
-    {
-        // Update constant buffer
-    {
-        struct Constants
-        {
-            float4x4 WorldViewProj;
-            float4x4 NormalTranform;
-            float4   LightDirection;
-        };
-        // Map the buffer and write current world-view-projection matrix
-        MapHelper<Constants> CBConstants(m_pImmediateContext, m_VSConstants, MAP_WRITE, MAP_FLAG_DISCARD);
-        CBConstants->WorldViewProj = (m_CubeWorldMatrix * CameraViewProj);
-        float4x4 NormalMatrix      = m_CubeWorldMatrix.RemoveTranslation().Inverse().Transpose();
-        // We need to do inverse-transpose, but we also need to transpose the matrix
-        // before writing it to the buffer
-        CBConstants->NormalTranform = NormalMatrix;
-        CBConstants->LightDirection = m_LightDirection;
-    }
-
-    // Bind vertex buffer
-    IBuffer* pBuffs[] = {m_CubeVertexBuffer};
-    // Note that since resources have been explicitly transitioned to required states, we use RESOURCE_STATE_TRANSITION_MODE_VERIFY flag
-    m_pImmediateContext->SetVertexBuffers(0, 1, pBuffs, nullptr, RESOURCE_STATE_TRANSITION_MODE_VERIFY, SET_VERTEX_BUFFERS_FLAG_RESET);
-    m_pImmediateContext->SetIndexBuffer(m_CubeIndexBuffer, 0, RESOURCE_STATE_TRANSITION_MODE_VERIFY);
-
-    // Set pipeline state and commit resources
-    if (IsShadowPass)
-    {
-        m_pImmediateContext->SetPipelineState(m_pCubeShadowPSO);
-        m_pImmediateContext->CommitShaderResources(m_CubeShadowSRB, RESOURCE_STATE_TRANSITION_MODE_VERIFY);
-    }
-    else
-    {
-        m_pImmediateContext->SetPipelineState(m_pCubePSO);
-        m_pImmediateContext->CommitShaderResources(m_CubeSRB, RESOURCE_STATE_TRANSITION_MODE_VERIFY);
-    }
-
-    DrawIndexedAttribs DrawAttrs(36, VT_UINT32, DRAW_FLAG_VERIFY_ALL);
-    m_pImmediateContext->DrawIndexed(DrawAttrs);
-    }
-
-    void C6GERender::RenderPlane() 
-    {
-        {
-        struct Constants
-        {
-            float4x4 CameraViewProj;
-            float4x4 WorldToShadowMapUVDepth;
-            float4   LightDirection;
-        };
-        MapHelper<Constants> CBConstants(m_pImmediateContext, m_VSConstants, MAP_WRITE, MAP_FLAG_DISCARD);
-        CBConstants->CameraViewProj          = m_CameraViewProjMatrix;
-        CBConstants->WorldToShadowMapUVDepth = m_WorldToShadowMapUVDepthMatr;
-        CBConstants->LightDirection          = m_LightDirection;
-    }
-
-    m_pImmediateContext->SetPipelineState(m_pPlanePSO);
-    // Commit shader resources. RESOURCE_STATE_TRANSITION_MODE_TRANSITION mode
-    // makes sure that resources are transitioned to required states.
-    // Note that Vulkan requires shadow map to be transitioned to DEPTH_READ state, not SHADER_RESOURCE
-    m_pImmediateContext->CommitShaderResources(m_PlaneSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-
-    DrawAttribs DrawAttrs(4, DRAW_FLAG_VERIFY_ALL);
-    m_pImmediateContext->Draw(DrawAttrs);
-    }
-
-    void C6GERender::RenderShadowMapVis() 
-    {
-        m_pImmediateContext->SetPipelineState(m_pShadowMapVisPSO);
-    m_pImmediateContext->CommitShaderResources(m_ShadowMapVisSRB, RESOURCE_STATE_TRANSITION_MODE_VERIFY);
-
-    DrawAttribs DrawAttrs(4, DRAW_FLAG_VERIFY_ALL);
-    m_pImmediateContext->Draw(DrawAttrs);
-    }
-
     void C6GERender::DXSDKMESH_VERTEX_ELEMENTtoInputLayoutDesc(const DXSDKMESH_VERTEX_ELEMENT *VertexElement,
                                                                Uint32 Stride,
                                                                InputLayoutDesc &Layout,
                                                                std::vector<LayoutElement> &Elements)
     {
+    }
+
+    void C6GERender::CreateCubePSO()
+    {
+        // Pipeline state object encompasses configuration of all GPU stages
+
+        GraphicsPipelineStateCreateInfo PSOCreateInfo;
+
+        // Pipeline state name is used by the engine to report issues.
+        // It is always a good idea to give objects descriptive names.
+        PSOCreateInfo.PSODesc.Name = "Cube PSO";
+
+        // This is a graphics pipeline
+        PSOCreateInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+
+        // clang-format off
+        // This tutorial will render to a single render target
+        PSOCreateInfo.GraphicsPipeline.NumRenderTargets             = 1;
+        // Set render target format which is the format of the swap chain's color buffer
+        PSOCreateInfo.GraphicsPipeline.RTVFormats[0]                = m_pSwapChain->GetDesc().ColorBufferFormat;
+        // Set depth buffer format which is the format of the swap chain's back buffer
+        PSOCreateInfo.GraphicsPipeline.DSVFormat                    = m_pSwapChain->GetDesc().DepthBufferFormat;
+        // Primitive topology defines what kind of primitives will be rendered by this pipeline state
+        PSOCreateInfo.GraphicsPipeline.PrimitiveTopology            = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        // Cull back faces
+        PSOCreateInfo.GraphicsPipeline.RasterizerDesc.CullMode      = CULL_MODE_BACK;
+        // Enable depth testing
+        PSOCreateInfo.GraphicsPipeline.DepthStencilDesc.DepthEnable = True;
+        // clang-format on
+
+        // Create dynamic uniform buffer that will store shader constants
+        CreateUniformBuffer(m_pDevice, sizeof(Constants), "Shader constants CB", &m_VSConstants);
+
+        ShaderCreateInfo ShaderCI;
+        // Tell the system that the shader source code is in HLSL.
+        // For OpenGL, the engine will convert this into GLSL under the hood.
+        ShaderCI.SourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+
+        // OpenGL backend requires emulated combined HLSL texture samplers (g_Texture + g_Texture_sampler combination)
+        ShaderCI.Desc.UseCombinedTextureSamplers = true;
+
+        // Pack matrices in row-major order
+        ShaderCI.CompileFlags = SHADER_COMPILE_FLAG_PACK_MATRIX_ROW_MAJOR;
+
+        // Presentation engine always expects input in gamma space. Normally, pixel shader output is
+        // converted from linear to gamma space by the GPU. However, some platforms (e.g. Android in GLES mode,
+        // or Emscripten in WebGL mode) do not support gamma-correction. In this case the application
+        // has to do the conversion manually.
+        ShaderMacro Macros[] = {{"CONVERT_PS_OUTPUT_TO_GAMMA", m_ConvertPSOutputToGamma ? "1" : "0"}};
+        ShaderCI.Macros = {Macros, _countof(Macros)};
+
+        // Create a shader source stream factory to load shaders from files.
+        RefCntAutoPtr<IShaderSourceInputStreamFactory> pShaderSourceFactory;
+        m_pEngineFactory->CreateDefaultShaderSourceStreamFactory(nullptr, &pShaderSourceFactory);
+        ShaderCI.pShaderSourceStreamFactory = pShaderSourceFactory;
+
+        // Create a vertex shader
+        RefCntAutoPtr<IShader> pVS;
+        {
+            ShaderCI.Desc.ShaderType = SHADER_TYPE_VERTEX;
+            ShaderCI.EntryPoint = "main";
+            ShaderCI.Desc.Name = "Cube VS";
+            ShaderCI.FilePath = "cube.vsh";
+            m_pDevice->CreateShader(ShaderCI, &pVS);
+        }
+
+        // Create a geometry shader only if the device supports geometry shaders.
+        RefCntAutoPtr<IShader> pGS;
+        if (m_pDevice->GetDeviceInfo().Features.GeometryShaders)
+        {
+            ShaderCI.Desc.ShaderType = SHADER_TYPE_GEOMETRY;
+            ShaderCI.EntryPoint = "main";
+            ShaderCI.Desc.Name = "Cube GS";
+            ShaderCI.FilePath = "cube.gsh";
+            m_pDevice->CreateShader(ShaderCI, &pGS);
+        }
+
+        // Create a pixel shader
+        RefCntAutoPtr<IShader> pPS;
+        {
+            ShaderCI.Desc.ShaderType = SHADER_TYPE_PIXEL;
+            ShaderCI.EntryPoint = "main";
+            ShaderCI.Desc.Name = "Cube PS";
+            ShaderCI.FilePath = "cube.psh";
+            m_pDevice->CreateShader(ShaderCI, &pPS);
+        }
+
+        // clang-format off
+        // Define vertex shader input layout: match structures.fxh (ATTRIB0 Pos, ATTRIB1 Normal, ATTRIB2 UV)
+        LayoutElement LayoutElems[] =
+        {
+            // Attribute 0 - vertex position
+            LayoutElement{0, 0, 3, VT_FLOAT32, False},
+            // Attribute 1 - vertex normal
+            LayoutElement{1, 0, 3, VT_FLOAT32, False},
+            // Attribute 2 - texture coordinates
+            LayoutElement{2, 0, 2, VT_FLOAT32, False}
+        };
+        // clang-format on
+
+        PSOCreateInfo.pVS = pVS;
+        // Assign geometry shader only if it was created (device supports geometry shaders)
+        if (pGS)
+            PSOCreateInfo.pGS = pGS;
+        PSOCreateInfo.pPS = pPS;
+
+        PSOCreateInfo.GraphicsPipeline.InputLayout.LayoutElements = LayoutElems;
+        PSOCreateInfo.GraphicsPipeline.InputLayout.NumElements = _countof(LayoutElems);
+
+        // Define variable type that will be used by default
+        PSOCreateInfo.PSODesc.ResourceLayout.DefaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+
+        // Shader variables should typically be mutable, which means they are expected
+        // to change on a per-instance basis
+        // clang-format off
+    ShaderResourceVariableDesc Vars[] = 
+    {
+        {SHADER_TYPE_PIXEL, "g_Texture", SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE}
+    };
+        // clang-format on
+        PSOCreateInfo.PSODesc.ResourceLayout.Variables = Vars;
+        PSOCreateInfo.PSODesc.ResourceLayout.NumVariables = _countof(Vars);
+
+        // Define immutable sampler for g_Texture. Immutable samplers should be used whenever possible
+        // clang-format off
+    SamplerDesc SamLinearClampDesc
+    {
+        FILTER_TYPE_LINEAR, FILTER_TYPE_LINEAR, FILTER_TYPE_LINEAR, 
+        TEXTURE_ADDRESS_CLAMP, TEXTURE_ADDRESS_CLAMP, TEXTURE_ADDRESS_CLAMP
+    };
+    ImmutableSamplerDesc ImtblSamplers[] = 
+    {
+        {SHADER_TYPE_PIXEL, "g_Texture", SamLinearClampDesc}
+    };
+        // clang-format on
+        PSOCreateInfo.PSODesc.ResourceLayout.ImmutableSamplers = ImtblSamplers;
+        PSOCreateInfo.PSODesc.ResourceLayout.NumImmutableSamplers = _countof(ImtblSamplers);
+
+    m_pDevice->CreateGraphicsPipelineState(PSOCreateInfo, &m_pCubePSO);
+    VERIFY_EXPR(m_pCubePSO);
+
+        // clang-format off
+        // Since we did not explicitly specify the type for 'VSConstants', 'GSConstants', 
+        // and 'PSConstants' variables, default type (SHADER_RESOURCE_VARIABLE_TYPE_STATIC) will be used.
+        // Static variables never change and are bound directly to the pipeline state object.
+        auto* pVarVS = m_pCubePSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "VSConstants");
+        if (!pVarVS)
+            pVarVS = m_pCubePSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "Constants");
+        if (pVarVS)
+        {
+            pVarVS->Set(m_VSConstants);
+            std::cout << "[C6GE] Bound VS static variable for Constants" << std::endl;
+        }
+        else
+        {
+            std::cout << "[C6GE] VS static variable for Constants not found in PSO" << std::endl;
+        }
+
+        // Set GS constants only if geometry shader is supported and the PSO exposes the variable
+        if (m_pDevice->GetDeviceInfo().Features.GeometryShaders)
+        {
+            auto* pVarGS = m_pCubePSO->GetStaticVariableByName(SHADER_TYPE_GEOMETRY, "GSConstants");
+            if (!pVarGS)
+                pVarGS = m_pCubePSO->GetStaticVariableByName(SHADER_TYPE_GEOMETRY, "Constants");
+            if (pVarGS)
+            {
+                pVarGS->Set(m_VSConstants);
+                std::cout << "[C6GE] Bound GS static variable for Constants" << std::endl;
+            }
+            else
+            {
+                std::cout << "[C6GE] GS static variable for Constants not found in PSO" << std::endl;
+            }
+        }
+
+        auto* pVarPS = m_pCubePSO->GetStaticVariableByName(SHADER_TYPE_PIXEL, "PSConstants");
+        if (!pVarPS)
+            pVarPS = m_pCubePSO->GetStaticVariableByName(SHADER_TYPE_PIXEL, "Constants");
+        if (pVarPS)
+        {
+            pVarPS->Set(m_VSConstants);
+            std::cout << "[C6GE] Bound PS static variable for Constants" << std::endl;
+        }
+        else
+        {
+            std::cout << "[C6GE] PS static variable for Constants not found in PSO" << std::endl;
+        }
+        // clang-format on
+
+        // Since we are using mutable variable, we must create a shader resource binding object
+        // http://diligentgraphics.com/2016/03/23/resource-binding-model-in-diligent-engine-2-0/
+    m_pCubePSO->CreateShaderResourceBinding(&m_CubeSRB, true);
+
+    // Create shadow pass PSO (depth-only)
+    {
+        GraphicsPipelineStateCreateInfo ShadowPSOCI;
+        ShadowPSOCI.PSODesc.Name = "Cube shadow PSO";
+        ShadowPSOCI.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+        ShadowPSOCI.GraphicsPipeline.NumRenderTargets = 0;
+        ShadowPSOCI.GraphicsPipeline.RTVFormats[0] = TEX_FORMAT_UNKNOWN;
+        ShadowPSOCI.GraphicsPipeline.DSVFormat = m_ShadowMapFormat;
+        ShadowPSOCI.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        ShadowPSOCI.GraphicsPipeline.RasterizerDesc.CullMode = CULL_MODE_BACK;
+        ShadowPSOCI.GraphicsPipeline.DepthStencilDesc.DepthEnable = True;
+
+        ShaderCreateInfo ShadowShaderCI;
+        ShadowShaderCI.pShaderSourceStreamFactory = pShaderSourceFactory;
+        ShadowShaderCI.SourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+        ShadowShaderCI.Desc.UseCombinedTextureSamplers = true;
+        ShadowShaderCI.CompileFlags = SHADER_COMPILE_FLAG_PACK_MATRIX_ROW_MAJOR;
+
+        RefCntAutoPtr<IShader> pShadowVS;
+        ShadowShaderCI.Desc.ShaderType = SHADER_TYPE_VERTEX;
+        ShadowShaderCI.EntryPoint = "main";
+        ShadowShaderCI.Desc.Name = "Cube Shadow VS";
+        ShadowShaderCI.FilePath = "cube_shadow.vsh";
+        m_pDevice->CreateShader(ShadowShaderCI, &pShadowVS);
+
+        ShadowPSOCI.pVS = pShadowVS;
+        ShadowPSOCI.pPS = nullptr;
+
+        LayoutElement ShadowLayoutElems[] =
+        {
+            // Match structures.fxh: ATTRIB0 = Pos (float3), ATTRIB1 = Normal (float3), ATTRIB2 = UV (float2)
+            LayoutElement{0, 0, 3, VT_FLOAT32, False}, // Position
+            LayoutElement{1, 0, 3, VT_FLOAT32, False}, // Normal
+            LayoutElement{2, 0, 2, VT_FLOAT32, False}  // UV
+        };
+        ShadowPSOCI.GraphicsPipeline.InputLayout.LayoutElements = ShadowLayoutElems;
+        ShadowPSOCI.GraphicsPipeline.InputLayout.NumElements = _countof(ShadowLayoutElems);
+
+        ShadowPSOCI.PSODesc.ResourceLayout.DefaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+
+        if (m_pDevice->GetDeviceInfo().Features.DepthClamp)
+            ShadowPSOCI.GraphicsPipeline.RasterizerDesc.DepthClipEnable = False;
+
+        // Add slope-scaled depth bias to reduce shadow acne. These values
+        // are conservative; adjust if you see peter-panning or acne.
+        ShadowPSOCI.GraphicsPipeline.RasterizerDesc.DepthBias = 0;
+        ShadowPSOCI.GraphicsPipeline.RasterizerDesc.DepthBiasClamp = 0.0f;
+        ShadowPSOCI.GraphicsPipeline.RasterizerDesc.SlopeScaledDepthBias = 2.0f;
+
+        m_pDevice->CreateGraphicsPipelineState(ShadowPSOCI, &m_pCubeShadowPSO);
+        if (m_pCubeShadowPSO)
+        {
+            m_pCubeShadowPSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "Constants")->Set(m_VSConstants);
+            m_pCubeShadowPSO->CreateShaderResourceBinding(&m_CubeShadowSRB, true);
+        }
+    }
+
+    // Fallback: also bind constants through the SRB in case the PSO variables are mutable and static binding did not take effect.
+        if (m_CubeSRB && m_VSConstants)
+    {
+        // Vertex stage
+        IShaderResourceVariable* pVar = m_CubeSRB->GetVariableByName(SHADER_TYPE_VERTEX, "Constants");
+        if (!pVar)
+            pVar = m_CubeSRB->GetVariableByName(SHADER_TYPE_VERTEX, "VSConstants");
+        if (pVar)
+        {
+            pVar->Set(m_VSConstants);
+            std::cout << "[C6GE] Bound VS variable in SRB for Constants" << std::endl;
+        }
+        else
+        {
+            std::cout << "[C6GE] VS variable for Constants not found in SRB" << std::endl;
+        }
+
+        // Geometry stage
+        if (m_pDevice->GetDeviceInfo().Features.GeometryShaders)
+        {
+            IShaderResourceVariable* pVarG = m_CubeSRB->GetVariableByName(SHADER_TYPE_GEOMETRY, "Constants");
+            if (!pVarG)
+                pVarG = m_CubeSRB->GetVariableByName(SHADER_TYPE_GEOMETRY, "GSConstants");
+            if (pVarG)
+            {
+                pVarG->Set(m_VSConstants);
+                std::cout << "[C6GE] Bound GS variable in SRB for Constants" << std::endl;
+            }
+            else
+            {
+                std::cout << "[C6GE] GS variable for Constants not found in SRB" << std::endl;
+            }
+        }
+
+        // Pixel stage
+        IShaderResourceVariable* pVarP = m_CubeSRB->GetVariableByName(SHADER_TYPE_PIXEL, "Constants");
+        if (!pVarP)
+            pVarP = m_CubeSRB->GetVariableByName(SHADER_TYPE_PIXEL, "PSConstants");
+        if (pVarP)
+        {
+            pVarP->Set(m_VSConstants);
+            std::cout << "[C6GE] Bound PS variable in SRB for Constants" << std::endl;
+        }
+        else
+        {
+            std::cout << "[C6GE] PS variable for Constants not found in SRB" << std::endl;
+        }
+    }
+    else if (!m_VSConstants)
+    {
+        std::cerr << "[C6GE] Warning: Cannot bind constants - uniform buffer is null." << std::endl;
+    }
+    else
+    {
+        std::cerr << "[C6GE] Warning: Cube SRB is null; cannot bind constants via SRB fallback." << std::endl;
+    }
     }
 
     void C6GERender::CreateFramebuffer()
@@ -1038,6 +867,412 @@ namespace Diligent
         }
     }
 
+    void C6GERender::CreatePlanePSO()
+    {
+        GraphicsPipelineStateCreateInfo PSOCreateInfo;
+
+        PSOCreateInfo.PSODesc.Name = "Plane PSO";
+        PSOCreateInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+
+        PSOCreateInfo.GraphicsPipeline.NumRenderTargets = 1;
+        PSOCreateInfo.GraphicsPipeline.RTVFormats[0] = m_pSwapChain->GetDesc().ColorBufferFormat;
+        PSOCreateInfo.GraphicsPipeline.DSVFormat = m_pSwapChain->GetDesc().DepthBufferFormat;
+        PSOCreateInfo.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+        PSOCreateInfo.GraphicsPipeline.RasterizerDesc.CullMode = CULL_MODE_NONE;
+        PSOCreateInfo.GraphicsPipeline.DepthStencilDesc.DepthEnable = True;
+
+        ShaderCreateInfo ShaderCI;
+        ShaderCI.SourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+        ShaderCI.Desc.UseCombinedTextureSamplers = true;
+        ShaderCI.CompileFlags = SHADER_COMPILE_FLAG_PACK_MATRIX_ROW_MAJOR;
+
+        ShaderMacro Macros[] = { {"CONVERT_PS_OUTPUT_TO_GAMMA", m_ConvertPSOutputToGamma ? "1" : "0"} };
+        ShaderCI.Macros = {Macros, _countof(Macros)};
+
+        RefCntAutoPtr<IShaderSourceInputStreamFactory> pShaderSourceFactory;
+        m_pEngineFactory->CreateDefaultShaderSourceStreamFactory(nullptr, &pShaderSourceFactory);
+        ShaderCI.pShaderSourceStreamFactory = pShaderSourceFactory;
+
+        // Create plane vertex shader
+        RefCntAutoPtr<IShader> pPlaneVS;
+        ShaderCI.Desc.ShaderType = SHADER_TYPE_VERTEX;
+        ShaderCI.EntryPoint = "main";
+        ShaderCI.Desc.Name = "Plane VS";
+        ShaderCI.FilePath = "plane.vsh";
+        m_pDevice->CreateShader(ShaderCI, &pPlaneVS);
+
+        // Create plane pixel shader
+        RefCntAutoPtr<IShader> pPlanePS;
+        ShaderCI.Desc.ShaderType = SHADER_TYPE_PIXEL;
+        ShaderCI.EntryPoint = "main";
+        ShaderCI.Desc.Name = "Plane PS";
+        ShaderCI.FilePath = "plane.psh";
+        m_pDevice->CreateShader(ShaderCI, &pPlanePS);
+
+        PSOCreateInfo.pVS = pPlaneVS;
+        PSOCreateInfo.pPS = pPlanePS;
+
+        PSOCreateInfo.PSODesc.ResourceLayout.DefaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+
+        ShaderResourceVariableDesc Vars[] =
+        {
+            {SHADER_TYPE_PIXEL, "g_ShadowMap", SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE}
+        };
+        PSOCreateInfo.PSODesc.ResourceLayout.Variables = Vars;
+        PSOCreateInfo.PSODesc.ResourceLayout.NumVariables = _countof(Vars);
+
+        SamplerDesc ComparisonSampler;
+        ComparisonSampler.ComparisonFunc = COMPARISON_FUNC_LESS;
+        ComparisonSampler.MinFilter = FILTER_TYPE_COMPARISON_LINEAR;
+        ComparisonSampler.MagFilter = FILTER_TYPE_COMPARISON_LINEAR;
+        ComparisonSampler.MipFilter = FILTER_TYPE_COMPARISON_LINEAR;
+
+        ImmutableSamplerDesc ImtblSamplers[] =
+        {
+            {SHADER_TYPE_PIXEL, "g_ShadowMap", ComparisonSampler}
+        };
+
+        if (m_pDevice->GetDeviceInfo().Type != RENDER_DEVICE_TYPE_GLES)
+        {
+            PSOCreateInfo.PSODesc.ResourceLayout.ImmutableSamplers = ImtblSamplers;
+            PSOCreateInfo.PSODesc.ResourceLayout.NumImmutableSamplers = _countof(ImtblSamplers);
+        }
+
+        m_pDevice->CreateGraphicsPipelineState(PSOCreateInfo, &m_pPlanePSO);
+
+        if (!m_pPlanePSO)
+        {
+            std::cerr << "[C6GE] Error: Failed to create Plane PSO." << std::endl;
+        }
+        else
+        {
+            // Bind static constants if present
+            auto* pVar = m_pPlanePSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "Constants");
+            if (pVar)
+                pVar->Set(m_VSConstants);
+
+            // Create a shader resource binding right away so the PSO always has
+            // an SRB available even before the shadow map SRV is created.
+            m_PlaneSRB.Release();
+            m_pPlanePSO->CreateShaderResourceBinding(&m_PlaneSRB, true);
+            if (m_PlaneSRB)
+            {
+                // If shadow SRV already exists, bind it; otherwise it will be
+                // bound later in CreateShadowMap().
+                if (m_ShadowMapSRV)
+                {
+                    auto* var = m_PlaneSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_ShadowMap");
+                    if (var)
+                        var->Set(m_ShadowMapSRV);
+                }
+                std::cout << "[C6GE] Created fallback Plane SRB at PSO creation time." << std::endl;
+            }
+            else
+            {
+                std::cerr << "[C6GE] Warning: Failed to create fallback Plane SRB at PSO creation time." << std::endl;
+            }
+        }
+
+        // Also create a no-shadow variant that uses a simpler pixel shader
+        // (plane_no_shadow.psh) and does not expose g_ShadowMap variable.
+        // Reuse same VS and most of the PSO settings.
+        GraphicsPipelineStateCreateInfo NoShadowPSOCI = PSOCreateInfo;
+        RefCntAutoPtr<IShader> pNoShadowPS;
+        ShaderCreateInfo NoShadowCI = ShaderCI;
+        NoShadowCI.Desc.ShaderType = SHADER_TYPE_PIXEL;
+        NoShadowCI.EntryPoint = "main";
+        NoShadowCI.Desc.Name = "Plane NoShadow PS";
+        NoShadowCI.FilePath = "plane_no_shadow.psh";
+        m_pDevice->CreateShader(NoShadowCI, &pNoShadowPS);
+    NoShadowPSOCI.pVS = pPlaneVS;
+    NoShadowPSOCI.pPS = pNoShadowPS;
+    NoShadowPSOCI.PSODesc.Name = "Plane NoShadow PSO";
+        // No shadow variable exposure in this PSO
+        NoShadowPSOCI.PSODesc.ResourceLayout.NumVariables = 0;
+        NoShadowPSOCI.PSODesc.ResourceLayout.Variables = nullptr;
+        if (m_pDevice->GetDeviceInfo().Type != RENDER_DEVICE_TYPE_GLES)
+        {
+            NoShadowPSOCI.PSODesc.ResourceLayout.NumImmutableSamplers = 0;
+            NoShadowPSOCI.PSODesc.ResourceLayout.ImmutableSamplers = nullptr;
+        }
+        m_pDevice->CreateGraphicsPipelineState(NoShadowPSOCI, &m_pPlaneNoShadowPSO);
+        if (!m_pPlaneNoShadowPSO)
+        {
+            std::cerr << "[C6GE] Error: Failed to create Plane No-Shadow PSO." << std::endl;
+        }
+        else
+        {
+            auto* pVarNS = m_pPlaneNoShadowPSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "Constants");
+            if (pVarNS)
+                pVarNS->Set(m_VSConstants);
+
+            // Create an SRB for the no-shadow PSO as well to satisfy backends
+            // that require an SRB to be bound for any pipeline.
+            m_PlaneNoShadowSRB.Release();
+            m_pPlaneNoShadowPSO->CreateShaderResourceBinding(&m_PlaneNoShadowSRB, true);
+            if (m_PlaneNoShadowSRB)
+            {
+                std::cout << "[C6GE] Created Plane No-Shadow SRB at PSO creation time." << std::endl;
+            }
+            else
+            {
+                std::cerr << "[C6GE] Warning: Failed to create Plane No-Shadow SRB at PSO creation time." << std::endl;
+            }
+        }
+    }
+
+    // Shadow-map visualization has been removed. Visualization PSO creation was here previously.
+
+    void C6GERender::CreateShadowMap()
+    {
+        TextureDesc SMDesc;
+        SMDesc.Name = "Shadow map";
+        SMDesc.Type = RESOURCE_DIM_TEX_2D;
+        SMDesc.Width = m_ShadowMapSize;
+        SMDesc.Height = m_ShadowMapSize;
+        SMDesc.Format = m_ShadowMapFormat;
+        SMDesc.BindFlags = BIND_SHADER_RESOURCE | BIND_DEPTH_STENCIL;
+        RefCntAutoPtr<ITexture> ShadowMap;
+        m_pDevice->CreateTexture(SMDesc, nullptr, &ShadowMap);
+        m_ShadowMapSRV = ShadowMap->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+        m_ShadowMapDSV = ShadowMap->GetDefaultView(TEXTURE_VIEW_DEPTH_STENCIL);
+
+        // Create SRBs that use shadow map as mutable variable
+        m_PlaneSRB.Release();
+        if (m_pPlanePSO)
+            m_pPlanePSO->CreateShaderResourceBinding(&m_PlaneSRB, true);
+        if (m_PlaneSRB)
+            m_PlaneSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_ShadowMap")->Set(m_ShadowMapSRV);
+
+        // Visualization SRB removed; only bind shadow map to plane SRB
+    }
+
+    void C6GERender::RenderShadowMap()
+    {
+        // Compute world->light projection matrix and store to m_WorldToShadowMapUVDepthMatr
+        float3 f3LightSpaceX, f3LightSpaceY, f3LightSpaceZ;
+        f3LightSpaceZ = normalize(m_LightDirection);
+
+        float min_cmp = std::min(std::min(std::abs(m_LightDirection.x), std::abs(m_LightDirection.y)), std::abs(m_LightDirection.z));
+        if (min_cmp == std::abs(m_LightDirection.x))
+            f3LightSpaceX = float3(1,0,0);
+        else if (min_cmp == std::abs(m_LightDirection.y))
+            f3LightSpaceX = float3(0,1,0);
+        else
+            f3LightSpaceX = float3(0,0,1);
+
+        f3LightSpaceY = cross(f3LightSpaceZ, f3LightSpaceX);
+        f3LightSpaceX = cross(f3LightSpaceY, f3LightSpaceZ);
+        f3LightSpaceX = normalize(f3LightSpaceX);
+        f3LightSpaceY = normalize(f3LightSpaceY);
+
+        float4x4 WorldToLightViewSpaceMatr = float4x4::ViewFromBasis(f3LightSpaceX, f3LightSpaceY, f3LightSpaceZ);
+
+    float3 f3SceneCenter = float3(0,0,0);
+    // Increase scene radius to include the plane (plane extends to +/-5.0 in X/Z and is at Y=-2)
+    float SceneRadius = 6.0f;
+    float3 f3MinXYZ = f3SceneCenter - float3(SceneRadius, SceneRadius, SceneRadius);
+    // Previously Z extent was scaled by 5 which skewed the light projection
+    // and produced badly scaled shadows. Use symmetric extents here.
+    float3 f3MaxXYZ = f3SceneCenter + float3(SceneRadius, SceneRadius, SceneRadius);
+    float3 f3SceneExtent = f3MaxXYZ - f3MinXYZ;
+
+        const RenderDeviceInfo& DevInfo = m_pDevice->GetDeviceInfo();
+        const bool IsGL = DevInfo.IsGLDevice();
+        float4 f4LightSpaceScale;
+        f4LightSpaceScale.x = 2.f / f3SceneExtent.x;
+        f4LightSpaceScale.y = 2.f / f3SceneExtent.y;
+        f4LightSpaceScale.z = (IsGL ? 2.f : 1.f) / f3SceneExtent.z;
+
+        float4 f4LightSpaceScaledBias;
+        f4LightSpaceScaledBias.x = -f3MinXYZ.x * f4LightSpaceScale.x - 1.f;
+        f4LightSpaceScaledBias.y = -f3MinXYZ.y * f4LightSpaceScale.y - 1.f;
+        f4LightSpaceScaledBias.z = -f3MinXYZ.z * f4LightSpaceScale.z + (IsGL ? -1.f : 0.f);
+
+        float4x4 ScaleMatrix = float4x4::Scale(f4LightSpaceScale.x, f4LightSpaceScale.y, f4LightSpaceScale.z);
+        float4x4 ScaledBiasMatrix = float4x4::Translation(f4LightSpaceScaledBias.x, f4LightSpaceScaledBias.y, f4LightSpaceScaledBias.z);
+
+        float4x4 ShadowProjMatr = ScaleMatrix * ScaledBiasMatrix;
+        float4x4 WorldToLightProjSpaceMatr = WorldToLightViewSpaceMatr * ShadowProjMatr;
+
+        const NDCAttribs& NDC = DevInfo.GetNDCAttribs();
+        float4x4 ProjToUVScale = float4x4::Scale(0.5f, NDC.YtoVScale, NDC.ZtoDepthScale);
+        float4x4 ProjToUVBias = float4x4::Translation(0.5f, 0.5f, NDC.GetZtoDepthBias());
+
+        m_WorldToShadowMapUVDepthMatr = WorldToLightProjSpaceMatr * ProjToUVScale * ProjToUVBias;
+
+        // Render cube to shadow map
+        RenderCube(WorldToLightProjSpaceMatr, true);
+    }
+
+    void C6GERender::RenderCube(const float4x4& CameraViewProj, bool IsShadowPass)
+    {
+        // Update constant buffer
+        {
+            struct Constants
+            {
+                float4x4 WorldViewProj;
+                float4x4 NormalTranform;
+                float4   LightDirection;
+            };
+            MapHelper<Constants> CBConstants(m_pImmediateContext, m_VSConstants, MAP_WRITE, MAP_FLAG_DISCARD);
+            CBConstants->WorldViewProj = (m_CubeWorldMatrix * CameraViewProj);
+            // Compute normal transform as inverse-transpose of the world matrix
+            // without translation (tutorial uses RemoveTranslation + Inverse + Transpose).
+            float4x4 NormalMatrix = m_CubeWorldMatrix.RemoveTranslation().Inverse().Transpose();
+            CBConstants->NormalTranform = NormalMatrix;
+            CBConstants->LightDirection = m_LightDirection;
+        }
+
+        IBuffer* pBuffs[] = {m_CubeVertexBuffer};
+        m_pImmediateContext->SetVertexBuffers(0, 1, pBuffs, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+        m_pImmediateContext->SetIndexBuffer(m_CubeIndexBuffer, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+        if (IsShadowPass)
+        {
+            if (!m_pCubeShadowPSO)
+            {
+                std::cerr << "[C6GE] Error: Cube shadow PSO is null; skipping cube shadow draw." << std::endl;
+                return;
+            }
+            m_pImmediateContext->SetPipelineState(m_pCubeShadowPSO);
+            if (m_CubeShadowSRB)
+                m_pImmediateContext->CommitShaderResources(m_CubeShadowSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        }
+        else
+        {
+            if (!m_pCubePSO)
+            {
+                std::cerr << "[C6GE] Error: Cube PSO is null; skipping cube draw." << std::endl;
+                return;
+            }
+            m_pImmediateContext->SetPipelineState(m_pCubePSO);
+            if (m_CubeSRB)
+                m_pImmediateContext->CommitShaderResources(m_CubeSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        }
+
+        DrawIndexedAttribs DrawAttrs;
+        DrawAttrs.IndexType = VT_UINT32;
+        DrawAttrs.NumIndices = 36;
+        DrawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
+        m_pImmediateContext->DrawIndexed(DrawAttrs);
+    }
+
+    void C6GERender::RenderPlane()
+    {
+        struct PlaneConsts
+        {
+            float4x4 CameraViewProj;
+            float4x4 WorldToShadowMapUVDepth;
+            float4   LightDirection;
+        };
+        MapHelper<PlaneConsts> CBConstants(m_pImmediateContext, m_VSConstants, MAP_WRITE, MAP_FLAG_DISCARD);
+        CBConstants->CameraViewProj = m_CameraViewProjMatrix;
+        CBConstants->WorldToShadowMapUVDepth = m_WorldToShadowMapUVDepthMatr;
+        CBConstants->LightDirection = m_LightDirection;
+
+        // Choose appropriate PSO and commit resources safely
+        IPipelineState* pSelectedPSO = nullptr;
+        bool commitSRB = false;
+        // If shadows are disabled, always use the no-shadow PSO when available
+        if (!RenderShadows)
+        {
+            if (m_pPlaneNoShadowPSO)
+            {
+                pSelectedPSO = m_pPlaneNoShadowPSO;
+                commitSRB = false;
+            }
+            else
+            {
+                std::cerr << "[C6GE] Warning: Shadows are disabled but no-shadow PSO is missing; skipping plane draw." << std::endl;
+                return;
+            }
+        }
+        else
+        {
+            if (m_pPlanePSO && m_PlaneSRB)
+            {
+                pSelectedPSO = m_pPlanePSO;
+                commitSRB = true;
+            }
+            else if (m_pPlanePSO)
+            {
+                // Use plane PSO but will attempt to create SRB fallback later
+                pSelectedPSO = m_pPlanePSO;
+                commitSRB = true;
+            }
+            else
+            {
+                std::cerr << "[C6GE] Warning: Plane PSO is not available; skipping plane draw." << std::endl;
+                return;
+            }
+        }
+
+        if (!pSelectedPSO)
+        {
+            std::cerr << "[C6GE] Error: No valid Plane PSO available; skipping plane draw." << std::endl;
+            return;
+        }
+
+        // If the selected PSO is the plane PSO and we don't have an SRB yet,
+        // try to create a fallback SRB so CommitShaderResources can be called.
+        if (pSelectedPSO == m_pPlanePSO && !m_PlaneSRB)
+        {
+            std::cerr << "[C6GE] Warning: Plane SRB missing at draw time; attempting to create fallback SRB." << std::endl;
+            m_pPlanePSO->CreateShaderResourceBinding(&m_PlaneSRB, true);
+            if (m_PlaneSRB && m_ShadowMapSRV)
+            {
+                auto* var = m_PlaneSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_ShadowMap");
+                if (var)
+                    var->Set(m_ShadowMapSRV);
+            }
+            if (!m_PlaneSRB)
+            {
+                std::cerr << "[C6GE] Error: Failed to create fallback Plane SRB; skipping plane draw to avoid device context assert." << std::endl;
+                return;
+            }
+        }
+
+        // If using the shadowing Plane PSO, ensure SRB exists and commit it after setting the PSO.
+        if (pSelectedPSO == m_pPlanePSO)
+        {
+            if (!m_PlaneSRB)
+            {
+                // Attempt to create the SRB (it may have been created at PSO init already)
+                m_pPlanePSO->CreateShaderResourceBinding(&m_PlaneSRB, true);
+                if (m_PlaneSRB && m_ShadowMapSRV)
+                {
+                    auto* var = m_PlaneSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_ShadowMap");
+                    if (var)
+                        var->Set(m_ShadowMapSRV);
+                }
+            }
+
+            if (!m_PlaneSRB)
+            {
+                std::cerr << "[C6GE] Error: Plane SRB missing; skipping plane draw to avoid device context assert." << std::endl;
+                return;
+            }
+
+            m_pImmediateContext->SetPipelineState(pSelectedPSO);
+            m_pImmediateContext->CommitShaderResources(m_PlaneSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        }
+        else
+        {
+            // No-shadow PSO: ensure its SRB (if any) is committed to satisfy backend validation
+            if (m_PlaneNoShadowSRB)
+            {
+                m_pImmediateContext->CommitShaderResources(m_PlaneNoShadowSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+            }
+            m_pImmediateContext->SetPipelineState(pSelectedPSO);
+        }
+
+        DrawAttribs DrawAttrs(4, DRAW_FLAG_VERIFY_ALL);
+        m_pImmediateContext->Draw(DrawAttrs);
+    }
+
+    // Shadow-map visualization removed; no RenderShadowMapVis implementation.
+
     void C6GERender::ResizeFramebuffer(Uint32 Width, Uint32 Height)
     {
 
@@ -1064,47 +1299,46 @@ namespace Diligent
         // Guard: Only render if framebuffer has valid size
         if (m_FramebufferWidth == 0 || m_FramebufferHeight == 0 || !m_pFramebufferRTV || !m_pFramebufferDSV)
         {
-
             return;
         }
 
-        // Render to the off-screen framebuffer for the ImGui viewport
-        ITextureView *pRTV_Framebuffer = m_pFramebufferRTV;
-        ITextureView *pDSV_Framebuffer = m_pFramebufferDSV;
-        float4 ClearColor_Framebuffer = {0.350f, 0.350f, 0.350f, 1.0f};
-        if (m_ConvertPSOutputToGamma)
+        // 1) Render shadow map
+        if (RenderShadows && m_ShadowMapDSV)
         {
-            ClearColor_Framebuffer = LinearToSRGB(ClearColor_Framebuffer);
+            m_pImmediateContext->SetRenderTargets(0, nullptr, m_ShadowMapDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+            m_pImmediateContext->ClearDepthStencil(m_ShadowMapDSV, CLEAR_DEPTH_FLAG, 1.f, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+            RenderShadowMap();
         }
-        m_pImmediateContext->SetRenderTargets(1, &pRTV_Framebuffer, pDSV_Framebuffer, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        m_pImmediateContext->ClearRenderTarget(pRTV_Framebuffer, ClearColor_Framebuffer.Data(), RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        m_pImmediateContext->ClearDepthStencil(pDSV_Framebuffer, CLEAR_DEPTH_FLAG, 1.f, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
-        // Render shadow map
-        m_pImmediateContext->SetRenderTargets(0, nullptr, m_ShadowMapDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        m_pImmediateContext->ClearDepthStencil(m_ShadowMapDSV, CLEAR_DEPTH_FLAG, 1.f, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        RenderShadowMap();
-
-        // Bind main back buffer
-        ITextureView* pRTV_BackBuffer = m_pSwapChain->GetCurrentBackBufferRTV();
-        ITextureView* pDSV_BackBuffer = m_pSwapChain->GetDepthBufferDSV();
-        m_pImmediateContext->SetRenderTargets(1, &pRTV_BackBuffer, pDSV_BackBuffer, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        // Clear the back buffer
-        float4 ClearColor_BackBuffer = {0.350f, 0.350f, 0.350f, 1.0f};
+        // 2) Render scene into off-screen framebuffer for ImGui viewport
+        ITextureView *pRTV = m_pFramebufferRTV;
+        ITextureView *pDSV = m_pFramebufferDSV;
+        float4 ClearColor = {0.350f, 0.350f, 0.350f, 1.0f};
         if (m_ConvertPSOutputToGamma)
-        {
-            // If manual gamma correction is required, we need to clear the render target with sRGB color
-            ClearColor_BackBuffer = LinearToSRGB(ClearColor_BackBuffer);
-        }
-        m_pImmediateContext->ClearRenderTarget(pRTV_BackBuffer, ClearColor_BackBuffer.Data(), RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        m_pImmediateContext->ClearDepthStencil(pDSV_BackBuffer, CLEAR_DEPTH_FLAG, 1.f, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+            ClearColor = LinearToSRGB(ClearColor);
 
+        m_pImmediateContext->SetRenderTargets(1, &pRTV, pDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        m_pImmediateContext->ClearRenderTarget(pRTV, ClearColor.Data(), RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        m_pImmediateContext->ClearDepthStencil(pDSV, CLEAR_DEPTH_FLAG, 1.f, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+        // Render cube and plane (they update their own constant buffers)
         RenderCube(m_CameraViewProjMatrix, false);
         RenderPlane();
-        RenderShadowMapVis();
+
+        // Shadow visualization removed. No additional overlays.
+
+        // Finally, prepare swap-chain back buffer (host UI etc.)
+        pRTV = m_pSwapChain->GetCurrentBackBufferRTV();
+        pDSV = m_pSwapChain->GetDepthBufferDSV();
+        float4 ClearColorSwap = {0.1f, 0.1f, 0.1f, 1.0f};
+        if (m_ConvertPSOutputToGamma)
+            ClearColorSwap = LinearToSRGB(ClearColorSwap);
+        m_pImmediateContext->SetRenderTargets(1, &pRTV, pDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        m_pImmediateContext->ClearRenderTarget(pRTV, ClearColorSwap.Data(), RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        m_pImmediateContext->ClearDepthStencil(pDSV, CLEAR_DEPTH_FLAG, 1.f, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     }
 
-    void Diligent::C6GERender::Update(double CurrTime, double ElapsedTime, bool DoUpdateUI)
+    void C6GERender::Update(double CurrTime, double ElapsedTime, bool DoUpdateUI)
     {
         SampleBase::Update(CurrTime, ElapsedTime, DoUpdateUI);
 
@@ -1112,22 +1346,23 @@ namespace Diligent
         if (!IsPlaying())
             return;
 
-        // Animate the cube
-        m_CubeWorldMatrix = float4x4::RotationY(static_cast<float>(CurrTime) * 1.0f);
+    // Apply rotation
+    m_CubeWorldMatrix = float4x4::RotationY(static_cast<float>(CurrTime) * 1.0f) * float4x4::RotationX(-PI_F * 0.1f);
 
-        float4x4 CameraView = float4x4::Translation(0.f, -5.0f, -10.0f) * float4x4::RotationY(PI_F) * float4x4::RotationX(-PI_F * 0.2);
+        // Camera is at (0, 0, -5) looking along the Z axis
+        float4x4 View = float4x4::Translation(0.f, 0.0f, 5.0f);
 
         // Get pretransform matrix that rotates the scene according the surface orientation
-        float4x4 SrfPreTransform = this->GetSurfacePretransformMatrix(float3{0, 0, 1});
+        float4x4 SrfPreTransform = GetSurfacePretransformMatrix(float3{0, 0, 1});
 
         // Get projection matrix adjusted to the current screen orientation
-        float4x4 Proj = this->GetAdjustedProjectionMatrix(PI_F / 4.0f, 0.1f, 100.f);
+        float4x4 Proj = GetAdjustedProjectionMatrix(PI_F / 4.0f, 0.1f, 100.f);
 
-        // Compute camera view-projection matrix
-        m_CameraViewProjMatrix = CameraView * SrfPreTransform * Proj;
+        // Compute camera view-projection matrix (world transforms applied per-object)
+    m_CameraViewProjMatrix = View * SrfPreTransform * Proj;
     }
 
-    void Diligent::C6GERender::WindowResize(Uint32 Width, Uint32 Height)
+    void C6GERender::WindowResize(Uint32 Width, Uint32 Height)
     {
         if (!m_pSwapChain || !m_pDevice)
             return;
@@ -1135,7 +1370,7 @@ namespace Diligent
         float NearPlane = 0.1f;
         float FarPlane = 250.f;
         float AspectRatio = static_cast<float>(Width) / static_cast<float>(Height);
-        m_Camera.SetProjAttribs(NearPlane, FarPlane, AspectRatio, Diligent::PI_F / 4.f,
+        m_Camera.SetProjAttribs(NearPlane, FarPlane, AspectRatio, PI_F / 4.f,
                                 m_pSwapChain->GetDesc().PreTransform, m_pDevice->GetDeviceInfo().NDC.MinZ == -1);
 
         // Resize framebuffer if dimensions changed
