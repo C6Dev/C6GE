@@ -8,6 +8,16 @@ C6GE is a game engine built on top of the Diligent Engine, providing cross-platf
 **This engine is in very early development stages.** The codebase has already been completely rewritten at least 3 times, and you should expect significant changes - for better or worse. The goal is to create a great game engine, but the architecture and features are still evolving rapidly.
 This project is in early development. It is a learning project, and the code quality is evolving. Help is welcome if explained well and approved.
 
+## 🧪 Unit Tests
+
+| Platform | Status |
+|-----------|---------|
+| **Linux** | [![Linux Unit Test](https://github.com/C6Dev/C6GE/actions/workflows/LinuxUnitTest.yml/badge.svg)](https://github.com/C6Dev/C6GE/actions/workflows/LinuxUnitTest.yml) |
+| **Windows** | [![Windows Unit Test](https://github.com/C6Dev/C6GE/actions/workflows/WindowsUnitTest.yml/badge.svg)](https://github.com/C6Dev/C6GE/actions/workflows/WindowsUnitTest.yml) |
+| **macOS** | [![macOS Unit Test](https://github.com/C6Dev/C6GE/actions/workflows/MacOSUnitTest.yml/badge.svg)](https://github.com/C6Dev/C6GE/actions/workflows/MacOSUnitTest.yml) |
+
+These badges reflect the latest automated test results for each platform’s CI build.
+
 ## Supported Rendering Engines
 
 C6GE supports the following rendering backends through Diligent Engine:
