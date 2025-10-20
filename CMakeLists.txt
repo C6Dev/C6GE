@@ -18,9 +18,11 @@ set(DILIGENT_D3D12_SUPPORTED OFF CACHE BOOL "Disable Direct3D12 backend" FORCE)
 # DiligentEngine will now use our docking ImGui via symlink
 
 # Disable Wayland support to avoid missing header issues
+if (UNIX AND NOT APPLE)
 set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "Build support for Wayland" FORCE)
 set(GLFW_BUILD_X11 ON CACHE BOOL "Build support for X11" FORCE)
 add_definitions(-D_GLFW_X11)
+endif()
 
 # Add DiligentEngine
 add_subdirectory(external/DiligentEngine)

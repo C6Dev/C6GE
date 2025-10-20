@@ -16,6 +16,17 @@ jobs:
         with:
           submodules: recursive
 
+
+      - name: Cache build
+        uses: actions/cache@v4
+        with:
+          path: |
+            build
+            C:\Users\runneradmin\AppData\Local\ccache
+          key: windows-build-${{ runner.os }}-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: |
+            windows-build-${{ runner.os }}-
+
       - name: Create build directory
         run: mkdir build
 
@@ -25,7 +36,7 @@ jobs:
 
       - name: Build
         working-directory: build
-        run: cmake --build . -- -j$(nproc)
+        run: cmake --build . -- /m
 
       - name: Run tests
         working-directory: build

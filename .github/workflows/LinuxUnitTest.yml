@@ -16,8 +16,22 @@ jobs:
         with:
           submodules: recursive
 
+
+      - name: Install X11 dependencies
+        run: sudo apt-get update && sudo apt-get install -y libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+
+      - name: Cache build
+        uses: actions/cache@v4
+        with:
+          path: |
+            build
+            ~/.ccache
+          key: linux-build-${{ runner.os }}-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: |
+            linux-build-${{ runner.os }}-
+
       - name: Create build directory
-        run: mkdir build
+        run: mkdir -p build
 
       - name: Configure with CMake
         working-directory: build
