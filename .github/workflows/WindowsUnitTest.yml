@@ -17,6 +17,11 @@ jobs:
           submodules: recursive
 
 
+      - name: Restore .NET dependencies
+        run: dotnet restore
+        working-directory: external/DiligentEngine/DiligentSamples/Tutorials/Tutorial03_Texturing-DotNet
+
+
       - name: Cache build
         uses: actions/cache@v4
         with:
