@@ -96,8 +96,12 @@
 #include "GBuffer.hpp"
 #include "EnvMapRenderer.hpp"
 
+
 // Use unified input controller that aliases to the platform-specific implementation
 #include "DiligentSamples/SampleBase/include/InputController.hpp"
+#if defined(__APPLE__)
+#include "../external/DiligentEngine/DiligentSamples/SampleBase/include/MacOS/InputControllerMacOS.hpp"
+#endif
 
 #include "EditorTheme/EditorTheme.h"
 
@@ -302,8 +306,46 @@ static void GLFWCharCallbackLinux(GLFWwindow* w, unsigned int c)
 // macOS-specific GLFW callbacks that forward events into Diligent InputControllerMacOS
 static void GLFWKeyCallbackMac(GLFWwindow* w, int key, int scancode, int action, int mods)
 {
-    // If ImGui wants keyboard, don't forward to the app
     ImGuiIO& io = ImGui::GetIO();
+    // Update modifier keys
+    io.AddKeyEvent(ImGuiMod_Ctrl, (mods & GLFW_MOD_CONTROL) != 0);
+    io.AddKeyEvent(ImGuiMod_Shift, (mods & GLFW_MOD_SHIFT) != 0);
+    io.AddKeyEvent(ImGuiMod_Alt, (mods & GLFW_MOD_ALT) != 0);
+    io.AddKeyEvent(ImGuiMod_Super, (mods & GLFW_MOD_SUPER) != 0);
+
+    // Convert GLFW key to ImGui key
+    ImGuiKey imgui_key = ImGuiKey_None;
+    switch (key)
+    {
+        case GLFW_KEY_TAB: imgui_key = ImGuiKey_Tab; break;
+        case GLFW_KEY_LEFT: imgui_key = ImGuiKey_LeftArrow; break;
+        case GLFW_KEY_RIGHT: imgui_key = ImGuiKey_RightArrow; break;
+        case GLFW_KEY_UP: imgui_key = ImGuiKey_UpArrow; break;
+        case GLFW_KEY_DOWN: imgui_key = ImGuiKey_DownArrow; break;
+        case GLFW_KEY_PAGE_UP: imgui_key = ImGuiKey_PageUp; break;
+        case GLFW_KEY_PAGE_DOWN: imgui_key = ImGuiKey_PageDown; break;
+        case GLFW_KEY_HOME: imgui_key = ImGuiKey_Home; break;
+        case GLFW_KEY_END: imgui_key = ImGuiKey_End; break;
+        case GLFW_KEY_INSERT: imgui_key = ImGuiKey_Insert; break;
+        case GLFW_KEY_DELETE: imgui_key = ImGuiKey_Delete; break;
+        case GLFW_KEY_BACKSPACE: imgui_key = ImGuiKey_Backspace; break;
+        case GLFW_KEY_SPACE: imgui_key = ImGuiKey_Space; break;
+        case GLFW_KEY_ENTER: imgui_key = ImGuiKey_Enter; break;
+        case GLFW_KEY_ESCAPE: imgui_key = ImGuiKey_Escape; break;
+        case GLFW_KEY_A: imgui_key = ImGuiKey_A; break;
+        case GLFW_KEY_C: imgui_key = ImGuiKey_C; break;
+        case GLFW_KEY_V: imgui_key = ImGuiKey_V; break;
+        case GLFW_KEY_X: imgui_key = ImGuiKey_X; break;
+        case GLFW_KEY_Y: imgui_key = ImGuiKey_Y; break;
+        case GLFW_KEY_Z: imgui_key = ImGuiKey_Z; break;
+        default: break;
+    }
+    if (imgui_key != ImGuiKey_None)
+    {
+        io.AddKeyEvent(imgui_key, (action == GLFW_PRESS || action == GLFW_REPEAT));
+    }
+
+    // If ImGui wants keyboard, don't forward to the app
     if (io.WantCaptureKeyboard)
         return;
 
@@ -311,7 +353,7 @@ static void GLFWKeyCallbackMac(GLFWwindow* w, int key, int scancode, int action,
     if (!samplePtr)
         return;
 
-    auto& macCtrl = reinterpret_cast<Diligent::InputController&>(samplePtr->GetInputController());
+    auto& macCtrl = reinterpret_cast<Diligent::InputControllerMacOS&>(samplePtr->GetInputController());
 
     if (action == GLFW_PRESS || action == GLFW_REPEAT)
         macCtrl.OnKeyPressed(key);
@@ -327,6 +369,10 @@ static void GLFWKeyCallbackMac(GLFWwindow* w, int key, int scancode, int action,
 static void GLFWMouseButtonCallbackMac(GLFWwindow* w, int button, int action, int mods)
 {
     ImGuiIO& io = ImGui::GetIO();
+    if (button >= 0 && button < ImGuiMouseButton_COUNT)
+    {
+        io.AddMouseButtonEvent(button, action == GLFW_PRESS);
+    }
     if (io.WantCaptureMouse)
         return;
 
@@ -334,7 +380,7 @@ static void GLFWMouseButtonCallbackMac(GLFWwindow* w, int button, int action, in
     if (!samplePtr)
         return;
 
-    auto& macCtrl = reinterpret_cast<Diligent::InputController&>(samplePtr->GetInputController());
+    auto& macCtrl = reinterpret_cast<Diligent::InputControllerMacOS&>(samplePtr->GetInputController());
 
     if (button == GLFW_MOUSE_BUTTON_LEFT)
     {
@@ -355,6 +401,7 @@ static void GLFWMouseButtonCallbackMac(GLFWwindow* w, int button, int action, in
 static void GLFWCursorPosCallbackMac(GLFWwindow* w, double xpos, double ypos)
 {
     ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent((float)xpos, (float)ypos);
     if (io.WantCaptureMouse)
         return;
 
@@ -362,13 +409,14 @@ static void GLFWCursorPosCallbackMac(GLFWwindow* w, double xpos, double ypos)
     if (!samplePtr)
         return;
 
-    auto& macCtrl = reinterpret_cast<Diligent::InputController&>(samplePtr->GetInputController());
+    auto& macCtrl = reinterpret_cast<Diligent::InputControllerMacOS&>(samplePtr->GetInputController());
     macCtrl.OnMouseMove(static_cast<int>(xpos), static_cast<int>(ypos));
 }
 
 static void GLFWScrollCallbackMac(GLFWwindow* w, double xoffset, double yoffset)
 {
     ImGuiIO& io = ImGui::GetIO();
+    io.AddMouseWheelEvent((float)xoffset, (float)yoffset);
     if (io.WantCaptureMouse)
         return;
 

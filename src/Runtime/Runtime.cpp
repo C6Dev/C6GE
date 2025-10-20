@@ -203,7 +203,7 @@ static void GLFWCursorPosCallback(GLFWwindow* w, double xpos, double ypos)
 
 static void GLFWScrollCallback(GLFWwindow* w, double xoffset, double yoffset)
 {
-    if (!IsRuntime) {
+    if (!Diligent::C6GERender::IsRuntime) {
     ImGuiIO& io = ImGui::GetIO();
     if (io.WantCaptureMouse)
         return;
@@ -694,7 +694,7 @@ int main()
     // -------------------
     bool enableVsync = false;
     double lastTime = glfwGetTime();
-    C6GERender::IsRuntime = true;
+    Diligent::C6GERender::IsRuntime = true;
     while (!glfwWindowShouldClose(window))
     {
         glfwPollEvents();
