@@ -1,4 +1,5 @@
-﻿
+﻿#define METAL_ENABLED 0
+
 #include <iostream>
 #include <thread>
 #include <chrono>
@@ -22,7 +23,7 @@
     #ifndef GLFW_EXPOSE_NATIVE_COCOA
         #define GLFW_EXPOSE_NATIVE_COCOA
     #endif
-    #include <GLFW/glfw3native.h>
+    #include <GLFW/glfw3native.h> 
     #include "DiligentCore/Platforms/Apple/interface/MacOSNativeWindow.h"
     #include <Cocoa/Cocoa.h>
     #include <QuartzCore/CAMetalLayer.h>
@@ -31,7 +32,7 @@
     #ifndef GLFW_EXPOSE_NATIVE_X11
         #define GLFW_EXPOSE_NATIVE_X11
     #endif
-    #include <GLFW/glfw3native.h>
+    #include <GLFW/glfw3native.h> 
     // Undefine X11 macros that conflict with Diligent Engine BEFORE including Diligent headers
     #ifdef Bool
     #undef Bool
@@ -537,10 +538,10 @@ bool InitializeDiligentEngine(
 #endif
 #endif // _WIN32
 
-#if defined(__APPLE__) && METAL_SUPPORTED
+#if defined(__APPLE__) && METAL_ENABLED
     if (auto* pFactoryMtl = LoadAndGetEngineFactoryMtl())
     {
-        RefCntAutoPtr<IEngineFactoryMtl> factoryMtl(pFactoryMtl);
+        RefCntAutoPtr<IEngineFactoryMtl> factoryMtl(pFactoryMtl); 
         EngineMtlCreateInfo engineCI{};
         factoryMtl->CreateDeviceAndContextsMtl(engineCI, &device, ppContexts);
         if (device)
@@ -555,7 +556,7 @@ bool InitializeDiligentEngine(
 #if VULKAN_SUPPORTED
     if (auto* pFactoryVk = LoadAndGetEngineFactoryVk())
     {
-        RefCntAutoPtr<IEngineFactoryVk> factoryVk(pFactoryVk);
+        RefCntAutoPtr<IEngineFactoryVk> factoryVk(pFactoryVk); 
         EngineVkCreateInfo engineCI{};
         factoryVk->CreateDeviceAndContextsVk(engineCI, &device, ppContexts);
         if (device)
