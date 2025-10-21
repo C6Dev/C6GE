@@ -35,7 +35,9 @@ set(GLFW_BUILD_X11 ON CACHE BOOL "Build support for X11" FORCE)
 add_definitions(-D_GLFW_X11)
 endif()
 
-# Add DiligentEngine
+
+# Only build SampleBase from DiligentSamples, skip Samples and Tutorials
+set(DILIGENT_BUILD_SAMPLE_BASE_ONLY ON CACHE BOOL "Build only SampleBase project" FORCE)
 add_subdirectory(external/DiligentEngine)
 
 # Detect platforms
