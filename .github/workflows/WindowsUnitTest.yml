@@ -32,7 +32,7 @@ jobs:
             windows-build-${{ runner.os }}-
 
       - name: Create build directory (if not cached)
-        run: if not exist build mkdir build
+        run: if (-not (Test-Path build)) { mkdir build }
 
       - name: Configure with CMake
         working-directory: build
