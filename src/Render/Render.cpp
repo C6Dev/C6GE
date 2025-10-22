@@ -42,6 +42,7 @@ namespace Diligent
 #include "AdvancedMath.hpp"
 #include "DiligentTools/ThirdParty/imgui/imgui.h"
 #include "DiligentTools/ThirdParty/imGuIZMO.quat/imGuIZMO.h"
+#include "DiligentTools/Imgui/interface/ImGuiImplDiligent.hpp"
 
 #include "CallbackWrapper.hpp"
 #include "Utilities/interface/DiligentFXShaderSourceStreamFactory.hpp"
@@ -207,9 +208,27 @@ namespace Diligent
                 const float windowPad = 12.0f;
                 float barWidth = iconSize + 2 * windowPad;
                 x = vpPos.x + (vpSize.x - barWidth) * 0.5f;
-                y = vpPos.y + 44.0f;
+                // Clamp y to always be at least at the top of the viewport, plus menu bar height if present
+                float menuBarHeight = ImGui::GetFrameHeight();
+                y = vpPos.y + menuBarHeight + 4.0f; // 4px padding below menu bar
+                if (y < vpPos.y) y = vpPos.y;
             }
             ImGui::SetNextWindowPos(ImVec2(x, y), ImGuiCond_Always);
+        // Ensure ImGui display size and framebuffer scale are set correctly (for HiDPI/Retina)
+        ImGui::GetIO().DisplaySize = ImVec2((float)m_FramebufferWidth, (float)m_FramebufferHeight);
+#ifdef __APPLE__
+        // On macOS, framebuffer scale may be >1 for Retina
+        ImGui::GetIO().DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+        if (m_pSwapChain)
+        {
+            const auto& scDesc = m_pSwapChain->GetDesc();
+            if (scDesc.Width > 0 && scDesc.Height > 0)
+            {
+                ImGui::GetIO().DisplayFramebufferScale.x = (float)scDesc.Width / (float)m_FramebufferWidth;
+                ImGui::GetIO().DisplayFramebufferScale.y = (float)scDesc.Height / (float)m_FramebufferHeight;
+            }
+        }
+#endif
             ImGui::Begin("PlayPauseBar", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus);
             // Ensure play/pause bar is always above the viewport
             if (ImGui::FindWindowByName("PlayPauseBar"))
@@ -263,6 +282,15 @@ namespace Diligent
                 if (ImGui::CollapsingHeader("Shadows", ImGuiTreeNodeFlags_DefaultOpen))
                 {
                     ImGui::Checkbox("Shadow Maps", &RenderShadows);
+                    static int shadowRes = (int)m_ShadowMapSize;
+                    if (ImGui::SliderInt("Shadow Resolution", &shadowRes, 512, 8192, "%d"))
+                    {
+                        if (shadowRes != (int)m_ShadowMapSize)
+                        {
+                            m_ShadowMapSize = shadowRes;
+                            CreateShadowMap();
+                        }
+                    }
                 }
             }
             ImGui::End();
@@ -285,21 +313,24 @@ namespace Diligent
                 std::cerr << "[C6GE] ImGui docking not enabled, skipping viewport UI update." << std::endl;
                 return;
             }
+
             // Create a fullscreen dockspace
             auto *viewport = ImGui::GetMainViewport();
-            ImGui::SetNextWindowPos(viewport->WorkPos);
-            ImGui::SetNextWindowSize(viewport->WorkSize);
+            // Offset dockspace below the main menu bar
+            ImVec2 dockspacePos = viewport->Pos;
+            float menuBarHeight = ImGui::GetFrameHeight();
+            dockspacePos.y += menuBarHeight;
+            ImVec2 dockspaceSize = viewport->Size;
+            dockspaceSize.y -= menuBarHeight;
+            ImGui::SetNextWindowPos(dockspacePos);
+            ImGui::SetNextWindowSize(dockspaceSize);
             ImGui::SetNextWindowViewport(viewport->ID);
 
-            ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDocking;
-            window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
-            window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
-
+            ImGuiWindowFlags dockspace_window_flags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
             ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-
-            ImGui::Begin("DockSpaceWindow", nullptr, window_flags);
+            ImGui::Begin("DockSpaceWindow", nullptr, dockspace_window_flags);
             ImGui::PopStyleVar(3);
 
             // Main menu bar and settings tab logic
@@ -377,7 +408,11 @@ namespace Diligent
 
             // Create dockspace
             ImGuiID dockspace_id = ImGui::GetID("MainDockSpace");
+            // Force tab bars to always show, even for single window
             ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_None);
+            ImGuiDockNode* node = ImGui::DockBuilderGetNode(dockspace_id);
+            if (node)
+                node->LocalFlags &= ~ImGuiDockNodeFlags_AutoHideTabBar;
 
             // Setup default docking layout on first run
             static bool first_time = true;
@@ -422,8 +457,8 @@ namespace Diligent
             ImGui::End();
 
             // Create the viewport window (now docked but moveable)
-            ImGuiWindowFlags viewport_flags = ImGuiWindowFlags_None;
-            if (ImGui::Begin("Viewport", nullptr, viewport_flags))
+            // Use ImGuiWindowFlags_None for all docked windows so their title/menu bars are visible
+            if (ImGui::Begin("Viewport", nullptr, ImGuiWindowFlags_None))
             {
                 if (m_pFramebufferSRV)
                 {
@@ -436,6 +471,7 @@ namespace Diligent
                     if (newWidth != m_FramebufferWidth || newHeight != m_FramebufferHeight)
                     {
                         ResizeFramebuffer(newWidth, newHeight);
+                        std::cout << "[C6GE] Resized framebuffer to " << newWidth << "x" << newHeight << std::endl;
                     }
 
                     // Display the framebuffer texture at viewport size
@@ -528,7 +564,7 @@ namespace Diligent
         // or Emscripten in WebGL mode) do not support gamma-correction. In this case the application
         // has to do the conversion manually.
         ShaderMacro Macros[] = {{"CONVERT_PS_OUTPUT_TO_GAMMA", m_ConvertPSOutputToGamma ? "1" : "0"}};
-        ShaderCI.Macros = {Macros, _countof(Macros)};
+    ShaderCI.Macros = {Macros, sizeof(Macros)/sizeof(Macros[0])};
 
         // Create a shader source stream factory to load shaders from files.
         RefCntAutoPtr<IShaderSourceInputStreamFactory> pShaderSourceFactory;
@@ -586,7 +622,7 @@ namespace Diligent
         PSOCreateInfo.pPS = pPS;
 
         PSOCreateInfo.GraphicsPipeline.InputLayout.LayoutElements = LayoutElems;
-        PSOCreateInfo.GraphicsPipeline.InputLayout.NumElements = _countof(LayoutElems);
+    PSOCreateInfo.GraphicsPipeline.InputLayout.NumElements = sizeof(LayoutElems)/sizeof(LayoutElems[0]);
 
         // Define variable type that will be used by default
         PSOCreateInfo.PSODesc.ResourceLayout.DefaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
@@ -600,7 +636,7 @@ namespace Diligent
     };
         // clang-format on
         PSOCreateInfo.PSODesc.ResourceLayout.Variables = Vars;
-        PSOCreateInfo.PSODesc.ResourceLayout.NumVariables = _countof(Vars);
+    PSOCreateInfo.PSODesc.ResourceLayout.NumVariables = sizeof(Vars)/sizeof(Vars[0]);
 
         // Define immutable sampler for g_Texture. Immutable samplers should be used whenever possible
         // clang-format off
@@ -615,7 +651,7 @@ namespace Diligent
     };
         // clang-format on
         PSOCreateInfo.PSODesc.ResourceLayout.ImmutableSamplers = ImtblSamplers;
-        PSOCreateInfo.PSODesc.ResourceLayout.NumImmutableSamplers = _countof(ImtblSamplers);
+    PSOCreateInfo.PSODesc.ResourceLayout.NumImmutableSamplers = sizeof(ImtblSamplers)/sizeof(ImtblSamplers[0]);
 
     m_pDevice->CreateGraphicsPipelineState(PSOCreateInfo, &m_pCubePSO);
     VERIFY_EXPR(m_pCubePSO);
@@ -708,7 +744,7 @@ namespace Diligent
             LayoutElement{2, 0, 2, VT_FLOAT32, False}  // UV
         };
         ShadowPSOCI.GraphicsPipeline.InputLayout.LayoutElements = ShadowLayoutElems;
-        ShadowPSOCI.GraphicsPipeline.InputLayout.NumElements = _countof(ShadowLayoutElems);
+    ShadowPSOCI.GraphicsPipeline.InputLayout.NumElements = sizeof(ShadowLayoutElems)/sizeof(ShadowLayoutElems[0]);
 
         ShadowPSOCI.PSODesc.ResourceLayout.DefaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
 
@@ -887,7 +923,7 @@ namespace Diligent
         ShaderCI.CompileFlags = SHADER_COMPILE_FLAG_PACK_MATRIX_ROW_MAJOR;
 
         ShaderMacro Macros[] = { {"CONVERT_PS_OUTPUT_TO_GAMMA", m_ConvertPSOutputToGamma ? "1" : "0"} };
-        ShaderCI.Macros = {Macros, _countof(Macros)};
+    ShaderCI.Macros = {Macros, sizeof(Macros)/sizeof(Macros[0])};
 
         RefCntAutoPtr<IShaderSourceInputStreamFactory> pShaderSourceFactory;
         m_pEngineFactory->CreateDefaultShaderSourceStreamFactory(nullptr, &pShaderSourceFactory);
@@ -919,7 +955,7 @@ namespace Diligent
             {SHADER_TYPE_PIXEL, "g_ShadowMap", SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE}
         };
         PSOCreateInfo.PSODesc.ResourceLayout.Variables = Vars;
-        PSOCreateInfo.PSODesc.ResourceLayout.NumVariables = _countof(Vars);
+    PSOCreateInfo.PSODesc.ResourceLayout.NumVariables = sizeof(Vars)/sizeof(Vars[0]);
 
         SamplerDesc ComparisonSampler;
         ComparisonSampler.ComparisonFunc = COMPARISON_FUNC_LESS;
@@ -935,7 +971,7 @@ namespace Diligent
         if (m_pDevice->GetDeviceInfo().Type != RENDER_DEVICE_TYPE_GLES)
         {
             PSOCreateInfo.PSODesc.ResourceLayout.ImmutableSamplers = ImtblSamplers;
-            PSOCreateInfo.PSODesc.ResourceLayout.NumImmutableSamplers = _countof(ImtblSamplers);
+            PSOCreateInfo.PSODesc.ResourceLayout.NumImmutableSamplers = sizeof(ImtblSamplers)/sizeof(ImtblSamplers[0]);
         }
 
         m_pDevice->CreateGraphicsPipelineState(PSOCreateInfo, &m_pPlanePSO);
@@ -1276,6 +1312,16 @@ namespace Diligent
     void C6GERender::ResizeFramebuffer(Uint32 Width, Uint32 Height)
     {
 
+        // After CreateFramebuffer() succeeds
+if (m_pFramebufferSRV)
+{
+    m_ViewportTextureID = reinterpret_cast<ImTextureID>(m_pFramebufferSRV.RawPtr());
+}
+else
+{
+    m_ViewportTextureID = 0;
+}
+
         if (Width == m_FramebufferWidth && Height == m_FramebufferHeight)
             return; // No need to resize
 
@@ -1373,22 +1419,15 @@ namespace Diligent
         m_Camera.SetProjAttribs(NearPlane, FarPlane, AspectRatio, PI_F / 4.f,
                                 m_pSwapChain->GetDesc().PreTransform, m_pDevice->GetDeviceInfo().NDC.MinZ == -1);
 
-        // Resize framebuffer if dimensions changed
-        if (Width != m_FramebufferWidth || Height != m_FramebufferHeight)
-        {
-            m_FramebufferWidth = Width;
-            m_FramebufferHeight = Height;
+    // Always sync framebuffer with swap chain
+    const auto& scDesc = m_pSwapChain->GetDesc();
+    Uint32 targetW = scDesc.Width;
+    Uint32 targetH = scDesc.Height;
 
-            // Release old framebuffer resources
-            m_pFramebufferTexture.Release();
-            m_pFramebufferRTV.Release();
-            m_pFramebufferSRV.Release();
-            m_pFramebufferDepth.Release();
-            m_pFramebufferDSV.Release();
-
-            // Recreate framebuffer with new dimensions
-            CreateFramebuffer();
-        }
+    if (targetW != m_FramebufferWidth || targetH != m_FramebufferHeight)
+    {
+        ResizeFramebuffer(targetW, targetH);
+    }
     }
 
 } // namespace Diligent

@@ -37,6 +37,7 @@
 #include "AdvancedMath.hpp"
 #include "BasicMath.hpp"
 #include "ThreadSignal.hpp"
+#include "DiligentTools/ThirdParty/imgui/imgui.h"
 
 namespace Diligent
 {
@@ -125,7 +126,7 @@ namespace Diligent
     float4x4       m_CameraViewProjMatrix;
     float4x4       m_WorldToShadowMapUVDepthMatr;
     float3         m_LightDirection  = normalize(float3(-0.49f, -0.60f, 0.64f));
-    Uint32         m_ShadowMapSize   = 512;
+    Uint32         m_ShadowMapSize   = 2048;
     TEXTURE_FORMAT m_ShadowMapFormat = TEX_FORMAT_D16_UNORM;
     // Shadow visualization removed. Use RenderShadows to enable/disable shadowing.
 
@@ -137,6 +138,7 @@ namespace Diligent
         RefCntAutoPtr<ITextureView> m_pFramebufferDSV;
         Uint32 m_FramebufferWidth = 800;
         Uint32 m_FramebufferHeight = 600;
+        ImTextureID m_ViewportTextureID = 0;
     };
 
 } // namespace Diligent

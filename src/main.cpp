@@ -961,15 +961,19 @@ EditorTheme::SetupImGuiStyle();
         lastTime = currTime;
         
     // Set DisplaySize and scale for Retina/HiDPI
-    ImGuiIO& io = ImGui::GetIO();
-    io.DisplaySize = ImVec2((float)fbW, (float)fbH);
+// Logical size = window coordinates (points)
+io.DisplaySize = ImVec2((float)windowW, (float)windowH);
+
+// Framebuffer scale = how many pixels per point
 #if defined(__APPLE__) || defined(__linux__)
     io.DisplayFramebufferScale = ImVec2(dpiScaleX, dpiScaleY);
 #else
     io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
 #endif
 
-        imGuiImpl->NewFrame(fbW, fbH, scDesc.PreTransform);
+// Tell backend the logical window size (matches DisplaySize)
+imGuiImpl->NewFrame(windowW, windowH, scDesc.PreTransform);
+
 
     // Build UI, pass elapsed time so camera receives proper dt
     sample->Update(currTime, elapsed, true);
