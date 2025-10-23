@@ -54,9 +54,19 @@ namespace Diligent
 #include <random>
 #include <string>
 #include <algorithm>
+#include "DiligentTools/AssetLoader/interface/GLTFLoader.hpp"
+#include "DiligentFX/PBR/interface/GLTF_PBR_Renderer.hpp"
 
 namespace Diligent
 {
+    // Host-side access to shader structs
+    namespace HLSL
+    {
+#include "../../external/DiligentEngine/DiligentFX/Shaders/Common/public/BasicStructures.fxh"
+#include "../../external/DiligentEngine/DiligentFX/Shaders/PBR/public/PBR_Structures.fxh"
+#include "../../external/DiligentEngine/DiligentFX/Shaders/PBR/private/RenderPBR_Structures.fxh"
+    }
+
     bool RenderShadows = false;
     bool Diligent::C6GERender::IsRuntime = false;
     Diligent::C6GERender::PlayState Diligent::C6GERender::playState = Diligent::C6GERender::PlayState::Paused;
@@ -142,17 +152,108 @@ namespace Diligent
         m_Camera.SetPos(float3(0.f, 0.f, 5.f));
         m_Camera.SetRotation(0.f, 0.f);
 
-        CreateCubePSO();
+        // Create VS constant buffer used by plane/cube shaders (cbuffer "Constants")
+        {
+            BufferDesc CBDesc;
+            CBDesc.Name = "VS Constants";
+            CBDesc.Size = sizeof(Constants);
+            CBDesc.Usage = USAGE_DYNAMIC;
+            CBDesc.BindFlags = BIND_UNIFORM_BUFFER;
+            CBDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+            m_pDevice->CreateBuffer(CBDesc, nullptr, &m_VSConstants);
+        }
 
         // Create plane and shadow-related PSOs
-    CreatePlanePSO();
+        CreatePlanePSO();
 
-        // Load textured cube with normals (required for lighting)
-        m_CubeVertexBuffer = TexturedCube::CreateVertexBuffer(m_pDevice, GEOMETRY_PRIMITIVE_VERTEX_FLAG_ALL);
-        m_CubeIndexBuffer = TexturedCube::CreateIndexBuffer(m_pDevice);
-        m_TextureSRV = TexturedCube::LoadTexture(m_pDevice, "C6GELogo.png")->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
-        if (m_CubeSRB)
-            m_CubeSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_Texture")->Set(m_TextureSRV);
+
+        // Load AnisotropyBarnLamp .bin model here
+        try {
+            std::string modelPath = "AnisotropyBarnLamp/glTF/AnisotropyBarnLamp.gltf";
+            Diligent::GLTF::ModelCreateInfo modelCI;
+            modelCI.FileName = modelPath.c_str();
+            m_BarnLampModel = std::make_unique<GLTF::Model>(m_pDevice, m_pImmediateContext, modelCI);
+            if (!m_BarnLampModel || m_BarnLampModel->Meshes.empty()) {
+                std::cerr << "[C6GE] Failed to load AnisotropyBarnLamp model or no meshes present." << std::endl;
+            } else {
+                std::cout << "[C6GE] Loaded AnisotropyBarnLamp model successfully." << std::endl;
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "[C6GE] Exception loading AnisotropyBarnLamp model: " << e.what() << std::endl;
+        }
+
+
+        // Query actual swapchain and depth formats
+        TEXTURE_FORMAT swapchainFormat = TEX_FORMAT_RGBA8_UNORM;
+        TEXTURE_FORMAT depthFormat = TEX_FORMAT_D16_UNORM;
+        if (m_pSwapChain)
+        {
+            const auto &scDesc = m_pSwapChain->GetDesc();
+            swapchainFormat = scDesc.ColorBufferFormat;
+            depthFormat = scDesc.DepthBufferFormat;
+        }
+
+        // Create frame attributes constant buffer (required by GLTF_PBR_Renderer)
+        {
+            BufferDesc CBDesc;
+            CBDesc.Name = "PBR frame attribs buffer";
+            Diligent::GLTF_PBR_Renderer::CreateInfo RendererCI;
+            RendererCI.NumRenderTargets = 1;
+            RendererCI.RTVFormats[0] = swapchainFormat;
+            RendererCI.DSVFormat = depthFormat;
+            auto TempRenderer = std::make_unique<Diligent::GLTF_PBR_Renderer>(m_pDevice, nullptr, m_pImmediateContext, RendererCI);
+            CBDesc.Size = TempRenderer->GetPRBFrameAttribsSize();
+            CBDesc.Usage = USAGE_DYNAMIC;
+            CBDesc.BindFlags = BIND_UNIFORM_BUFFER;
+            CBDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+            m_pDevice->CreateBuffer(CBDesc, nullptr, &m_FrameAttribsCB);
+        }
+
+        // Create the GLTF PBR renderer
+        {
+            Diligent::GLTF_PBR_Renderer::CreateInfo RendererCI;
+            RendererCI.NumRenderTargets = 1;
+            RendererCI.RTVFormats[0] = swapchainFormat;
+            RendererCI.DSVFormat = depthFormat;
+            m_GLTFRenderer = std::make_unique<Diligent::GLTF_PBR_Renderer>(m_pDevice, nullptr, m_pImmediateContext, RendererCI);
+        }
+
+        // Transition IBL textures to SHADER_RESOURCE state immediately after renderer creation
+        if (m_GLTFRenderer)
+        {
+            if (auto* pIrradianceCube = m_GLTFRenderer->GetIrradianceCubeSRV())
+            {
+                ITexture* pTex = pIrradianceCube->GetTexture();
+                if (pTex)
+                {
+                    StateTransitionDesc barrier{pTex, RESOURCE_STATE_UNKNOWN, RESOURCE_STATE_SHADER_RESOURCE, STATE_TRANSITION_FLAG_UPDATE_STATE};
+                    barrier.FirstMipLevel = 0;
+                    barrier.MipLevelsCount = REMAINING_MIP_LEVELS;
+                    barrier.FirstArraySlice = 0;
+                    barrier.ArraySliceCount = REMAINING_ARRAY_SLICES;
+                    m_pImmediateContext->TransitionResourceStates(1, &barrier);
+                }
+            }
+            if (auto* pPrefEnvMap = m_GLTFRenderer->GetPrefilteredEnvMapSRV())
+            {
+                ITexture* pTex = pPrefEnvMap->GetTexture();
+                if (pTex)
+                {
+                    StateTransitionDesc barrier{pTex, RESOURCE_STATE_UNKNOWN, RESOURCE_STATE_SHADER_RESOURCE, STATE_TRANSITION_FLAG_UPDATE_STATE};
+                    barrier.FirstMipLevel = 0;
+                    barrier.MipLevelsCount = REMAINING_MIP_LEVELS;
+                    barrier.FirstArraySlice = 0;
+                    barrier.ArraySliceCount = REMAINING_ARRAY_SLICES;
+                    m_pImmediateContext->TransitionResourceStates(1, &barrier);
+                }
+            }
+        }
+
+        // Create resource bindings for the model
+        if (m_BarnLampModel)
+        {
+            m_ModelResourceBindings = m_GLTFRenderer->CreateResourceBindings(*m_BarnLampModel, m_FrameAttribsCB);
+        }
 
         // Ensure framebuffer is created after swap chain and device are ready.
         if (m_pSwapChain)
@@ -171,13 +272,10 @@ namespace Diligent
             }
         }
 
-    CreateFramebuffer();
+        CreateFramebuffer();
 
-    // Create shadow map and bind it to plane SRB / shadow-visualization SRB
-    CreateShadowMap();
-
-    // Cube vertex/index buffers were already created with normals above. Keep them.
-    printf("[Initialize] Cube VB=%p IB=%p\n", (void *)m_CubeVertexBuffer.RawPtr(), (void *)m_CubeIndexBuffer.RawPtr());
+        // Create shadow map and bind it to plane SRB / shadow-visualization SRB
+        CreateShadowMap();
     }
 
     void C6GERender::UpdateUI()
@@ -517,312 +615,7 @@ namespace Diligent
     {
     }
 
-    void C6GERender::CreateCubePSO()
-    {
-        // Pipeline state object encompasses configuration of all GPU stages
-
-        GraphicsPipelineStateCreateInfo PSOCreateInfo;
-
-        // Pipeline state name is used by the engine to report issues.
-        // It is always a good idea to give objects descriptive names.
-        PSOCreateInfo.PSODesc.Name = "Cube PSO";
-
-        // This is a graphics pipeline
-        PSOCreateInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
-
-        // clang-format off
-        // This tutorial will render to a single render target
-        PSOCreateInfo.GraphicsPipeline.NumRenderTargets             = 1;
-        // Set render target format which is the format of the swap chain's color buffer
-        PSOCreateInfo.GraphicsPipeline.RTVFormats[0]                = m_pSwapChain->GetDesc().ColorBufferFormat;
-        // Set depth buffer format which is the format of the swap chain's back buffer
-        PSOCreateInfo.GraphicsPipeline.DSVFormat                    = m_pSwapChain->GetDesc().DepthBufferFormat;
-        // Primitive topology defines what kind of primitives will be rendered by this pipeline state
-        PSOCreateInfo.GraphicsPipeline.PrimitiveTopology            = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-        // Cull back faces
-        PSOCreateInfo.GraphicsPipeline.RasterizerDesc.CullMode      = CULL_MODE_BACK;
-        // Enable depth testing
-        PSOCreateInfo.GraphicsPipeline.DepthStencilDesc.DepthEnable = True;
-        // clang-format on
-
-        // Create dynamic uniform buffer that will store shader constants
-        CreateUniformBuffer(m_pDevice, sizeof(Constants), "Shader constants CB", &m_VSConstants);
-
-        ShaderCreateInfo ShaderCI;
-        // Tell the system that the shader source code is in HLSL.
-        // For OpenGL, the engine will convert this into GLSL under the hood.
-        ShaderCI.SourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
-
-        // OpenGL backend requires emulated combined HLSL texture samplers (g_Texture + g_Texture_sampler combination)
-        ShaderCI.Desc.UseCombinedTextureSamplers = true;
-
-        // Pack matrices in row-major order
-        ShaderCI.CompileFlags = SHADER_COMPILE_FLAG_PACK_MATRIX_ROW_MAJOR;
-
-        // Presentation engine always expects input in gamma space. Normally, pixel shader output is
-        // converted from linear to gamma space by the GPU. However, some platforms (e.g. Android in GLES mode,
-        // or Emscripten in WebGL mode) do not support gamma-correction. In this case the application
-        // has to do the conversion manually.
-        ShaderMacro Macros[] = {{"CONVERT_PS_OUTPUT_TO_GAMMA", m_ConvertPSOutputToGamma ? "1" : "0"}};
-    ShaderCI.Macros = {Macros, sizeof(Macros)/sizeof(Macros[0])};
-
-        // Create a shader source stream factory to load shaders from files.
-        RefCntAutoPtr<IShaderSourceInputStreamFactory> pShaderSourceFactory;
-        m_pEngineFactory->CreateDefaultShaderSourceStreamFactory(nullptr, &pShaderSourceFactory);
-        ShaderCI.pShaderSourceStreamFactory = pShaderSourceFactory;
-
-        // Create a vertex shader
-        RefCntAutoPtr<IShader> pVS;
-        {
-            ShaderCI.Desc.ShaderType = SHADER_TYPE_VERTEX;
-            ShaderCI.EntryPoint = "main";
-            ShaderCI.Desc.Name = "Cube VS";
-            ShaderCI.FilePath = "cube.vsh";
-            m_pDevice->CreateShader(ShaderCI, &pVS);
-        }
-
-        // Create a geometry shader only if the device supports geometry shaders.
-        RefCntAutoPtr<IShader> pGS;
-        if (m_pDevice->GetDeviceInfo().Features.GeometryShaders)
-        {
-            ShaderCI.Desc.ShaderType = SHADER_TYPE_GEOMETRY;
-            ShaderCI.EntryPoint = "main";
-            ShaderCI.Desc.Name = "Cube GS";
-            ShaderCI.FilePath = "cube.gsh";
-            m_pDevice->CreateShader(ShaderCI, &pGS);
-        }
-
-        // Create a pixel shader
-        RefCntAutoPtr<IShader> pPS;
-        {
-            ShaderCI.Desc.ShaderType = SHADER_TYPE_PIXEL;
-            ShaderCI.EntryPoint = "main";
-            ShaderCI.Desc.Name = "Cube PS";
-            ShaderCI.FilePath = "cube.psh";
-            m_pDevice->CreateShader(ShaderCI, &pPS);
-        }
-
-        // clang-format off
-        // Define vertex shader input layout: match structures.fxh (ATTRIB0 Pos, ATTRIB1 Normal, ATTRIB2 UV)
-        LayoutElement LayoutElems[] =
-        {
-            // Attribute 0 - vertex position
-            LayoutElement{0, 0, 3, VT_FLOAT32, False},
-            // Attribute 1 - vertex normal
-            LayoutElement{1, 0, 3, VT_FLOAT32, False},
-            // Attribute 2 - texture coordinates
-            LayoutElement{2, 0, 2, VT_FLOAT32, False}
-        };
-        // clang-format on
-
-        PSOCreateInfo.pVS = pVS;
-        // Assign geometry shader only if it was created (device supports geometry shaders)
-        if (pGS)
-            PSOCreateInfo.pGS = pGS;
-        PSOCreateInfo.pPS = pPS;
-
-        PSOCreateInfo.GraphicsPipeline.InputLayout.LayoutElements = LayoutElems;
-    PSOCreateInfo.GraphicsPipeline.InputLayout.NumElements = sizeof(LayoutElems)/sizeof(LayoutElems[0]);
-
-        // Define variable type that will be used by default
-        PSOCreateInfo.PSODesc.ResourceLayout.DefaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
-
-        // Shader variables should typically be mutable, which means they are expected
-        // to change on a per-instance basis
-        // clang-format off
-    ShaderResourceVariableDesc Vars[] = 
-    {
-        {SHADER_TYPE_PIXEL, "g_Texture", SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE}
-    };
-        // clang-format on
-        PSOCreateInfo.PSODesc.ResourceLayout.Variables = Vars;
-    PSOCreateInfo.PSODesc.ResourceLayout.NumVariables = sizeof(Vars)/sizeof(Vars[0]);
-
-        // Define immutable sampler for g_Texture. Immutable samplers should be used whenever possible
-        // clang-format off
-    SamplerDesc SamLinearClampDesc
-    {
-        FILTER_TYPE_LINEAR, FILTER_TYPE_LINEAR, FILTER_TYPE_LINEAR, 
-        TEXTURE_ADDRESS_CLAMP, TEXTURE_ADDRESS_CLAMP, TEXTURE_ADDRESS_CLAMP
-    };
-    ImmutableSamplerDesc ImtblSamplers[] = 
-    {
-        {SHADER_TYPE_PIXEL, "g_Texture", SamLinearClampDesc}
-    };
-        // clang-format on
-        PSOCreateInfo.PSODesc.ResourceLayout.ImmutableSamplers = ImtblSamplers;
-    PSOCreateInfo.PSODesc.ResourceLayout.NumImmutableSamplers = sizeof(ImtblSamplers)/sizeof(ImtblSamplers[0]);
-
-    m_pDevice->CreateGraphicsPipelineState(PSOCreateInfo, &m_pCubePSO);
-    VERIFY_EXPR(m_pCubePSO);
-
-        // clang-format off
-        // Since we did not explicitly specify the type for 'VSConstants', 'GSConstants', 
-        // and 'PSConstants' variables, default type (SHADER_RESOURCE_VARIABLE_TYPE_STATIC) will be used.
-        // Static variables never change and are bound directly to the pipeline state object.
-        auto* pVarVS = m_pCubePSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "VSConstants");
-        if (!pVarVS)
-            pVarVS = m_pCubePSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "Constants");
-        if (pVarVS)
-        {
-            pVarVS->Set(m_VSConstants);
-            std::cout << "[C6GE] Bound VS static variable for Constants" << std::endl;
-        }
-        else
-        {
-            std::cout << "[C6GE] VS static variable for Constants not found in PSO" << std::endl;
-        }
-
-        // Set GS constants only if geometry shader is supported and the PSO exposes the variable
-        if (m_pDevice->GetDeviceInfo().Features.GeometryShaders)
-        {
-            auto* pVarGS = m_pCubePSO->GetStaticVariableByName(SHADER_TYPE_GEOMETRY, "GSConstants");
-            if (!pVarGS)
-                pVarGS = m_pCubePSO->GetStaticVariableByName(SHADER_TYPE_GEOMETRY, "Constants");
-            if (pVarGS)
-            {
-                pVarGS->Set(m_VSConstants);
-                std::cout << "[C6GE] Bound GS static variable for Constants" << std::endl;
-            }
-            else
-            {
-                std::cout << "[C6GE] GS static variable for Constants not found in PSO" << std::endl;
-            }
-        }
-
-        auto* pVarPS = m_pCubePSO->GetStaticVariableByName(SHADER_TYPE_PIXEL, "PSConstants");
-        if (!pVarPS)
-            pVarPS = m_pCubePSO->GetStaticVariableByName(SHADER_TYPE_PIXEL, "Constants");
-        if (pVarPS)
-        {
-            pVarPS->Set(m_VSConstants);
-            std::cout << "[C6GE] Bound PS static variable for Constants" << std::endl;
-        }
-        else
-        {
-            std::cout << "[C6GE] PS static variable for Constants not found in PSO" << std::endl;
-        }
-        // clang-format on
-
-        // Since we are using mutable variable, we must create a shader resource binding object
-        // http://diligentgraphics.com/2016/03/23/resource-binding-model-in-diligent-engine-2-0/
-    m_pCubePSO->CreateShaderResourceBinding(&m_CubeSRB, true);
-
-    // Create shadow pass PSO (depth-only)
-    {
-        GraphicsPipelineStateCreateInfo ShadowPSOCI;
-        ShadowPSOCI.PSODesc.Name = "Cube shadow PSO";
-        ShadowPSOCI.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
-        ShadowPSOCI.GraphicsPipeline.NumRenderTargets = 0;
-        ShadowPSOCI.GraphicsPipeline.RTVFormats[0] = TEX_FORMAT_UNKNOWN;
-        ShadowPSOCI.GraphicsPipeline.DSVFormat = m_ShadowMapFormat;
-        ShadowPSOCI.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-        ShadowPSOCI.GraphicsPipeline.RasterizerDesc.CullMode = CULL_MODE_BACK;
-        ShadowPSOCI.GraphicsPipeline.DepthStencilDesc.DepthEnable = True;
-
-        ShaderCreateInfo ShadowShaderCI;
-        ShadowShaderCI.pShaderSourceStreamFactory = pShaderSourceFactory;
-        ShadowShaderCI.SourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
-        ShadowShaderCI.Desc.UseCombinedTextureSamplers = true;
-        ShadowShaderCI.CompileFlags = SHADER_COMPILE_FLAG_PACK_MATRIX_ROW_MAJOR;
-
-        RefCntAutoPtr<IShader> pShadowVS;
-        ShadowShaderCI.Desc.ShaderType = SHADER_TYPE_VERTEX;
-        ShadowShaderCI.EntryPoint = "main";
-        ShadowShaderCI.Desc.Name = "Cube Shadow VS";
-        ShadowShaderCI.FilePath = "cube_shadow.vsh";
-        m_pDevice->CreateShader(ShadowShaderCI, &pShadowVS);
-
-        ShadowPSOCI.pVS = pShadowVS;
-        ShadowPSOCI.pPS = nullptr;
-
-        LayoutElement ShadowLayoutElems[] =
-        {
-            // Match structures.fxh: ATTRIB0 = Pos (float3), ATTRIB1 = Normal (float3), ATTRIB2 = UV (float2)
-            LayoutElement{0, 0, 3, VT_FLOAT32, False}, // Position
-            LayoutElement{1, 0, 3, VT_FLOAT32, False}, // Normal
-            LayoutElement{2, 0, 2, VT_FLOAT32, False}  // UV
-        };
-        ShadowPSOCI.GraphicsPipeline.InputLayout.LayoutElements = ShadowLayoutElems;
-    ShadowPSOCI.GraphicsPipeline.InputLayout.NumElements = sizeof(ShadowLayoutElems)/sizeof(ShadowLayoutElems[0]);
-
-        ShadowPSOCI.PSODesc.ResourceLayout.DefaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
-
-        if (m_pDevice->GetDeviceInfo().Features.DepthClamp)
-            ShadowPSOCI.GraphicsPipeline.RasterizerDesc.DepthClipEnable = False;
-
-        // Add slope-scaled depth bias to reduce shadow acne. These values
-        // are conservative; adjust if you see peter-panning or acne.
-        ShadowPSOCI.GraphicsPipeline.RasterizerDesc.DepthBias = 0;
-        ShadowPSOCI.GraphicsPipeline.RasterizerDesc.DepthBiasClamp = 0.0f;
-        ShadowPSOCI.GraphicsPipeline.RasterizerDesc.SlopeScaledDepthBias = 2.0f;
-
-        m_pDevice->CreateGraphicsPipelineState(ShadowPSOCI, &m_pCubeShadowPSO);
-        if (m_pCubeShadowPSO)
-        {
-            m_pCubeShadowPSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "Constants")->Set(m_VSConstants);
-            m_pCubeShadowPSO->CreateShaderResourceBinding(&m_CubeShadowSRB, true);
-        }
-    }
-
-    // Fallback: also bind constants through the SRB in case the PSO variables are mutable and static binding did not take effect.
-        if (m_CubeSRB && m_VSConstants)
-    {
-        // Vertex stage
-        IShaderResourceVariable* pVar = m_CubeSRB->GetVariableByName(SHADER_TYPE_VERTEX, "Constants");
-        if (!pVar)
-            pVar = m_CubeSRB->GetVariableByName(SHADER_TYPE_VERTEX, "VSConstants");
-        if (pVar)
-        {
-            pVar->Set(m_VSConstants);
-            std::cout << "[C6GE] Bound VS variable in SRB for Constants" << std::endl;
-        }
-        else
-        {
-            std::cout << "[C6GE] VS variable for Constants not found in SRB" << std::endl;
-        }
-
-        // Geometry stage
-        if (m_pDevice->GetDeviceInfo().Features.GeometryShaders)
-        {
-            IShaderResourceVariable* pVarG = m_CubeSRB->GetVariableByName(SHADER_TYPE_GEOMETRY, "Constants");
-            if (!pVarG)
-                pVarG = m_CubeSRB->GetVariableByName(SHADER_TYPE_GEOMETRY, "GSConstants");
-            if (pVarG)
-            {
-                pVarG->Set(m_VSConstants);
-                std::cout << "[C6GE] Bound GS variable in SRB for Constants" << std::endl;
-            }
-            else
-            {
-                std::cout << "[C6GE] GS variable for Constants not found in SRB" << std::endl;
-            }
-        }
-
-        // Pixel stage
-        IShaderResourceVariable* pVarP = m_CubeSRB->GetVariableByName(SHADER_TYPE_PIXEL, "Constants");
-        if (!pVarP)
-            pVarP = m_CubeSRB->GetVariableByName(SHADER_TYPE_PIXEL, "PSConstants");
-        if (pVarP)
-        {
-            pVarP->Set(m_VSConstants);
-            std::cout << "[C6GE] Bound PS variable in SRB for Constants" << std::endl;
-        }
-        else
-        {
-            std::cout << "[C6GE] PS variable for Constants not found in SRB" << std::endl;
-        }
-    }
-    else if (!m_VSConstants)
-    {
-        std::cerr << "[C6GE] Warning: Cannot bind constants - uniform buffer is null." << std::endl;
-    }
-    else
-    {
-        std::cerr << "[C6GE] Warning: Cube SRB is null; cannot bind constants via SRB fallback." << std::endl;
-    }
-    }
-
+    // Cube PSO fully removed
     void C6GERender::CreateFramebuffer()
     {
 
@@ -1367,8 +1160,117 @@ else
         m_pImmediateContext->ClearRenderTarget(pRTV, ClearColor.Data(), RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
         m_pImmediateContext->ClearDepthStencil(pDSV, CLEAR_DEPTH_FLAG, 1.f, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
-        // Render cube and plane (they update their own constant buffers)
-        RenderCube(m_CameraViewProjMatrix, false);
+
+
+        // Render the loaded GLTF model instead of the cube
+        if (m_BarnLampModel && m_GLTFRenderer && m_FrameAttribsCB)
+        {
+            // Build frame attributes (camera + renderer params + lights)
+            MapHelper<HLSL::PBRFrameAttribs> FrameAttribs{m_pImmediateContext, m_FrameAttribsCB, MAP_WRITE, MAP_FLAG_DISCARD};
+
+            // Camera setup
+            HLSL::CameraAttribs& CamAttribs     = FrameAttribs->Camera;
+            HLSL::CameraAttribs& PrevCamAttribs = FrameAttribs->PrevCamera;
+
+            // Simple camera: position at (0,0,-5) looking towards +Z; apply surface pretransform
+            const float4x4 View           = float4x4::Translation(0.f, 0.0f, 1.0f);
+            const float4x4 SrfPreTransform = GetSurfacePretransformMatrix(float3{0, 0, 1});
+            const float4x4 Proj            = GetAdjustedProjectionMatrix(PI_F / 4.0f, 0.1f, 100.f);
+            const float4x4 ViewMatrix      = View;
+            const float4x4 ProjMatrix      = Proj;
+            const float4x4 ViewProj        = ViewMatrix * SrfPreTransform * ProjMatrix;
+            const float4x4 WorldMatrix     = ViewMatrix.Inverse();
+
+            CamAttribs.f4ViewportSize = float4{
+                static_cast<float>(m_FramebufferWidth),
+                static_cast<float>(m_FramebufferHeight),
+                1.f / static_cast<float>(m_FramebufferWidth),
+                1.f / static_cast<float>(m_FramebufferHeight)
+            };
+
+            CamAttribs.fHandness = 1.0f;
+
+            WriteShaderMatrix(&CamAttribs.mView, ViewMatrix, !m_PackMatrixRowMajor);
+            WriteShaderMatrix(&CamAttribs.mProj, ProjMatrix, !m_PackMatrixRowMajor);
+            WriteShaderMatrix(&CamAttribs.mViewProj, ViewProj, !m_PackMatrixRowMajor);
+            WriteShaderMatrix(&CamAttribs.mViewInv, WorldMatrix, !m_PackMatrixRowMajor);
+            WriteShaderMatrix(&CamAttribs.mProjInv, ProjMatrix.Inverse(), !m_PackMatrixRowMajor);
+            WriteShaderMatrix(&CamAttribs.mViewProjInv, ViewProj.Inverse(), !m_PackMatrixRowMajor);
+            CamAttribs.f4Position = float4{float3::MakeVector(WorldMatrix[3]), 1};
+            CamAttribs.f2Jitter   = float2{0, 0};
+
+            // Clip planes
+            float fNearPlaneZ = 0.1f;
+            float fFarPlaneZ  = 100.0f;
+            ProjMatrix.GetNearFarClipPlanes(fNearPlaneZ, fFarPlaneZ, m_pDevice->GetDeviceInfo().NDC.MinZ == -1);
+            CamAttribs.SetClipPlanes(fNearPlaneZ, fFarPlaneZ);
+
+            // For now, set PrevCamera = CurrCamera (no motion vectors)
+            PrevCamAttribs = CamAttribs;
+
+            // Default light (directional)
+            HLSL::PBRLightAttribs* Lights = reinterpret_cast<HLSL::PBRLightAttribs*>(FrameAttribs + 1);
+            GLTF::Light DefaultLight;
+            DefaultLight.Type      = GLTF::Light::TYPE::DIRECTIONAL;
+            DefaultLight.Color     = float3{1, 1, 1};
+            DefaultLight.Intensity = 3.0f;
+            const float3 LightDir  = m_LightDirection; // Already normalized
+            GLTF_PBR_Renderer::WritePBRLightShaderAttribs({&DefaultLight, nullptr, &LightDir, 1.0f}, Lights);
+
+            // Renderer parameters
+            HLSL::PBRRendererShaderParameters& RendererParams = FrameAttribs->Renderer;
+            m_GLTFRenderer->SetInternalShaderParameters(RendererParams);
+            RendererParams.LightCount = 1;
+            RendererParams.DebugView  = static_cast<int>(GLTF_PBR_Renderer::DebugViewType::None);
+            RendererParams.MipBias    = 0;
+
+            // Compute transforms (identity for now, or use m_CubeWorldMatrix for placement)
+            GLTF::ModelTransforms transforms;
+            m_BarnLampModel->ComputeTransforms(0, transforms, m_CubeWorldMatrix); // Use cube's transform for now
+
+            // Ensure IBL textures are in correct state before rendering
+            if (auto* pIrradianceCube = m_GLTFRenderer->GetIrradianceCubeSRV())
+            {
+                ITexture* pTex = pIrradianceCube->GetTexture();
+                if (pTex)
+                {
+                    StateTransitionDesc barrier{pTex, RESOURCE_STATE_UNKNOWN, RESOURCE_STATE_SHADER_RESOURCE, STATE_TRANSITION_FLAG_UPDATE_STATE};
+                    barrier.FirstMipLevel  = 0;
+                    barrier.MipLevelsCount = REMAINING_MIP_LEVELS;
+                    barrier.FirstArraySlice = 0;
+                    barrier.ArraySliceCount = REMAINING_ARRAY_SLICES;
+                    m_pImmediateContext->TransitionResourceStates(1, &barrier);
+                }
+            }
+            if (auto* pPrefEnvMap = m_GLTFRenderer->GetPrefilteredEnvMapSRV())
+            {
+                ITexture* pTex = pPrefEnvMap->GetTexture();
+                if (pTex)
+                {
+                    StateTransitionDesc barrier{pTex, RESOURCE_STATE_UNKNOWN, RESOURCE_STATE_SHADER_RESOURCE, STATE_TRANSITION_FLAG_UPDATE_STATE};
+                    barrier.FirstMipLevel  = 0;
+                    barrier.MipLevelsCount = REMAINING_MIP_LEVELS;
+                    barrier.FirstArraySlice = 0;
+                    barrier.ArraySliceCount = REMAINING_ARRAY_SLICES;
+                    m_pImmediateContext->TransitionResourceStates(1, &barrier);
+                }
+            }
+
+            // Bind per-frame data and prepare renderer
+            m_GLTFRenderer->Begin(m_pImmediateContext);
+
+            // Render the model with proper IBL texture states
+            m_GLTFRenderer->Render(
+                m_pImmediateContext,
+                *m_BarnLampModel,
+                transforms,
+                nullptr, // No motion vectors
+                Diligent::GLTF_PBR_Renderer::RenderInfo{},
+                &m_ModelResourceBindings
+            );
+        }
+
+        // Render the plane as before
         RenderPlane();
 
         // Shadow visualization removed. No additional overlays.

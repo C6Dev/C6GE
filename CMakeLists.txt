@@ -40,6 +40,9 @@ endif()
 set(DILIGENT_BUILD_SAMPLE_BASE_ONLY ON CACHE BOOL "Build only SampleBase project" FORCE)
 add_subdirectory(external/DiligentEngine)
 
+# Add MeshOptimizer
+add_subdirectory(external/MeshOptimizer)
+
 # Detect platforms
 if(WIN32)
     set(PLATFORM_WIN32 TRUE)
@@ -93,7 +96,7 @@ target_include_directories(C6GE PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentTools/Imgui/src
     ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentTools/ThirdParty/imgui/backends
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends
-    
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/MeshOptimizer
 )
 
 add_executable(Runtime
@@ -116,6 +119,7 @@ target_include_directories(Runtime PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentTools/Imgui/src
     ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentTools/ThirdParty/imgui/backends
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/MeshOptimizer
 )
 
 # Link libraries

@@ -855,6 +855,7 @@ int main()
     // io_font.Fonts->AddFontDefault();
     // Scale all style sizes
     ImGui::GetStyle().ScaleAllSizes(font_scale);
+
     // Rebuild font atlas
 
     // Initialize ImGui Diligent backend (DiligentEngine handles GLFW integration internally)
