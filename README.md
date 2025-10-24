@@ -1,94 +1,68 @@
 # C6GE - Century6 Game Engine
-<img width="500" height="500" alt="IMG_0793" src="https://github.com/user-attachments/assets/fd87a175-37c9-41e5-aaf0-0c77045000ec" />
 
-C6GE is a game engine built on top of the Diligent Engine, providing cross-platform rendering capabilities with support for modern graphics APIs.
+![C6GE Logo](https://github.com/user-attachments/assets/fd87a175-37c9-41e5-aaf0-0c77045000ec)
 
-## ⚠️ Early Development Warning
+**C6GE** is a game engine built on top of the Diligent Engine and aimed at delivering cross-platform rendering capabilities with support for modern graphics APIs.  
+⚠️ *Early development stage — expect major changes and evolving architecture.*
 
-**This engine is in very early development stages.** The codebase has already been completely rewritten at least 3 times, and you should expect significant changes - for better or worse. The goal is to create a great game engine, but the architecture and features are still evolving rapidly.
-This project is in early development. It is a learning project, and the code quality is evolving. Help is welcome if explained well and approved.
+---
 
 ## 🧪 Unit Tests
 
 | Platform | Status |
-|-----------|---------|
-| **Linux** | [![Linux Unit Test](https://github.com/C6Dev/C6GE/actions/workflows/LinuxUnitTest.yml/badge.svg)](https://github.com/C6Dev/C6GE/actions/workflows/LinuxUnitTest.yml) |
-| **Windows** | [![Windows Unit Test](https://github.com/C6Dev/C6GE/actions/workflows/WindowsUnitTest.yml/badge.svg)](https://github.com/C6Dev/C6GE/actions/workflows/WindowsUnitTest.yml) |
-| **macOS** | [![macOS Unit Test](https://github.com/C6Dev/C6GE/actions/workflows/MacOSUnitTest.yml/badge.svg)](https://github.com/C6Dev/C6GE/actions/workflows/MacOSUnitTest.yml) |
+|----------|--------|
+| Linux    | ![Linux Unit Test](https://github.com/C6Dev/C6GE/actions/workflows/LinuxUnitTest.yml/badge.svg) |
+| Windows  | ![Windows Unit Test](https://github.com/C6Dev/C6GE/actions/workflows/WindowsUnitTest.yml/badge.svg) |
+| macOS    | ![macOS Unit Test](https://github.com/C6Dev/C6GE/actions/workflows/MacOSUnitTest.yml/badge.svg) |
 
-These badges reflect the latest automated test results for each platform’s CI build.
+---
 
-## Supported Rendering Engines
+## Supported Rendering Backends
 
-C6GE supports the following rendering backends through Diligent Engine:
+The engine currently supports the following rendering APIs:
 
-- **DirectX 11** - Full support on Windows
-- **DirectX 12** - Full support on Windows
-- **Vulkan** - Cross-platform support (Windows, Linux, macOS)
+- **DirectX 11** – Full support on Windows  
+- **DirectX 12** – Full support on Windows  
+- **Vulkan** – Cross-platform support (Windows, Linux, macOS)  
+- **Metal** – Experimental support (macOS and Apple Silicon)  
 
-### Metal Rendering Support
+> _Note: The Metal backend is considered experimental at this time. Use for testing and exploration; production readiness may require further validation._
 
-Metal rendering is technically supported but requires **Diligent Engine Pro**. To use Metal:
-
-- You must contact the Diligent Engine team directly to obtain Diligent Engine Pro
-- **We are not responsible for any issues or agreements related to Diligent Engine Pro**
-- A free Metal renderer is planned for the future through a fork of Diligent Engine
+---
 
 ## Supported Platforms
 
-### Windows
-- ✅ DirectX 11
-- ✅ DirectX 12
-- ✅ Vulkan
+- **Windows**  
+  - ✅ DirectX 11  
+  - ✅ DirectX 12  
+  - ✅ Vulkan  
+- **Linux**  
+  - ✅ Vulkan  
+- **macOS (including Apple Silicon)**  
+  - ✅ Vulkan  
+  - ⚠️ Metal (experimental)  
 
-### Linux
-- ✅ Vulkan
-
-### macOS
-- ✅ Vulkan (with interpretation layer)
-- ⚠️ Metal (requires Diligent Engine Pro - see above)
+---
 
 ## Game Engine Editor
 
-The engine uses **ImGui** with the **docking branch** to provide an editor interface. The docking branch enables advanced window management features necessary for a professional game engine editor.
+The engine includes an editor built with **ImGui** (docking branch) to support advanced window/viewport integration required for engine workflows.
+
+---
 
 ## Building the Engine
 
-(Build instructions to be added)
+Build instructions coming soon.  
+For now, you can refer to the `CMakeLists.txt` and `samples/` folder to get started.
+
+---
 
 ## Contributing
 
-As this is an early-stage project, contributions and feedback are welcome, but please be aware of the rapid changes in the codebase.
+This project is in active development and helps are welcome. If you contribute, please be aware of the rapidly evolving codebase.
+
+---
 
 ## License
 
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
-
-## Building the Engine
-To build C6GE, you will need to use CMake. Here are the commands for different build options:
-
-### Build just C6GE
-```bash
-mkdir build
-cd build
-cmake ..
-make C6GE
-```
-
-### Build both C6GE and Runtime
-```bash
-mkdir build
-cd build
-cmake ..
-make C6GE Runtime
-```
-
-### Build Diligent Samples
-```bash
-mkdir build
-cd build
-cmake ..
-make DiligentSamples
-```
-```
-You can find the samples in the `samples` directory. The renderer is based on the Sample Shadows tutorial.
+This project is licensed under the Apache 2.0 License.  
