@@ -34,11 +34,15 @@
 #include "SampleBase.hpp"
 #include "FirstPersonCamera.hpp"
 #include "DiligentTools/AssetLoader/interface/DXSDKMeshLoader.hpp"
+#include "DiligentTools/AssetLoader/interface/GLTFLoader.hpp"
+#include "DiligentFX/PBR/interface/GLTF_PBR_Renderer.hpp"
 #include "AdvancedMath.hpp"
 #include "BasicMath.hpp"
 #include "ThreadSignal.hpp"
 #include "DiligentTools/ThirdParty/imgui/imgui.h"
 
+
+namespace GLTF { class Model; }
 namespace Diligent
 {
 
@@ -94,6 +98,16 @@ namespace Diligent
         static bool IsRuntime;
 
     private:
+        // GLTF model for AnisotropyBarnLamp
+        std::unique_ptr<GLTF::Model> m_BarnLampModel;
+        // GLTF PBR renderer
+        std::unique_ptr<Diligent::GLTF_PBR_Renderer> m_GLTFRenderer;
+        // Resource bindings for the model
+        Diligent::GLTF_PBR_Renderer::ModelResourceBindings m_ModelResourceBindings;
+        // Frame attributes constant buffer
+        RefCntAutoPtr<IBuffer> m_FrameAttribsCB;
+    public:
+        C6GERender() = default;
     void CreateCubePSO();
     void CreatePlanePSO();
     // Shadow map visualization creation removed
@@ -121,13 +135,14 @@ namespace Diligent
     RefCntAutoPtr<ITextureView>           m_ShadowMapDSV;
     RefCntAutoPtr<ITextureView>           m_ShadowMapSRV;
     FirstPersonCamera m_Camera;
+    bool m_PackMatrixRowMajor = true;
 
     float4x4       m_CubeWorldMatrix;
     float4x4       m_CameraViewProjMatrix;
     float4x4       m_WorldToShadowMapUVDepthMatr;
     float3         m_LightDirection  = normalize(float3(-0.49f, -0.60f, 0.64f));
     Uint32         m_ShadowMapSize   = 2048;
-    TEXTURE_FORMAT m_ShadowMapFormat = TEX_FORMAT_D16_UNORM;
+    TEXTURE_FORMAT m_ShadowMapFormat = TEX_FORMAT_D32_FLOAT;
     // Shadow visualization removed. Use RenderShadows to enable/disable shadowing.
 
         // Framebuffer for off-screen rendering
