@@ -67,7 +67,7 @@ namespace Diligent
 #include "../../external/DiligentEngine/DiligentFX/Shaders/PBR/private/RenderPBR_Structures.fxh"
     }
 
-    bool RenderShadows = false;
+    bool RenderShadows = true; // Enable shadows by default
     bool Diligent::C6GERender::IsRuntime = false;
     Diligent::C6GERender::PlayState Diligent::C6GERender::playState = Diligent::C6GERender::PlayState::Paused;
 
@@ -185,12 +185,13 @@ namespace Diligent
 
         // Query actual swapchain and depth formats
         TEXTURE_FORMAT swapchainFormat = TEX_FORMAT_RGBA8_UNORM;
-        TEXTURE_FORMAT depthFormat = TEX_FORMAT_D16_UNORM;
+        TEXTURE_FORMAT depthFormat = TEX_FORMAT_D32_FLOAT; // Use consistent depth format
         if (m_pSwapChain)
         {
             const auto &scDesc = m_pSwapChain->GetDesc();
             swapchainFormat = scDesc.ColorBufferFormat;
-            depthFormat = scDesc.DepthBufferFormat;
+            // Always use D32_FLOAT for consistency
+            depthFormat = TEX_FORMAT_D32_FLOAT;
         }
 
         // Create frame attributes constant buffer (required by GLTF_PBR_Renderer)
@@ -214,7 +215,7 @@ namespace Diligent
             Diligent::GLTF_PBR_Renderer::CreateInfo RendererCI;
             RendererCI.NumRenderTargets = 1;
             RendererCI.RTVFormats[0] = swapchainFormat;
-            RendererCI.DSVFormat = depthFormat;
+            RendererCI.DSVFormat = TEX_FORMAT_D32_FLOAT; // Use consistent depth format
             m_GLTFRenderer = std::make_unique<Diligent::GLTF_PBR_Renderer>(m_pDevice, nullptr, m_pImmediateContext, RendererCI);
         }
 
@@ -494,7 +495,7 @@ namespace Diligent
                             ImGui::Text("C6GE Century6 Game Engine");
                             ImGui::Separator();
                             ImGui::Text("License: Apache 2.0");
-                            ImGui::Text("Version: V0.1 Beta");
+                            ImGui::Text("Version: 2026.1");
                             ImGui::Text("Century6.com/C6GE");
                             ImGui::EndTabItem();
                         }
@@ -666,7 +667,7 @@ namespace Diligent
         DepthTexDesc.Type = RESOURCE_DIM_TEX_2D;
         DepthTexDesc.Width = std::max(1u, m_FramebufferWidth);
         DepthTexDesc.Height = std::max(1u, m_FramebufferHeight);
-        DepthTexDesc.Format = m_pSwapChain->GetDesc().DepthBufferFormat; // Match swap chain depth format
+        DepthTexDesc.Format = TEX_FORMAT_D32_FLOAT; // Use consistent depth format
         DepthTexDesc.Usage = USAGE_DEFAULT;
         DepthTexDesc.BindFlags = BIND_DEPTH_STENCIL;
         DepthTexDesc.MipLevels = 1;
@@ -1144,9 +1145,9 @@ else
         // 1) Render shadow map
         if (RenderShadows && m_ShadowMapDSV)
         {
-            m_pImmediateContext->SetRenderTargets(0, nullptr, m_ShadowMapDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-            m_pImmediateContext->ClearDepthStencil(m_ShadowMapDSV, CLEAR_DEPTH_FLAG, 1.f, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-            RenderShadowMap();
+            // For shadow rendering, we still need a render target even if we're only writing depth
+            // Use a dummy/null render target or skip GLTF shadow rendering for now
+            RenderShadowMap(); // Keep existing shadow map rendering for other objects
         }
 
         // 2) Render scene into off-screen framebuffer for ImGui viewport
@@ -1173,7 +1174,7 @@ else
             HLSL::CameraAttribs& PrevCamAttribs = FrameAttribs->PrevCamera;
 
             // Simple camera: position at (0,0,-5) looking towards +Z; apply surface pretransform
-            const float4x4 View           = float4x4::Translation(0.f, 0.0f, 1.0f);
+            const float4x4 View           = float4x4::Translation(0.f, 0.0f, 5.0f);
             const float4x4 SrfPreTransform = GetSurfacePretransformMatrix(float3{0, 0, 1});
             const float4x4 Proj            = GetAdjustedProjectionMatrix(PI_F / 4.0f, 0.1f, 100.f);
             const float4x4 ViewMatrix      = View;
@@ -1208,13 +1209,13 @@ else
             // For now, set PrevCamera = CurrCamera (no motion vectors)
             PrevCamAttribs = CamAttribs;
 
-            // Default light (directional)
+            // Default light (directional) with ambient component
             HLSL::PBRLightAttribs* Lights = reinterpret_cast<HLSL::PBRLightAttribs*>(FrameAttribs + 1);
             GLTF::Light DefaultLight;
             DefaultLight.Type      = GLTF::Light::TYPE::DIRECTIONAL;
             DefaultLight.Color     = float3{1, 1, 1};
-            DefaultLight.Intensity = 3.0f;
-            const float3 LightDir  = m_LightDirection; // Already normalized
+            DefaultLight.Intensity = 1.0f; // Reduced intensity
+            const float3 LightDir  = normalize(float3{-0.1f, -0.9f, -0.1f}); // More vertical light for proper plane shadows
             GLTF_PBR_Renderer::WritePBRLightShaderAttribs({&DefaultLight, nullptr, &LightDir, 1.0f}, Lights);
 
             // Renderer parameters
@@ -1223,6 +1224,8 @@ else
             RendererParams.LightCount = 1;
             RendererParams.DebugView  = static_cast<int>(GLTF_PBR_Renderer::DebugViewType::None);
             RendererParams.MipBias    = 0;
+            // Increase IBL scale to provide more ambient lighting
+            RendererParams.IBLScale = float4{1.5f, 1.5f, 1.5f, 1.0f};
 
             // Compute transforms (identity for now, or use m_CubeWorldMatrix for placement)
             GLTF::ModelTransforms transforms;
@@ -1259,13 +1262,17 @@ else
             // Bind per-frame data and prepare renderer
             m_GLTFRenderer->Begin(m_pImmediateContext);
 
-            // Render the model with proper IBL texture states
+            // Render the model with proper IBL texture states and disabled shadows
+            Diligent::GLTF_PBR_Renderer::RenderInfo renderInfo{};
+            // Disable shadows for the GLTF model to prevent it from being completely black
+            renderInfo.Flags = Diligent::GLTF_PBR_Renderer::PSO_FLAG_DEFAULT & ~Diligent::GLTF_PBR_Renderer::PSO_FLAG_ENABLE_SHADOWS;
+            
             m_GLTFRenderer->Render(
                 m_pImmediateContext,
                 *m_BarnLampModel,
                 transforms,
                 nullptr, // No motion vectors
-                Diligent::GLTF_PBR_Renderer::RenderInfo{},
+                renderInfo,
                 &m_ModelResourceBindings
             );
         }
@@ -1273,29 +1280,32 @@ else
         // Render the plane as before
         RenderPlane();
 
-        // Shadow visualization removed. No additional overlays.
+        // Copy the off-screen framebuffer to the swap chain back buffer
+        ITextureView* pSwapChainRTV = m_pSwapChain->GetCurrentBackBufferRTV();
+        ITextureView* pSwapChainDSV = m_pSwapChain->GetDepthBufferDSV();
+        
+        // Set swap chain as render target
+        m_pImmediateContext->SetRenderTargets(1, &pSwapChainRTV, pSwapChainDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        
+        // Copy the framebuffer texture to the swap chain
+        if (m_pFramebufferTexture)
+        {
+            CopyTextureAttribs CopyAttribs;
+            CopyAttribs.pSrcTexture = m_pFramebufferTexture;
+            CopyAttribs.pDstTexture = pSwapChainRTV->GetTexture();
+            m_pImmediateContext->CopyTexture(CopyAttribs);
+        }
 
-        // Finally, prepare swap-chain back buffer (host UI etc.)
-        pRTV = m_pSwapChain->GetCurrentBackBufferRTV();
-        pDSV = m_pSwapChain->GetDepthBufferDSV();
-        float4 ClearColorSwap = {0.1f, 0.1f, 0.1f, 1.0f};
-        if (m_ConvertPSOutputToGamma)
-            ClearColorSwap = LinearToSRGB(ClearColorSwap);
-        m_pImmediateContext->SetRenderTargets(1, &pRTV, pDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        m_pImmediateContext->ClearRenderTarget(pRTV, ClearColorSwap.Data(), RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        m_pImmediateContext->ClearDepthStencil(pDSV, CLEAR_DEPTH_FLAG, 1.f, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        // Shadow visualization removed. No additional overlays.
     }
 
     void C6GERender::Update(double CurrTime, double ElapsedTime, bool DoUpdateUI)
     {
         SampleBase::Update(CurrTime, ElapsedTime, DoUpdateUI);
 
-        // Only update scene if playing
-        if (!IsPlaying())
-            return;
-
-    // Apply rotation
-    m_CubeWorldMatrix = float4x4::RotationY(static_cast<float>(CurrTime) * 1.0f) * float4x4::RotationX(-PI_F * 0.1f);
+        // Position model above the plane and in front of camera
+        // Camera is at (0, 0, -5) looking towards +Z, so place model at positive Z
+        m_CubeWorldMatrix = float4x4::Translation(0.f, -1.5f, 2.0f);
 
         // Camera is at (0, 0, -5) looking along the Z axis
         float4x4 View = float4x4::Translation(0.f, 0.0f, 5.0f);
@@ -1307,7 +1317,7 @@ else
         float4x4 Proj = GetAdjustedProjectionMatrix(PI_F / 4.0f, 0.1f, 100.f);
 
         // Compute camera view-projection matrix (world transforms applied per-object)
-    m_CameraViewProjMatrix = View * SrfPreTransform * Proj;
+        m_CameraViewProjMatrix = View * SrfPreTransform * Proj;
     }
 
     void C6GERender::WindowResize(Uint32 Width, Uint32 Height)

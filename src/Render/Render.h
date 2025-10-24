@@ -142,7 +142,7 @@ namespace Diligent
     float4x4       m_WorldToShadowMapUVDepthMatr;
     float3         m_LightDirection  = normalize(float3(-0.49f, -0.60f, 0.64f));
     Uint32         m_ShadowMapSize   = 2048;
-    TEXTURE_FORMAT m_ShadowMapFormat = TEX_FORMAT_D16_UNORM;
+    TEXTURE_FORMAT m_ShadowMapFormat = TEX_FORMAT_D32_FLOAT;
     // Shadow visualization removed. Use RenderShadows to enable/disable shadowing.
 
         // Framebuffer for off-screen rendering

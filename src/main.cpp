@@ -1,4 +1,4 @@
-﻿#define METAL_ENABLED 0
+#define METAL_ENABLED 0
 #include <iostream>
 #include <thread>
 #include <chrono>
@@ -795,7 +795,7 @@ int main()
     }
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow* window = glfwCreateWindow(800, 600, "C6GE - TextureArray with ImGui", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(800, 600, "C6GE 2026.1", nullptr, nullptr);
     if (!window)
     {
         std::cerr << "Failed to create GLFW window" << std::endl;
@@ -849,8 +849,8 @@ int main()
     // Load a larger font (Roboto-Medium.ttf is available in external/imgui/misc/fonts/)
     ImGuiIO& io_font = ImGui::GetIO();
     io_font.Fonts->Clear();
-    io_font.Fonts->AddFontFromFileTTF("Roboto-Medium.ttf", 10.0f * font_scale);
-    io_font.Fonts->AddFontFromFileTTF("Roboto-Medium.ttf", 18.0f * font_scale);
+    io_font.Fonts->AddFontFromFileTTF("external/imgui/misc/fonts/Roboto-Medium.ttf", 10.0f * font_scale);
+    io_font.Fonts->AddFontFromFileTTF("external/imgui/misc/fonts/Roboto-Medium.ttf", 18.0f * font_scale);
     // Optionally, add default font as fallback
     // io_font.Fonts->AddFontDefault();
     // Scale all style sizes
