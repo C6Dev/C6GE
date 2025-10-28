@@ -1,0 +1,27 @@
+// Simple post-processing pixel shader that applies gamma correction to the input color texture
+
+Texture2D    g_TextureColor;
+SamplerState g_TextureColor_sampler;
+
+float3 LinearToSRGB(float3 c)
+{
+    // Approximate sRGB gamma correction
+    return pow(c, 1.0 / 2.2);
+}
+
+// If set to 1, perform manual gamma encoding (linear->sRGB) in shader.
+#ifndef APPLY_MANUAL_GAMMA
+#define APPLY_MANUAL_GAMMA 1
+#endif
+
+float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD0) : SV_Target
+{
+    // Flip Y to match render target orientation vs. screen quad UVs
+    float2 tuv = float2(uv.x, 1.0 - uv.y);
+    float3 col = g_TextureColor.Sample(g_TextureColor_sampler, tuv).rgb;
+    // Apply simple gamma correction from linear to sRGB
+    #if APPLY_MANUAL_GAMMA
+        col = LinearToSRGB(col);
+    #endif
+    return float4(col, 1.0);
+}

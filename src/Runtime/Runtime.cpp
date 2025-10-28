@@ -70,6 +70,8 @@
 
 // Your includes
 #include "Render/Render.h"
+#include "Runtime/ECS/World.h"
+#include "Runtime/ECS/Components.h"
 #include "MapHelper.hpp"
 #include "GraphicsUtilities.h"
 #include "ShaderMacroHelper.hpp"
@@ -663,6 +665,19 @@ int main()
     glfwGetFramebufferSize(window, &fbW, &fbH);
     swapChain->Resize(fbW, fbH);
     sample->WindowResize(fbW, fbH);
+
+    // Create scene objects in runtime mode too (if desired)
+    {
+        auto* render = static_cast<Diligent::C6GERender*>(sample);
+        render->EnsureWorld();
+        auto* world = render->GetWorld();
+        using Diligent::ECS::StaticMesh;
+        using Diligent::ECS::Transform;
+
+        auto cube = world->CreateObject("RuntimeCube");
+        cube.AddComponent<StaticMesh>(StaticMesh{StaticMesh::MeshType::Cube});
+        cube.AddComponent<Transform>(Transform{ {0,0,0}, {0,0,0}, {1,1,1} });
+    }
 
     // Forward GLFW events to Diligent InputController. We set the sample as
     // the user pointer so callbacks can access the InputController instance.

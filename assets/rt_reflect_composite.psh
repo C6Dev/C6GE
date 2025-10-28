@@ -1,0 +1,8 @@
+Texture2D g_RTOutput; SamplerState g_RTOutput_sampler;
+
+float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD0) : SV_Target
+{
+    // RGB stores reflection color written by the compute pass
+    float3 col = g_RTOutput.Sample(g_RTOutput_sampler, uv).rgb;
+    return float4(col, 1.0);
+}

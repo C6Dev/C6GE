@@ -69,6 +69,8 @@
 
 // Your includes
 #include "Render/Render.h"
+#include "Runtime/ECS/World.h"
+#include "Runtime/ECS/Components.h"
 #include "MapHelper.hpp"
 #include "GraphicsUtilities.h"
 #include "ShaderMacroHelper.hpp"
@@ -916,6 +918,25 @@ int main()
     glfwGetFramebufferSize(window, &fbW, &fbH);
     swapChain->Resize(fbW, fbH);
     sample->WindowResize(fbW, fbH);
+
+    // Create scene objects via ECS API
+    {
+        auto* render = static_cast<Diligent::C6GERender*>(sample);
+        render->EnsureWorld();
+        auto* world = render->GetWorld();
+        using Diligent::ECS::StaticMesh;
+        using Diligent::ECS::Transform;
+
+        // CreateObject("ObjectName")
+        auto cube = world->CreateObject("ObjectName");
+        // ObjectName.AddComponent<StaticMesh>(C6GE.Models.CubeMesh);
+        cube.AddComponent<StaticMesh>(StaticMesh{StaticMesh::MeshType::Cube});
+        // ObjectName.AddComponent<Transform>(0, 0, 0);
+        cube.AddComponent<Transform>(Transform{ {0,0,0}, {0,0,0}, {1,1,1} });
+        // ObjectName.Transform = GetComponent<Transform>(); then adjust position
+        auto& tr = cube.GetComponent<Transform>();
+        tr.position += Diligent::float3{0.f, 0.f, 0.f};
+    }
 
     // Forward GLFW events to Diligent InputController. We set the sample as
     // the user pointer so callbacks can access the InputController instance.

@@ -76,6 +76,7 @@ endif()
 add_executable(C6GE
     src/main.cpp
     src/Render/Render.cpp
+    src/Render/Systems/RenderSystem.cpp
     external/DiligentEngine/DiligentSamples/Tutorials/Common/src/TexturedCube.cpp
     src/EditorTheme/EditorTheme.cpp
     # ImGui platform backend for GLFW (required for multi-viewport platform windows)
@@ -85,6 +86,7 @@ add_executable(C6GE
 # Include directories
 target_include_directories(C6GE PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/entt/single_include
     ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine
     ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentTools/NativeApp/include
     ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentSamples/ThirdParty/glfw/include
@@ -99,6 +101,7 @@ target_include_directories(C6GE PRIVATE
 add_executable(Runtime
     src/Runtime/Runtime.cpp
     src/Render/Render.cpp
+    src/Render/Systems/RenderSystem.cpp
     external/DiligentEngine/DiligentSamples/Tutorials/Common/src/TexturedCube.cpp
     src/EditorTheme/EditorTheme.cpp
     # ImGui platform backend for GLFW (required for multi-viewport platform windows)
@@ -108,6 +111,7 @@ add_executable(Runtime
 # Include directories
 target_include_directories(Runtime PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/entt/single_include
     ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine
     ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentTools/NativeApp/include
     ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentSamples/ThirdParty/glfw/include

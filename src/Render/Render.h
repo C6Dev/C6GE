@@ -39,9 +39,20 @@
 #include "BasicMath.hpp"
 #include "ThreadSignal.hpp"
 #include "DiligentTools/ThirdParty/imgui/imgui.h"
+#include <entt/entt.hpp>
+
+// Forward declarations for DiligentFX PostFX
+namespace Diligent
+{
+class PostFXContext;
+class TemporalAntiAliasing;
+}
 
 namespace Diligent
 {
+    // FWD declarations to avoid including headers here
+    namespace ECS { class World; }
+    namespace C6GE { namespace Systems { class RenderSystem; } }
 
     class C6GERender final : public SampleBase
     {
@@ -97,6 +108,14 @@ namespace Diligent
         static bool IsRuntime;
 
     private:
+    // Small helper to draw a cube with an explicit world transform (for ECS)
+    public:
+        void RenderCubeWithWorld(const float4x4& World, const float4x4& CameraViewProj, bool IsShadowPass,
+                                 RESOURCE_STATE_TRANSITION_MODE TransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        // ECS accessors for external object creation
+        class ECS::World* GetWorld() { return m_World.get(); }
+        void EnsureWorld();
+    private:
     void CreateCubePSO();
     void CreatePlanePSO();
     // Shadow map visualization creation removed
@@ -141,6 +160,33 @@ namespace Diligent
     bool m_RayTracingInitialized = false; // Internal init state
     bool m_PendingRTRestart   = false;   // Defer RT destroy/reinit to the next frame after resize
 
+    // Ray tracing UI settings
+    bool  m_SoftShadowsEnabled   = true;   // Toggle hard vs soft shadows for RT path
+    float m_SoftShadowAngularRad  = 0.06f; // ~3.4 degrees
+    int   m_SoftShadowSamples     = 8;     // Number of shadow rays per pixel
+    bool  m_EnableRTReflections   = true;  // Toggle additive reflection composite
+
+    // Post-processing
+    bool  m_EnablePostProcessing  = false; // Master toggle for post-processing chain
+    bool  m_PostGammaCorrection   = true;  // If true, run gamma-correction pass (simple example)
+    void  CreatePostFXTargets();
+    void  DestroyPostFXTargets();
+    void  CreatePostFXPSOs();
+    RefCntAutoPtr<ITexture>           m_pPostTexture;    // Post-processed color buffer (same size as framebuffer)
+    RefCntAutoPtr<ITextureView>       m_pPostRTV;
+    RefCntAutoPtr<ITextureView>       m_pPostSRV;
+    RefCntAutoPtr<IPipelineState>     m_pPostGammaPSO;   // Simple gamma-correction PSO (fullscreen)
+    RefCntAutoPtr<IShaderResourceBinding> m_PostGammaSRB;
+
+    // Temporal Anti-Aliasing (TAA)
+    bool m_EnableTAA = false; // UI toggle
+    std::unique_ptr<PostFXContext>        m_PostFXContext; // Frame graph helper used by TAA
+    std::unique_ptr<TemporalAntiAliasing> m_TAA;           // TAA module
+    // TAA settings struct comes from HLSL includes in Render.cpp; keep opaque here
+    struct TAASettingsOpaque { alignas(16) unsigned char _pad[64]; };
+    TAASettingsOpaque m_TAASettingsStorage{}; // Storage; real type defined in Render.cpp via alias
+    uint64_t m_TemporalFrameIndex = 0;        // For jitter sequencing and history
+
     // Ray tracing (hybrid) stubbed API
     void InitializeRayTracing();
     void DestroyRayTracing();
@@ -166,16 +212,23 @@ namespace Diligent
     // Ray tracing geometry copies (created with BIND_RAY_TRACING)
     RefCntAutoPtr<IBuffer>        m_CubeRTVertexBuffer;
     RefCntAutoPtr<IBuffer>        m_CubeRTIndexBuffer;
+    RefCntAutoPtr<IBuffer>        m_PlaneRTVertexBuffer;
+    RefCntAutoPtr<IBuffer>        m_PlaneRTIndexBuffer;
 
     // RT composite overlay PSO
-    RefCntAutoPtr<IPipelineState>         m_pRTCompositePSO;
+    RefCntAutoPtr<IPipelineState>         m_pRTCompositePSO;      // multiplicative (shadows)
     RefCntAutoPtr<IShaderResourceBinding> m_RTCompositeSRB;
+    RefCntAutoPtr<IPipelineState>         m_pRTAddCompositePSO;   // additive (reflections)
+    RefCntAutoPtr<IShaderResourceBinding> m_RTAddCompositeSRB;
     // Ray query (shadows) compute PSO
     RefCntAutoPtr<IPipelineState>         m_pRTShadowPSO;
     RefCntAutoPtr<IShaderResourceBinding> m_RTShadowSRB;
     RefCntAutoPtr<IBuffer>                m_RTConstants;
+    // TLAS capacity hint
+    uint32_t                              m_MaxTLASInstances = 1024;
 
     float4x4       m_CubeWorldMatrix;
+    float4x4       m_SecondCubeWorldMatrix;
     float4x4       m_CameraViewProjMatrix;
     float4x4       m_WorldToShadowMapUVDepthMatr;
     float3         m_LightDirection  = normalize(float3(-0.49f, -0.60f, 0.64f));
@@ -192,12 +245,19 @@ namespace Diligent
         Uint32 m_FramebufferWidth = 800;
         Uint32 m_FramebufferHeight = 600;
         ImTextureID m_ViewportTextureID = 0;
+    RefCntAutoPtr<ITextureView> m_pViewportDisplaySRV; // What the viewport draws this frame
 
         // MSAA settings
         Uint8  m_SampleCount = 1;
         std::vector<Uint8> m_SupportedSampleCounts;
         RefCntAutoPtr<ITextureView> m_pMSColorRTV;
         RefCntAutoPtr<ITextureView> m_pMSDepthDSV;
+
+        // ECS world and render system
+        std::unique_ptr<ECS::World> m_World;
+        std::unique_ptr<C6GE::Systems::RenderSystem> m_RenderSystem;
+        // Editor selection
+        entt::entity m_SelectedEntity { entt::null };
     };
 
 } // namespace Diligent

@@ -54,6 +54,20 @@ namespace Diligent
 #include <random>
 #include <string>
 #include <algorithm>
+// STL containers
+#include <vector>
+
+// DiligentFX PostFX headers
+#include "PostFXContext.hpp"
+#include "TemporalAntiAliasing.hpp"
+
+// ECS
+#include "Runtime/ECS/World.h"
+#include "Runtime/ECS/Components.h"
+#include "Render/Systems/RenderSystem.h"
+
+// Helper alias to map opaque storage to the settings type declared by the TAA module
+using TAASettings = Diligent::HLSL::TemporalAntiAliasingAttribs;
 
 namespace Diligent
 {
@@ -98,6 +112,7 @@ namespace Diligent
             float4x4 InvViewProj;        // inverse of camera view-projection
             float4   ViewSize_Plane;     // (width, height, PlaneY, PlaneExtent)
             float4   LightDir_Shadow;    // (Lx, Ly, Lz, ShadowStrength)
+            float4   ShadowSoftParams;   // (AngularRadiusRad, SampleCount, unused, unused)
         };
 
     } // namespace
@@ -290,6 +305,37 @@ namespace Diligent
             throw; // Re-throw as this is critical
         }
 
+        // Create initial post-processing render target and PSOs
+        try {
+            CreatePostFXTargets();
+            CreatePostFXPSOs();
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "[C6GE] Exception creating post-processing pipeline: " << e.what() << std::endl;
+            // Non-critical: allow app to run without post FX
+        }
+
+        // Initialize PostFXContext + TAA (optional)
+        try
+        {
+            m_PostFXContext = std::make_unique<PostFXContext>(m_pDevice, PostFXContext::CreateInfo{true, true});
+            m_TAA            = std::make_unique<TemporalAntiAliasing>(m_pDevice, TemporalAntiAliasing::CreateInfo{true});
+
+            // Default TAA settings (from HLSL::TemporalAntiAliasingAttribs)
+            auto& TAASettingsRef = *reinterpret_cast<TAASettings*>(&m_TAASettingsStorage);
+            TAASettingsRef.TemporalStabilityFactor = 0.9375f; // tutorial default
+            TAASettingsRef.ResetAccumulation       = FALSE;
+            TAASettingsRef.SkipRejection           = FALSE;
+            // m_EnableTAA remains false by default; enable via UI
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "[C6GE] Exception creating TAA: " << e.what() << std::endl;
+            m_PostFXContext.reset();
+            m_TAA.reset();
+        }
+
         try {
             CreateMSAARenderTarget();
         }
@@ -331,6 +377,9 @@ namespace Diligent
 
     // Cube vertex/index buffers were already created with normals above. Keep them.
     printf("[Initialize] Cube VB=%p IB=%p\n", (void *)m_CubeVertexBuffer.RawPtr(), (void *)m_CubeIndexBuffer.RawPtr());
+
+    // Initialize ECS world and systems, but do not create any objects here
+    EnsureWorld();
     }
 
     void C6GERender::UpdateUI()
@@ -431,132 +480,189 @@ namespace Diligent
         {
             if (ImGui::Begin("Render Settings", &RenderSettingsOpen, ImGuiWindowFlags_NoCollapse))
             {
-                ImGui::SliderFloat("Line Width", &m_LineWidth, 1.f, 10.f);
-                
-                // MSAA Settings
-                if (ImGui::CollapsingHeader("Anti-Aliasing", ImGuiTreeNodeFlags_DefaultOpen))
+                if (ImGui::BeginTabBar("RenderSettingsTabs"))
                 {
-                    if (!m_SupportedSampleCounts.empty())
+                    if (ImGui::BeginTabItem("Raster"))
                     {
-                        // Create a list of sample count options
-                        std::vector<const char*> sampleCountNames;
-                        std::vector<Uint8> sampleCountValues;
-                        
-                        for (Uint8 sampleCount : m_SupportedSampleCounts)
+                        ImGui::SliderFloat("Line Width", &m_LineWidth, 1.f, 10.f);
+
+                        // MSAA Settings
+                        if (ImGui::CollapsingHeader("Anti-Aliasing", ImGuiTreeNodeFlags_DefaultOpen))
                         {
-                            static std::string names[8]; // Static storage for strings
-                            int index = sampleCountNames.size();
-                            if (sampleCount == 1)
-                                names[index] = "Disabled (1x)";
+                            if (!m_SupportedSampleCounts.empty())
+                            {
+                                // Create a list of sample count options
+                                std::vector<const char*> sampleCountNames;
+                                std::vector<Uint8> sampleCountValues;
+
+                                for (Uint8 sampleCount : m_SupportedSampleCounts)
+                                {
+                                    static std::string names[8]; // Static storage for strings
+                                    int index = static_cast<int>(sampleCountNames.size());
+                                    if (sampleCount == 1)
+                                        names[index] = "Disabled (1x)";
+                                    else
+                                        names[index] = std::to_string(sampleCount) + "x MSAA";
+
+                                    sampleCountNames.push_back(names[index].c_str());
+                                    sampleCountValues.push_back(sampleCount);
+                                }
+
+                                // Find current selection
+                                int currentSelection = 0;
+                                for (size_t i = 0; i < sampleCountValues.size(); ++i)
+                                {
+                                    if (sampleCountValues[i] == m_SampleCount)
+                                    {
+                                        currentSelection = static_cast<int>(i);
+                                        break;
+                                    }
+                                }
+
+                                if (ImGui::Combo("Sample Count", &currentSelection, sampleCountNames.data(), static_cast<int>(sampleCountNames.size())))
+                                {
+                                    Uint8 newSampleCount = sampleCountValues[currentSelection];
+                                    if (newSampleCount != m_SampleCount)
+                                    {
+                                        m_SampleCount = newSampleCount;
+                                        // Recreate MSAA render targets with new sample count
+                                        CreateMSAARenderTarget();
+                                    }
+                                }
+                            }
                             else
-                                names[index] = std::to_string(sampleCount) + "x MSAA";
-                            
-                            sampleCountNames.push_back(names[index].c_str());
-                            sampleCountValues.push_back(sampleCount);
-                        }
-                        
-                        // Find current selection
-                        int currentSelection = 0;
-                        for (size_t i = 0; i < sampleCountValues.size(); ++i)
-                        {
-                            if (sampleCountValues[i] == m_SampleCount)
                             {
-                                currentSelection = static_cast<int>(i);
-                                break;
+                                ImGui::Text("MSAA not supported on this device");
                             }
                         }
-                        
-                        if (ImGui::Combo("Sample Count", &currentSelection, sampleCountNames.data(), static_cast<int>(sampleCountNames.size())))
+
+                        if (ImGui::CollapsingHeader("Shadows", ImGuiTreeNodeFlags_DefaultOpen))
                         {
-                            Uint8 newSampleCount = sampleCountValues[currentSelection];
-                            if (newSampleCount != m_SampleCount)
+                            ImGui::Checkbox("Shadow Maps", &RenderShadows);
+                            static int shadowRes = (int)m_ShadowMapSize;
+                            if (ImGui::SliderInt("Shadow Resolution", &shadowRes, 512, 8192, "%d"))
                             {
-                                m_SampleCount = newSampleCount;
-                                // Recreate MSAA render targets with new sample count
-                                CreateMSAARenderTarget();
+                                if (shadowRes != (int)m_ShadowMapSize)
+                                {
+                                    m_ShadowMapSize = shadowRes;
+                                    CreateShadowMap();
+                                }
                             }
                         }
-                    }
-                    else
-                    {
-                        ImGui::Text("MSAA not supported on this device");
-                    }
-                }
-                
-                if (ImGui::CollapsingHeader("Shadows", ImGuiTreeNodeFlags_DefaultOpen))
-                {
-                    ImGui::Checkbox("Shadow Maps", &RenderShadows);
-                    static int shadowRes = (int)m_ShadowMapSize;
-                    if (ImGui::SliderInt("Shadow Resolution", &shadowRes, 512, 8192, "%d"))
-                    {
-                        if (shadowRes != (int)m_ShadowMapSize)
-                        {
-                            m_ShadowMapSize = shadowRes;
-                            CreateShadowMap();
-                        }
-                    }
-                }
 
-                // Ray Tracing (Hybrid Rendering) - off by default
-                if (ImGui::CollapsingHeader("Ray Tracing (Hybrid)", ImGuiTreeNodeFlags_DefaultOpen))
-                {
-                    ImGui::Text("Device supports ray tracing: %s", m_RayTracingSupported ? "Yes" : "No");
-                    bool enabled = m_EnableRayTracing;
-                    if (!m_RayTracingSupported)
-                        ImGui::BeginDisabled();
-                    if (ImGui::Checkbox("Enable Ray Tracing (DXR/VKRT)", &enabled))
-                    {
-                        m_EnableRayTracing = enabled;
-                        if (m_EnableRayTracing)
+                        if (ImGui::CollapsingHeader("Advanced", ImGuiTreeNodeFlags_DefaultOpen))
                         {
-                            if (!m_RayTracingInitialized)
-                                InitializeRayTracing();
-                            std::cout << "[C6GE] Ray tracing enabled (experimental)." << std::endl;
+                            if (m_pMainRenderPass)
+                            {
+                                if (ImGui::Checkbox("Use Render Passes", &m_UseRenderPasses))
+                                {
+                                    // Clear cache when toggling
+                                    m_FramebufferCache.clear();
+                                }
+                                ImGui::SameLine();
+                                ImGui::TextDisabled("(?)");
+                                if (ImGui::IsItemHovered())
+                                {
+                                    ImGui::BeginTooltip();
+                                    ImGui::Text("Render passes optimize rendering on Vulkan/Metal");
+                                    ImGui::Text("by reducing memory bandwidth usage");
+                                    ImGui::EndTooltip();
+                                }
+                            }
+                            else
+                            {
+                                ImGui::TextDisabled("Render Passes: Not supported");
+                            }
                         }
-                        else
-                        {
-                            if (m_RayTracingInitialized)
-                                DestroyRayTracing();
-                            std::cout << "[C6GE] Ray tracing disabled." << std::endl;
-                        }
+                        ImGui::EndTabItem();
                     }
-                    if (!m_RayTracingSupported)
-                        ImGui::EndDisabled();
 
-                    ImGui::SameLine();
-                    ImGui::TextDisabled("(?)");
-                    if (ImGui::IsItemHovered())
+                    if (ImGui::BeginTabItem("Ray Tracing"))
                     {
-                        ImGui::BeginTooltip();
-                        ImGui::Text("Hybrid rendering uses rasterization + ray tracing for reflections/shadows.");
-                        ImGui::Text("This toggle is off by default and requires DXR (D3D12) or Vulkan RT.");
-                        ImGui::EndTooltip();
-                    }
-                }
-                
-                if (ImGui::CollapsingHeader("Advanced", ImGuiTreeNodeFlags_DefaultOpen))
-                {
-                    if (m_pMainRenderPass)
-                    {
-                        if (ImGui::Checkbox("Use Render Passes", &m_UseRenderPasses))
+                        ImGui::Text("Device supports ray tracing: %s", m_RayTracingSupported ? "Yes" : "No");
+                        bool enabled = m_EnableRayTracing;
+                        if (!m_RayTracingSupported)
+                            ImGui::BeginDisabled();
+                        if (ImGui::Checkbox("Enable Ray Tracing (DXR/VKRT)", &enabled))
                         {
-                            // Clear cache when toggling
-                            m_FramebufferCache.clear();
+                            m_EnableRayTracing = enabled;
+                            if (m_EnableRayTracing)
+                            {
+                                if (!m_RayTracingInitialized)
+                                    InitializeRayTracing();
+                                std::cout << "[C6GE] Ray tracing enabled (experimental)." << std::endl;
+                            }
+                            else
+                            {
+                                if (m_RayTracingInitialized)
+                                    DestroyRayTracing();
+                                std::cout << "[C6GE] Ray tracing disabled." << std::endl;
+                            }
                         }
+                        if (!m_RayTracingSupported)
+                            ImGui::EndDisabled();
+
+                        ImGui::Separator();
+                        ImGui::Text("Shadows");
+                        ImGui::Checkbox("Soft Shadows", &m_SoftShadowsEnabled);
                         ImGui::SameLine();
                         ImGui::TextDisabled("(?)");
                         if (ImGui::IsItemHovered())
                         {
                             ImGui::BeginTooltip();
-                            ImGui::Text("Render passes optimize rendering on Vulkan/Metal");
-                            ImGui::Text("by reducing memory bandwidth usage");
+                            ImGui::Text("Soft shadows sample multiple jittered shadow rays within an angular cone.");
                             ImGui::EndTooltip();
                         }
+                        if (m_SoftShadowsEnabled)
+                        {
+                            ImGui::SliderFloat("Light Angular Radius (rad)", &m_SoftShadowAngularRad, 0.0f, 0.2f, "%.3f");
+                            ImGui::SliderInt("Soft Shadow Samples", &m_SoftShadowSamples, 1, 64);
+                        }
+                        else
+                        {
+                            ImGui::TextDisabled("Hard shadows active (1 sample, 0 cone radius)");
+                        }
+
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("(?)");
+                        if (ImGui::IsItemHovered())
+                        {
+                            ImGui::BeginTooltip();
+                            ImGui::Text("Set samples to 1 and radius to 0 for hard shadows. Higher samples improve quality at a cost.");
+                            ImGui::EndTooltip();
+                        }
+
+                        ImGui::Separator();
+                        ImGui::Text("Reflections");
+                        ImGui::Checkbox("Enable Reflections (Plane)", &m_EnableRTReflections);
+
+                        ImGui::EndTabItem();
                     }
-                    else
+
+                    if (ImGui::BeginTabItem("Post Processing"))
                     {
-                        ImGui::TextDisabled("Render Passes: Not supported");
+                        ImGui::Checkbox("Enable Post Processing", &m_EnablePostProcessing);
+                        if (!m_pPostGammaPSO)
+                            ImGui::TextDisabled("Gamma PSO not available (using fallback)");
+                        ImGui::Checkbox("Gamma Correction", &m_PostGammaCorrection);
+                        if (m_TAA)
+                        {
+                            ImGui::Separator();
+                            ImGui::Checkbox("Enable TAA (Temporal AA)", &m_EnableTAA);
+                            auto& TAA = *reinterpret_cast<TAASettings*>(&m_TAASettingsStorage);
+                            ImGui::SliderFloat("Temporal Stability", &TAA.TemporalStabilityFactor, 0.0f, 0.999f, "%.4f");
+                            bool reset = (TAA.ResetAccumulation != 0);
+                            if (ImGui::Checkbox("Reset Accumulation", &reset))
+                                TAA.ResetAccumulation = reset ? TRUE : FALSE;
+                            bool skip = (TAA.SkipRejection != 0);
+                            if (ImGui::Checkbox("Skip Rejection", &skip))
+                                TAA.SkipRejection = skip ? TRUE : FALSE;
+                        }
+                        ImGui::TextDisabled("This sample applies a fullscreen gamma-correction pass to the framebuffer.\nMore effects (tone mapping, bloom) can be added next.");
+                        ImGui::EndTabItem();
                     }
+
+                    ImGui::EndTabBar();
                 }
             }
             ImGui::End();
@@ -740,10 +846,10 @@ namespace Diligent
                         std::cout << "[C6GE] Resized framebuffer to " << newWidth << "x" << newHeight << std::endl;
                     }
 
-                    // Display the framebuffer texture at viewport size
-                    ImGui::Image(
-                        reinterpret_cast<void *>(m_pFramebufferSRV.RawPtr()),
-                        contentSize);
+                    // Choose which texture to display: post-processed, TAA, or raw framebuffer
+                        // Use cached SRV decided at the end of Render()
+                        ITextureView* pDisplaySRV = m_pViewportDisplaySRV ? m_pViewportDisplaySRV.RawPtr() : m_pFramebufferSRV.RawPtr();
+                    ImGui::Image(reinterpret_cast<void*>(pDisplaySRV), contentSize);
                 }
                 else
                 {
@@ -756,14 +862,110 @@ namespace Diligent
             if (ImGui::Begin("Scene", nullptr, ImGuiWindowFlags_None))
             {
                 ImGui::Text("Scene Hierarchy");
-                // Add scene hierarchy content here
+                ImGui::Separator();
+
+                // List all objects with Name component
+                EnsureWorld();
+                if (m_World)
+                {
+                    auto& reg = m_World->Registry();
+                    // Build a view of all entities with Name
+                    auto view = reg.view<ECS::Name>();
+
+                    for (auto e : view)
+                    {
+                        const auto& name = view.get<ECS::Name>(e).value;
+                        bool selected = (m_SelectedEntity == e);
+                        if (ImGui::Selectable(name.c_str(), selected))
+                        {
+                            m_SelectedEntity = e;
+                        }
+                        // Context menu to deselect
+                        if (ImGui::BeginPopupContextItem())
+                        {
+                            if (ImGui::MenuItem("Deselect"))
+                                m_SelectedEntity = entt::null;
+                            ImGui::EndPopup();
+                        }
+                    }
+                }
+                else
+                {
+                    ImGui::TextDisabled("No world");
+                }
             }
             ImGui::End();
 
             if (ImGui::Begin("Properties", nullptr, ImGuiWindowFlags_None))
             {
-                ImGui::Text("Properties Panel");
-                // Add properties content here
+                ImGui::Text("Inspector");
+                ImGui::Separator();
+                EnsureWorld();
+                if (!m_World)
+                {
+                    ImGui::TextDisabled("No world");
+                }
+                else
+                {
+                    auto& reg = m_World->Registry();
+                    if (m_SelectedEntity == entt::null || !reg.valid(m_SelectedEntity))
+                    {
+                        ImGui::TextDisabled("No selection");
+                    }
+                    else
+                    {
+                        // Name component
+                        if (reg.any_of<ECS::Name>(m_SelectedEntity))
+                        {
+                            auto& name = reg.get<ECS::Name>(m_SelectedEntity);
+                            char buf[256];
+                            strncpy(buf, name.value.c_str(), sizeof(buf));
+                            buf[sizeof(buf)-1] = '\0';
+                            if (ImGui::InputText("Name", buf, sizeof(buf)))
+                            {
+                                name.value = buf;
+                            }
+                        }
+
+                        // Transform editor
+                        if (reg.any_of<ECS::Transform>(m_SelectedEntity))
+                        {
+                            if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen))
+                            {
+                                auto& tr = reg.get<ECS::Transform>(m_SelectedEntity);
+                                float pos[3] = { tr.position.x, tr.position.y, tr.position.z };
+                                float rotDeg[3] = { tr.rotationEuler.x * 180.0f/PI_F, tr.rotationEuler.y * 180.0f/PI_F, tr.rotationEuler.z * 180.0f/PI_F };
+                                float scl[3] = { tr.scale.x, tr.scale.y, tr.scale.z };
+
+                                if (ImGui::DragFloat3("Position", pos, 0.1f))
+                                {
+                                    tr.position = float3{pos[0], pos[1], pos[2]};
+                                }
+                                if (ImGui::DragFloat3("Rotation (deg)", rotDeg, 0.5f))
+                                {
+                                    tr.rotationEuler = float3{rotDeg[0] * PI_F/180.0f, rotDeg[1] * PI_F/180.0f, rotDeg[2] * PI_F/180.0f};
+                                }
+                                if (ImGui::DragFloat3("Scale", scl, 0.05f))
+                                {
+                                    // Prevent zero scale
+                                    for (int i=0;i<3;++i) if (scl[i] == 0.0f) scl[i] = 0.0001f;
+                                    tr.scale = float3{scl[0], scl[1], scl[2]};
+                                }
+                            }
+                        }
+
+                        // StaticMesh info
+                        if (reg.any_of<ECS::StaticMesh>(m_SelectedEntity))
+                        {
+                            if (ImGui::CollapsingHeader("Static Mesh", ImGuiTreeNodeFlags_DefaultOpen))
+                            {
+                                const auto& sm = reg.get<ECS::StaticMesh>(m_SelectedEntity);
+                                const char* meshType = (sm.type == ECS::StaticMesh::MeshType::Cube) ? "Cube" : "Unknown";
+                                ImGui::Text("Type: %s", meshType);
+                            }
+                        }
+                    }
+                }
             }
             ImGui::End();
 
@@ -1132,6 +1334,8 @@ namespace Diligent
         SRVDesc.ViewType = TEXTURE_VIEW_SHADER_RESOURCE;
         SRVDesc.Format = RTTexDesc.Format;
         m_pFramebufferTexture->CreateView(SRVDesc, &m_pFramebufferSRV);
+    // Default viewport SRV shows the raw framebuffer until post/TAA updates it
+    m_pViewportDisplaySRV = m_pFramebufferSRV;
 
         // Create depth buffer texture
         TextureDesc DepthTexDesc;
@@ -1526,8 +1730,11 @@ namespace Diligent
 
         m_WorldToShadowMapUVDepthMatr = WorldToLightProjSpaceMatr * ProjToUVScale * ProjToUVBias;
 
-        // Render cube to shadow map
-        RenderCube(WorldToLightProjSpaceMatr, true);
+        // Render shadow casters from ECS
+        if (m_RenderSystem && m_World)
+        {
+            m_RenderSystem->RenderShadows(*m_World, WorldToLightProjSpaceMatr);
+        }
     }
 
     void C6GERender::RenderCube(const float4x4& CameraViewProj, bool IsShadowPass, RESOURCE_STATE_TRANSITION_MODE TransitionMode)
@@ -1571,6 +1778,53 @@ namespace Diligent
                 std::cerr << "[C6GE] Error: Cube PSO is null; skipping cube draw." << std::endl;
                 return;
             }
+            m_pImmediateContext->SetPipelineState(m_pCubePSO);
+            if (m_CubeSRB)
+                m_pImmediateContext->CommitShaderResources(m_CubeSRB, TransitionMode);
+        }
+
+        DrawIndexedAttribs DrawAttrs;
+        DrawAttrs.IndexType = VT_UINT32;
+        DrawAttrs.NumIndices = 36;
+        DrawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
+        m_pImmediateContext->DrawIndexed(DrawAttrs);
+    }
+
+    // Helper to render with explicit world matrix (used by ECS systems), without touching member m_CubeWorldMatrix
+    void C6GERender::RenderCubeWithWorld(const float4x4& World, const float4x4& CameraViewProj, bool IsShadowPass,
+                                         RESOURCE_STATE_TRANSITION_MODE TransitionMode)
+    {
+        // Update constant buffer
+        struct Constants
+        {
+            float4x4 WorldViewProj;
+            float4x4 NormalTranform;
+            float4   LightDirection;
+        };
+        {
+            MapHelper<Constants> CBConstants(m_pImmediateContext, m_VSConstants, MAP_WRITE, MAP_FLAG_DISCARD);
+            CBConstants->WorldViewProj = (World * CameraViewProj);
+            float4x4 NormalMatrix      = World.RemoveTranslation().Inverse().Transpose();
+            CBConstants->NormalTranform = NormalMatrix;
+            CBConstants->LightDirection = m_LightDirection;
+        }
+
+        IBuffer* pBuffs[] = {m_CubeVertexBuffer};
+        m_pImmediateContext->SetVertexBuffers(0, 1, pBuffs, nullptr, TransitionMode, SET_VERTEX_BUFFERS_FLAG_RESET);
+        m_pImmediateContext->SetIndexBuffer(m_CubeIndexBuffer, 0, TransitionMode);
+
+        if (IsShadowPass)
+        {
+            if (!m_pCubeShadowPSO)
+                return;
+            m_pImmediateContext->SetPipelineState(m_pCubeShadowPSO);
+            if (m_CubeShadowSRB)
+                m_pImmediateContext->CommitShaderResources(m_CubeShadowSRB, TransitionMode);
+        }
+        else
+        {
+            if (!m_pCubePSO)
+                return;
             m_pImmediateContext->SetPipelineState(m_pCubePSO);
             if (m_CubeSRB)
                 m_pImmediateContext->CommitShaderResources(m_CubeSRB, TransitionMode);
@@ -1734,6 +1988,10 @@ else
         // Recreate framebuffer with new size
         CreateFramebuffer();
         CreateMSAARenderTarget();
+
+        // Recreate post-processing targets
+        DestroyPostFXTargets();
+        CreatePostFXTargets();
     }
 
     // Render a frame
@@ -1802,18 +2060,29 @@ else
                 
                 m_pImmediateContext->BeginRenderPass(RPBeginInfo);
 
-                // Render cube and plane (they update their own constant buffers)
-                // Note: Inside render pass, MUST use RESOURCE_STATE_TRANSITION_MODE_VERIFY
-                RenderCube(m_CameraViewProjMatrix, false, RESOURCE_STATE_TRANSITION_MODE_VERIFY);
+                // Render entities via ECS (inside render pass, use VERIFY)
+                if (m_RenderSystem && m_World)
+                    m_RenderSystem->RenderScene(*m_World, m_CameraViewProjMatrix, RESOURCE_STATE_TRANSITION_MODE_VERIFY);
                 RenderPlane(RESOURCE_STATE_TRANSITION_MODE_VERIFY);
 
-                // Composite RT output additively over the scene (if enabled)
+                // Composite RT output multiplicatively for shadows
                 if (m_EnableRayTracing && m_RayTracingSupported && m_RayTracingInitialized && m_pRTCompositePSO && m_RTCompositeSRB && m_pRTOutputSRV)
                 {
                     if (auto* var = m_RTCompositeSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_RTOutput"))
                         var->Set(m_pRTOutputSRV, SET_SHADER_RESOURCE_FLAG_ALLOW_OVERWRITE);
                     m_pImmediateContext->SetPipelineState(m_pRTCompositePSO);
                     m_pImmediateContext->CommitShaderResources(m_RTCompositeSRB, RESOURCE_STATE_TRANSITION_MODE_VERIFY);
+                    DrawAttribs fsTri{3, DRAW_FLAG_VERIFY_ALL};
+                    m_pImmediateContext->Draw(fsTri);
+                }
+
+                // Then additively composite reflections if enabled
+                if (m_EnableRayTracing && m_EnableRTReflections && m_RayTracingSupported && m_RayTracingInitialized && m_pRTAddCompositePSO && m_RTAddCompositeSRB && m_pRTOutputSRV)
+                {
+                    if (auto* var = m_RTAddCompositeSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_RTOutput"))
+                        var->Set(m_pRTOutputSRV, SET_SHADER_RESOURCE_FLAG_ALLOW_OVERWRITE);
+                    m_pImmediateContext->SetPipelineState(m_pRTAddCompositePSO);
+                    m_pImmediateContext->CommitShaderResources(m_RTAddCompositeSRB, RESOURCE_STATE_TRANSITION_MODE_VERIFY);
                     DrawAttribs fsTri{3, DRAW_FLAG_VERIFY_ALL};
                     m_pImmediateContext->Draw(fsTri);
                 }
@@ -1828,6 +2097,12 @@ else
                 m_pImmediateContext->ClearDepthStencil(pDSV, CLEAR_DEPTH_FLAG, 1.f, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
                 RenderCube(m_CameraViewProjMatrix, false, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+                {
+                    auto Saved = m_CubeWorldMatrix;
+                    m_CubeWorldMatrix = m_SecondCubeWorldMatrix;
+                    RenderCube(m_CameraViewProjMatrix, false, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+                    m_CubeWorldMatrix = Saved;
+                }
                 RenderPlane(RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
                 if (m_EnableRayTracing && m_RayTracingSupported && m_RayTracingInitialized && m_pRTCompositePSO && m_RTCompositeSRB && m_pRTOutputSRV)
@@ -1836,6 +2111,16 @@ else
                         var->Set(m_pRTOutputSRV, SET_SHADER_RESOURCE_FLAG_ALLOW_OVERWRITE);
                     m_pImmediateContext->SetPipelineState(m_pRTCompositePSO);
                     m_pImmediateContext->CommitShaderResources(m_RTCompositeSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+                    DrawAttribs fsTri{3, DRAW_FLAG_VERIFY_ALL};
+                    m_pImmediateContext->Draw(fsTri);
+                }
+
+                if (m_EnableRayTracing && m_EnableRTReflections && m_RayTracingSupported && m_RayTracingInitialized && m_pRTAddCompositePSO && m_RTAddCompositeSRB && m_pRTOutputSRV)
+                {
+                    if (auto* var = m_RTAddCompositeSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_RTOutput"))
+                        var->Set(m_pRTOutputSRV, SET_SHADER_RESOURCE_FLAG_ALLOW_OVERWRITE);
+                    m_pImmediateContext->SetPipelineState(m_pRTAddCompositePSO);
+                    m_pImmediateContext->CommitShaderResources(m_RTAddCompositeSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
                     DrawAttribs fsTri{3, DRAW_FLAG_VERIFY_ALL};
                     m_pImmediateContext->Draw(fsTri);
                 }
@@ -1848,7 +2133,8 @@ else
             m_pImmediateContext->ClearRenderTarget(pRTV, ClearColor.Data(), RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
             m_pImmediateContext->ClearDepthStencil(pDSV, CLEAR_DEPTH_FLAG, 1.f, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
-            RenderCube(m_CameraViewProjMatrix, false, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+            if (m_RenderSystem && m_World)
+                m_RenderSystem->RenderScene(*m_World, m_CameraViewProjMatrix, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
             RenderPlane(RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
             if (m_EnableRayTracing && m_RayTracingSupported && m_RayTracingInitialized && m_pRTCompositePSO && m_RTCompositeSRB && m_pRTOutputSRV)
@@ -1857,6 +2143,16 @@ else
                     var->Set(m_pRTOutputSRV, SET_SHADER_RESOURCE_FLAG_ALLOW_OVERWRITE);
                 m_pImmediateContext->SetPipelineState(m_pRTCompositePSO);
                 m_pImmediateContext->CommitShaderResources(m_RTCompositeSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+                DrawAttribs fsTri{3, DRAW_FLAG_VERIFY_ALL};
+                m_pImmediateContext->Draw(fsTri);
+            }
+
+            if (m_EnableRayTracing && m_EnableRTReflections && m_RayTracingSupported && m_RayTracingInitialized && m_pRTAddCompositePSO && m_RTAddCompositeSRB && m_pRTOutputSRV)
+            {
+                if (auto* var = m_RTAddCompositeSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_RTOutput"))
+                    var->Set(m_pRTOutputSRV, SET_SHADER_RESOURCE_FLAG_ALLOW_OVERWRITE);
+                m_pImmediateContext->SetPipelineState(m_pRTAddCompositePSO);
+                m_pImmediateContext->CommitShaderResources(m_RTAddCompositeSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
                 DrawAttribs fsTri{3, DRAW_FLAG_VERIFY_ALL};
                 m_pImmediateContext->Draw(fsTri);
             }
@@ -1871,7 +2167,75 @@ else
             m_pImmediateContext->ResolveTextureSubresource(m_pMSColorRTV->GetTexture(), m_pFramebufferTexture, ResolveAttribs);
         }
 
+        // 3) Post-processing: simple gamma correction pass into dedicated post-fx texture
+        // Before gamma, run TAA if enabled
+        ITextureView* pAfterAA_SRV = m_pFramebufferSRV;
+    if (m_EnableTAA && m_TAA && m_PostFXContext)
+        {
+            // Prepare frame desc based on framebuffer size
+            PostFXContext::FrameDesc Frame{};
+            Frame.Width        = m_FramebufferWidth;
+            Frame.Height       = m_FramebufferHeight;
+            Frame.OutputWidth  = m_FramebufferWidth;
+            Frame.OutputHeight = m_FramebufferHeight;
+            Frame.Index        = static_cast<Uint64>(m_TemporalFrameIndex++);
+
+            // Prepare resources
+            m_PostFXContext->PrepareResources(m_pDevice, Frame, PostFXContext::FEATURE_FLAG_NONE);
+            TemporalAntiAliasing::FEATURE_FLAGS TAAFeatures = TemporalAntiAliasing::FEATURE_FLAG_BICUBIC_FILTER;
+            m_TAA->PrepareResources(m_pDevice, m_pImmediateContext, m_PostFXContext.get(), TAAFeatures);
+
+            // Execute TAA
+            TemporalAntiAliasing::RenderAttributes TAAAttr{};
+            TAAAttr.pDevice         = m_pDevice;
+            TAAAttr.pDeviceContext  = m_pImmediateContext;
+            TAAAttr.pPostFXContext  = m_PostFXContext.get();
+            TAAAttr.pColorBufferSRV = m_pFramebufferSRV;
+            TAAAttr.pTAAAttribs     = reinterpret_cast<TAASettings*>(&m_TAASettingsStorage);
+            m_TAA->Execute(TAAAttr);
+
+            // Use the current accumulated frame as the input for subsequent passes
+            pAfterAA_SRV = m_TAA->GetAccumulatedFrameSRV(false);
+            if (pAfterAA_SRV == nullptr)
+                pAfterAA_SRV = m_pFramebufferSRV;
+        }
+
+        if (m_EnablePostProcessing && m_PostGammaCorrection && m_pPostRTV && m_pPostGammaPSO && m_PostGammaSRB)
+        {
+            // Bind input SRV from framebuffer
+            if (auto* var = m_PostGammaSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_TextureColor"))
+                var->Set(pAfterAA_SRV, SET_SHADER_RESOURCE_FLAG_ALLOW_OVERWRITE);
+
+            m_pImmediateContext->SetRenderTargets(1, &m_pPostRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+            m_pImmediateContext->SetPipelineState(m_pPostGammaPSO);
+            m_pImmediateContext->CommitShaderResources(m_PostGammaSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+            DrawAttribs fsTri{3, DRAW_FLAG_VERIFY_ALL};
+            m_pImmediateContext->Draw(fsTri);
+
+            // Unbind to avoid hazards on some backends
+            ITextureView* nullRTV = nullptr;
+            m_pImmediateContext->SetRenderTargets(0, &nullRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        }
+
         // Shadow visualization removed. No additional overlays.
+
+        // Decide which SRV the viewport should display this frame and cache it
+        {
+            ITextureView* pDisplay = nullptr;
+            if (m_EnablePostProcessing && m_PostGammaCorrection && m_pPostSRV)
+            {
+                pDisplay = m_pPostSRV;
+            }
+            else if (m_EnableTAA && m_TAA)
+            {
+                pDisplay = pAfterAA_SRV ? pAfterAA_SRV : m_pFramebufferSRV;
+            }
+            else
+            {
+                pDisplay = m_pFramebufferSRV;
+            }
+            m_pViewportDisplaySRV = pDisplay;
+        }
 
         // Finally, prepare swap-chain back buffer (host UI etc.)
         pRTV = m_pSwapChain->GetCurrentBackBufferRTV();
@@ -1932,8 +2296,10 @@ else
         m_pRTOutputSRV.Release();
 
         // Release RT PSOs, SRBs, and constants to avoid overwrite asserts on re-init
-        m_RTCompositeSRB.Release();
-        m_pRTCompositePSO.Release();
+    m_RTCompositeSRB.Release();
+    m_pRTCompositePSO.Release();
+    m_RTAddCompositeSRB.Release();
+    m_pRTAddCompositePSO.Release();
         m_RTShadowSRB.Release();
         m_pRTShadowPSO.Release();
         m_RTConstants.Release();
@@ -1957,6 +2323,10 @@ else
             c.InvViewProj = m_CameraViewProjMatrix.Inverse();
             c.ViewSize_Plane = float4{static_cast<float>(w), static_cast<float>(h), -2.0f, 5.0f};
             c.LightDir_Shadow = float4{m_LightDirection.x, m_LightDirection.y, m_LightDirection.z, 0.6f};
+            // Soft shadow params: angular radius (radians), sample count (from UI)
+            float AngularRadius = m_SoftShadowsEnabled ? m_SoftShadowAngularRad : 0.0f;
+            float SampleCount   = m_SoftShadowsEnabled ? static_cast<float>(std::max(1, m_SoftShadowSamples)) : 1.0f;
+            c.ShadowSoftParams = float4{AngularRadius, SampleCount, 0.0f, 0.0f};
             {
                 MapHelper<RTConstantsCPU> M(m_pImmediateContext, m_RTConstants, MAP_WRITE, MAP_FLAG_DISCARD);
                 *M = c;
@@ -2094,7 +2464,7 @@ else
             }
         }
 
-        // Compute PSO that uses ray queries to produce a shadow mask into UAV
+    // Compute PSO that uses ray queries to produce a shadow mask into UAV (and reflections in RGB)
         {
             ShaderCreateInfo CI;
             CI.SourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
@@ -2140,6 +2510,89 @@ else
                 }
             }
         }
+
+        // Graphics PSO to additively composite reflection color (RGB) over the scene
+        {
+            ShaderCreateInfo CI;
+            CI.SourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+            CI.Desc.UseCombinedTextureSamplers = true;
+            CI.CompileFlags = SHADER_COMPILE_FLAG_PACK_MATRIX_ROW_MAJOR;
+
+            RefCntAutoPtr<IShaderSourceInputStreamFactory> pShaderSourceFactory;
+            m_pEngineFactory->CreateDefaultShaderSourceStreamFactory(nullptr, &pShaderSourceFactory);
+            CI.pShaderSourceStreamFactory = pShaderSourceFactory;
+
+            RefCntAutoPtr<IShader> pVS, pPS;
+            {
+                CI.Desc.ShaderType = SHADER_TYPE_VERTEX;
+                CI.EntryPoint = "main";
+                CI.Desc.Name = "RT Add Composite VS";
+                CI.FilePath = "../../assets/rt_composite.vsh";
+                m_pDevice->CreateShader(CI, &pVS);
+            }
+            {
+                CI.Desc.ShaderType = SHADER_TYPE_PIXEL;
+                CI.EntryPoint = "main";
+                CI.Desc.Name = "RT Add Composite PS";
+                CI.FilePath = "../../assets/rt_reflect_composite.psh";
+                m_pDevice->CreateShader(CI, &pPS);
+            }
+
+            GraphicsPipelineStateCreateInfo PSOCI;
+            PSOCI.PSODesc.Name = "RT Add Composite PSO";
+            PSOCI.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+            PSOCI.pVS = pVS;
+            PSOCI.pPS = pPS;
+            PSOCI.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+            PSOCI.GraphicsPipeline.NumRenderTargets = 1;
+            PSOCI.GraphicsPipeline.RTVFormats[0] = m_pSwapChain->GetDesc().ColorBufferFormat;
+            PSOCI.GraphicsPipeline.DSVFormat = m_pSwapChain->GetDesc().DepthBufferFormat;
+            PSOCI.GraphicsPipeline.DepthStencilDesc.DepthEnable = False;
+            PSOCI.GraphicsPipeline.DepthStencilDesc.DepthWriteEnable = False;
+            PSOCI.GraphicsPipeline.RasterizerDesc.CullMode = CULL_MODE_NONE;
+
+            auto& RT0 = PSOCI.GraphicsPipeline.BlendDesc.RenderTargets[0];
+            RT0.BlendEnable = True;
+            // Additive: Out = Src + Dest
+            RT0.SrcBlend = BLEND_FACTOR_ONE;
+            RT0.DestBlend = BLEND_FACTOR_ONE;
+            RT0.BlendOp = BLEND_OPERATION_ADD;
+            RT0.SrcBlendAlpha = BLEND_FACTOR_ONE;
+            RT0.DestBlendAlpha = BLEND_FACTOR_ONE;
+            RT0.BlendOpAlpha = BLEND_OPERATION_ADD;
+            RT0.RenderTargetWriteMask = COLOR_MASK_ALL;
+
+            PSOCI.PSODesc.ResourceLayout.DefaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+            ShaderResourceVariableDesc Vars[] = {
+                {SHADER_TYPE_PIXEL, "g_RTOutput", SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE}
+            };
+            PSOCI.PSODesc.ResourceLayout.Variables = Vars;
+            PSOCI.PSODesc.ResourceLayout.NumVariables = _countof(Vars);
+
+            SamplerDesc Smpl;
+            Smpl.MinFilter = FILTER_TYPE_LINEAR;
+            Smpl.MagFilter = FILTER_TYPE_LINEAR;
+            Smpl.MipFilter = FILTER_TYPE_LINEAR;
+            Smpl.AddressU = TEXTURE_ADDRESS_CLAMP;
+            Smpl.AddressV = TEXTURE_ADDRESS_CLAMP;
+            Smpl.AddressW = TEXTURE_ADDRESS_CLAMP;
+            ImmutableSamplerDesc Imtbl[] = {
+                {SHADER_TYPE_PIXEL, "g_RTOutput", Smpl}
+            };
+            PSOCI.PSODesc.ResourceLayout.ImmutableSamplers = Imtbl;
+            PSOCI.PSODesc.ResourceLayout.NumImmutableSamplers = _countof(Imtbl);
+
+            m_pDevice->CreateGraphicsPipelineState(PSOCI, &m_pRTAddCompositePSO);
+            if (m_pRTAddCompositePSO)
+            {
+                m_pRTAddCompositePSO->CreateShaderResourceBinding(&m_RTAddCompositeSRB, true);
+                if (m_RTAddCompositeSRB && m_pRTOutputSRV)
+                {
+                    if (auto* var = m_RTAddCompositeSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_RTOutput"))
+                        var->Set(m_pRTOutputSRV);
+                }
+            }
+        }
     }
 
     void C6GERender::CreateRayTracingAS()
@@ -2152,6 +2605,8 @@ else
         m_pTLASScratch.Release();
         m_CubeRTVertexBuffer.Release();
         m_CubeRTIndexBuffer.Release();
+        m_PlaneRTVertexBuffer.Release();
+        m_PlaneRTIndexBuffer.Release();
 
         if (!m_CubeVertexBuffer || !m_CubeIndexBuffer)
         {
@@ -2270,11 +2725,102 @@ else
             m_pImmediateContext->BuildBLAS(Attribs);
         }
 
-        // --- Create TLAS with a single cube instance ---
+        // --- Create BLAS for the procedural plane (quad) ---
+        {
+            // Create a tiny static plane mesh: y = -2, extent = 5
+            struct Pos3 { float x, y, z; };
+            const float PlaneY = -2.0f;
+            const float Ext    =  5.0f;
+            const Pos3 PlaneVerts[4] = {
+                {-Ext, PlaneY, -Ext},
+                {-Ext, PlaneY,  Ext},
+                { Ext, PlaneY, -Ext},
+                { Ext, PlaneY,  Ext}
+            };
+            const Uint32 PlaneIndices[6] = { 0,1,2, 2,1,3 };
+
+            // Create RT-capable VB/IB with initial data
+            {
+                BufferDesc VB{};
+                VB.Name = "Plane RT Vertex Buffer";
+                VB.Usage = USAGE_IMMUTABLE;
+                VB.BindFlags = BIND_VERTEX_BUFFER | BIND_RAY_TRACING;
+                VB.Size = sizeof(PlaneVerts);
+                BufferData VBData{PlaneVerts, VB.Size};
+                m_pDevice->CreateBuffer(VB, &VBData, &m_PlaneRTVertexBuffer);
+
+                BufferDesc IB{};
+                IB.Name = "Plane RT Index Buffer";
+                IB.Usage = USAGE_IMMUTABLE;
+                IB.BindFlags = BIND_INDEX_BUFFER | BIND_RAY_TRACING;
+                IB.Size = sizeof(PlaneIndices);
+                BufferData IBData{PlaneIndices, IB.Size};
+                m_pDevice->CreateBuffer(IB, &IBData, &m_PlaneRTIndexBuffer);
+            }
+
+            BLASTriangleDesc Triangles{};
+            Triangles.GeometryName         = "Plane";
+            Triangles.MaxVertexCount       = 4;
+            Triangles.VertexValueType      = VT_FLOAT32;
+            Triangles.VertexComponentCount = 3; // position only
+            Triangles.MaxPrimitiveCount    = 2;
+            Triangles.IndexType            = VT_UINT32;
+
+            BottomLevelASDesc ASDesc;
+            ASDesc.Name          = "Plane BLAS";
+            ASDesc.Flags         = RAYTRACING_BUILD_AS_PREFER_FAST_TRACE;
+            ASDesc.pTriangles    = &Triangles;
+            ASDesc.TriangleCount = 1;
+            m_pDevice->CreateBLAS(ASDesc, &m_pBLAS_Plane);
+
+            if (m_pBLAS_Plane)
+            {
+                // Build plane BLAS
+                BufferDesc BuffDesc;
+                BuffDesc.Name      = "Plane BLAS Scratch";
+                BuffDesc.Usage     = USAGE_DEFAULT;
+                BuffDesc.BindFlags = BIND_RAY_TRACING;
+                BuffDesc.Size      = m_pBLAS_Plane->GetScratchBufferSizes().Build;
+                RefCntAutoPtr<IBuffer> pScratch;
+                m_pDevice->CreateBuffer(BuffDesc, nullptr, &pScratch);
+
+                const Uint32 VertexStride = sizeof(Pos3);
+                BLASBuildTriangleData TriangleData{};
+                TriangleData.GeometryName         = Triangles.GeometryName;
+                TriangleData.pVertexBuffer        = m_PlaneRTVertexBuffer;
+                TriangleData.VertexStride         = VertexStride;
+                TriangleData.VertexOffset         = 0;
+                TriangleData.VertexCount          = 4;
+                TriangleData.VertexValueType      = Triangles.VertexValueType;
+                TriangleData.VertexComponentCount = Triangles.VertexComponentCount;
+                TriangleData.pIndexBuffer         = m_PlaneRTIndexBuffer;
+                TriangleData.IndexOffset          = 0;
+                TriangleData.PrimitiveCount       = 2;
+                TriangleData.IndexType            = Triangles.IndexType;
+                TriangleData.Flags                = RAYTRACING_GEOMETRY_FLAG_OPAQUE;
+
+                BuildBLASAttribs Attribs{};
+                Attribs.pBLAS                       = m_pBLAS_Plane;
+                Attribs.pTriangleData               = &TriangleData;
+                Attribs.TriangleDataCount           = 1;
+                Attribs.pScratchBuffer              = pScratch;
+                Attribs.BLASTransitionMode          = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+                Attribs.GeometryTransitionMode      = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+                Attribs.ScratchBufferTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+
+                m_pImmediateContext->BuildBLAS(Attribs);
+            }
+            else
+            {
+                std::cerr << "[C6GE] CreateRayTracingAS: failed to create plane BLAS." << std::endl;
+            }
+        }
+
+        // --- Create TLAS with capacity for many instances (plane + ECS meshes) ---
         {
             TopLevelASDesc TLASDesc;
             TLASDesc.Name             = "Scene TLAS";
-            TLASDesc.MaxInstanceCount = 1;
+            TLASDesc.MaxInstanceCount = std::max<Uint32>(m_MaxTLASInstances, 1u); // at least 1 (plane)
             TLASDesc.Flags            = RAYTRACING_BUILD_AS_ALLOW_UPDATE | RAYTRACING_BUILD_AS_PREFER_FAST_TRACE;
             m_pDevice->CreateTLAS(TLASDesc, &m_pTLAS);
         }
@@ -2302,22 +2848,50 @@ else
             BuffDesc.Name      = "TLAS Instance Buffer";
             BuffDesc.Usage     = USAGE_DEFAULT;
             BuffDesc.BindFlags = BIND_RAY_TRACING;
-            BuffDesc.Size      = Uint64{TLAS_INSTANCE_DATA_SIZE} * Uint64{1};
+            BuffDesc.Size      = Uint64{TLAS_INSTANCE_DATA_SIZE} * Uint64{std::max<Uint32>(m_MaxTLASInstances, 1u)};
             m_pDevice->CreateBuffer(BuffDesc, nullptr, &m_pTLASInstances);
         }
 
-        // Setup a single instance referencing the cube BLAS
-        TLASBuildInstanceData Instance{};
-        Instance.InstanceName = "Cube Instance";
-        Instance.pBLAS        = m_pBLAS_Cube;
-        Instance.Mask         = 0xFF;
-        Instance.CustomId     = 0;
-        // Identity transform: no rotation or translation for now
+        // Build initial instances from ECS: plane + all cube meshes
+        std::vector<TLASBuildInstanceData> Instances;
+        Instances.reserve(16);
+        // Plane (static)
         {
-            // Identity transform: rotation = identity, translation = (0,0,0)
+            TLASBuildInstanceData inst{};
+            inst.InstanceName = "Plane Instance";
+            inst.pBLAS        = m_pBLAS_Plane;
+            inst.Mask         = 0xFF;
+            inst.CustomId     = 0;
             float4x4 I = float4x4::Identity();
-            Instance.Transform.SetRotation(I.Data(), 4);
-            Instance.Transform.SetTranslation(0.f, 0.f, 0.f);
+            inst.Transform.SetRotation(I.Data(), 4);
+            inst.Transform.SetTranslation(0.f, 0.f, 0.f);
+            Instances.push_back(inst);
+        }
+        // ECS cubes
+        if (m_World)
+        {
+            auto& reg = m_World->Registry();
+            auto view = reg.view<ECS::Transform, ECS::StaticMesh>();
+            Uint32 cid = 1;
+            for (auto e : view)
+            {
+                const auto& sm = view.get<ECS::StaticMesh>(e);
+                if (sm.type != ECS::StaticMesh::MeshType::Cube)
+                    continue;
+                const auto& tr = view.get<ECS::Transform>(e);
+                const float4x4 W = tr.WorldMatrix();
+                TLASBuildInstanceData inst{};
+                inst.InstanceName = "Cube Instance";
+                inst.pBLAS        = m_pBLAS_Cube;
+                inst.Mask         = 0xFF;
+                inst.CustomId     = cid;
+                inst.Transform.SetRotation(W.Data(), 4);
+                inst.Transform.SetTranslation(W.m30, W.m31, W.m32);
+                Instances.push_back(inst);
+                ++cid;
+                if (cid >= m_MaxTLASInstances)
+                    break; // respect capacity hint
+            }
         }
 
         BuildTLASAttribs TLASAttribs{};
@@ -2325,8 +2899,8 @@ else
         TLASAttribs.Update                        = false; // first build
         TLASAttribs.pScratchBuffer                = m_pTLASScratch;
         TLASAttribs.pInstanceBuffer               = m_pTLASInstances;
-        TLASAttribs.pInstances                    = &Instance;
-        TLASAttribs.InstanceCount                 = 1;
+        TLASAttribs.pInstances                    = Instances.empty() ? nullptr : Instances.data();
+        TLASAttribs.InstanceCount                 = static_cast<Uint32>(Instances.size());
         TLASAttribs.TLASTransitionMode            = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
         TLASAttribs.BLASTransitionMode            = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
         TLASAttribs.InstanceBufferTransitionMode  = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
@@ -2334,7 +2908,7 @@ else
 
         m_pImmediateContext->BuildTLAS(TLASAttribs);
 
-        std::cout << "[C6GE] CreateRayTracingAS: built cube BLAS and single-instance TLAS." << std::endl;
+        std::cout << "[C6GE] CreateRayTracingAS: built BLAS and TLAS with " << TLASAttribs.InstanceCount << " instance(s) from ECS." << std::endl;
     }
 
     void C6GERender::DestroyRayTracingAS()
@@ -2346,6 +2920,8 @@ else
         m_pTLASScratch.Release();
         m_CubeRTVertexBuffer.Release();
         m_CubeRTIndexBuffer.Release();
+        m_PlaneRTVertexBuffer.Release();
+        m_PlaneRTIndexBuffer.Release();
         std::cout << "[C6GE] DestroyRayTracingAS: released (no-op)." << std::endl;
     }
 
@@ -2354,7 +2930,52 @@ else
         if (!m_pTLAS || !m_pBLAS_Cube)
             return;
 
-        // Ensure scratch and instance buffers exist
+        // Build instance list from ECS: plane + cube meshes
+        std::vector<TLASBuildInstanceData> Instances;
+        Instances.reserve(16);
+        // Plane instance (static)
+        if (m_pBLAS_Plane)
+        {
+            TLASBuildInstanceData inst{};
+            inst.InstanceName = "Plane Instance";
+            inst.pBLAS        = m_pBLAS_Plane;
+            inst.Mask         = 0xFF;
+            inst.CustomId     = 0;
+            float4x4 I = float4x4::Identity();
+            inst.Transform.SetRotation(I.Data(), 4);
+            inst.Transform.SetTranslation(0.f, 0.f, 0.f);
+            Instances.push_back(inst);
+        }
+        // ECS cubes
+        if (m_World)
+        {
+            auto& reg = m_World->Registry();
+            auto view = reg.view<ECS::Transform, ECS::StaticMesh>();
+            Uint32 cid = 1;
+            for (auto e : view)
+            {
+                const auto& sm = view.get<ECS::StaticMesh>(e);
+                if (sm.type != ECS::StaticMesh::MeshType::Cube)
+                    continue;
+                const auto& tr = view.get<ECS::Transform>(e);
+                const float4x4 W = tr.WorldMatrix();
+                TLASBuildInstanceData inst{};
+                inst.InstanceName = "Cube Instance";
+                inst.pBLAS        = m_pBLAS_Cube;
+                inst.Mask         = 0xFF;
+                inst.CustomId     = cid;
+                inst.Transform.SetRotation(W.Data(), 4);
+                inst.Transform.SetTranslation(W.m30, W.m31, W.m32);
+                Instances.push_back(inst);
+                ++cid;
+                if (cid >= m_MaxTLASInstances)
+                    break;
+            }
+        }
+
+        const Uint32 InstanceCount = static_cast<Uint32>(Instances.size());
+
+        // Ensure scratch and instance buffers exist and are large enough
         if (!m_pTLASScratch)
         {
             BufferDesc BuffDesc;
@@ -2364,26 +2985,14 @@ else
             BuffDesc.Size      = std::max(m_pTLAS->GetScratchBufferSizes().Build, m_pTLAS->GetScratchBufferSizes().Update);
             m_pDevice->CreateBuffer(BuffDesc, nullptr, &m_pTLASScratch);
         }
-        if (!m_pTLASInstances)
+        if (!m_pTLASInstances || m_pTLASInstances->GetDesc().Size < Uint64{TLAS_INSTANCE_DATA_SIZE} * Uint64{std::max(InstanceCount, 1u)})
         {
             BufferDesc BuffDesc;
             BuffDesc.Name      = "TLAS Instance Buffer";
             BuffDesc.Usage     = USAGE_DEFAULT;
             BuffDesc.BindFlags = BIND_RAY_TRACING;
-            BuffDesc.Size      = Uint64{TLAS_INSTANCE_DATA_SIZE} * Uint64{1};
+            BuffDesc.Size      = Uint64{TLAS_INSTANCE_DATA_SIZE} * Uint64{std::max(InstanceCount, 1u)};
             m_pDevice->CreateBuffer(BuffDesc, nullptr, &m_pTLASInstances);
-        }
-
-        // Update the single instance transform using the current cube world matrix
-        TLASBuildInstanceData Instance{};
-        Instance.InstanceName = "Cube Instance";
-        Instance.pBLAS        = m_pBLAS_Cube;
-        Instance.Mask         = 0xFF;
-        Instance.CustomId     = 0;
-        {
-            const float4x4& W = m_CubeWorldMatrix;
-            Instance.Transform.SetRotation(W.Data(), 4);
-            Instance.Transform.SetTranslation(W.m30, W.m31, W.m32);
         }
 
         BuildTLASAttribs TLASAttribs{};
@@ -2391,8 +3000,8 @@ else
         TLASAttribs.Update                       = true; // refit/update after initial build
         TLASAttribs.pScratchBuffer               = m_pTLASScratch;
         TLASAttribs.pInstanceBuffer              = m_pTLASInstances;
-        TLASAttribs.pInstances                   = &Instance;
-        TLASAttribs.InstanceCount                = 1;
+        TLASAttribs.pInstances                   = Instances.empty() ? nullptr : Instances.data();
+        TLASAttribs.InstanceCount                = InstanceCount;
         TLASAttribs.TLASTransitionMode           = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
         TLASAttribs.BLASTransitionMode           = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
         TLASAttribs.InstanceBufferTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
@@ -2466,6 +3075,122 @@ else
         m_pMSDepthDSV = pDepth->GetDefaultView(TEXTURE_VIEW_DEPTH_STENCIL);
     }
 
+    void C6GERender::CreatePostFXTargets()
+    {
+        // Create a single render target that matches the off-screen framebuffer
+        DestroyPostFXTargets();
+
+        if (m_FramebufferWidth == 0 || m_FramebufferHeight == 0)
+            return;
+
+        TextureDesc Desc;
+        Desc.Name      = "PostFX Color";
+        Desc.Type      = RESOURCE_DIM_TEX_2D;
+        Desc.Width     = m_FramebufferWidth;
+        Desc.Height    = m_FramebufferHeight;
+        Desc.MipLevels = 1;
+        // Use non-sRGB format to avoid double-encoding when we perform manual gamma in shader
+        auto SCFmt = m_pSwapChain->GetDesc().ColorBufferFormat;
+        switch (SCFmt)
+        {
+            case TEX_FORMAT_RGBA8_UNORM_SRGB: Desc.Format = TEX_FORMAT_RGBA8_UNORM; break;
+            case TEX_FORMAT_BGRA8_UNORM_SRGB: Desc.Format = TEX_FORMAT_BGRA8_UNORM; break;
+            default:                           Desc.Format = SCFmt;                break;
+        }
+        Desc.BindFlags = BIND_RENDER_TARGET | BIND_SHADER_RESOURCE;
+        RefCntAutoPtr<ITexture> pTex;
+        m_pDevice->CreateTexture(Desc, nullptr, &pTex);
+        m_pPostTexture = pTex;
+        if (m_pPostTexture)
+        {
+            m_pPostRTV = m_pPostTexture->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET);
+            m_pPostSRV = m_pPostTexture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+        }
+    }
+
+    void C6GERender::DestroyPostFXTargets()
+    {
+        m_pPostRTV.Release();
+        m_pPostSRV.Release();
+        m_pPostTexture.Release();
+    }
+
+    void C6GERender::CreatePostFXPSOs()
+    {
+        // Fullscreen gamma-correction pass using DiligentFX GammaCorrection.fx equivalent
+        // We'll use our local fullscreen VS and a simple pixel shader from assets/post_gamma.psh
+        ShaderCreateInfo CI;
+        CI.SourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+        CI.Desc.UseCombinedTextureSamplers = true;
+        CI.CompileFlags = SHADER_COMPILE_FLAG_PACK_MATRIX_ROW_MAJOR;
+
+        RefCntAutoPtr<IShaderSourceInputStreamFactory> pShaderSourceFactory;
+        m_pEngineFactory->CreateDefaultShaderSourceStreamFactory(nullptr, &pShaderSourceFactory);
+        CI.pShaderSourceStreamFactory = pShaderSourceFactory;
+
+        RefCntAutoPtr<IShader> pVS, pPS;
+        {
+            CI.Desc.ShaderType = SHADER_TYPE_VERTEX;
+            CI.EntryPoint      = "main";
+            CI.Desc.Name       = "PostFX VS";
+            CI.FilePath        = "../../assets/rt_composite.vsh"; // fullscreen triangle VS
+            m_pDevice->CreateShader(CI, &pVS);
+        }
+        {
+            CI.Desc.ShaderType = SHADER_TYPE_PIXEL;
+            CI.EntryPoint      = "main";
+            CI.Desc.Name       = "PostFX Gamma PS";
+            CI.FilePath        = "../../assets/post_gamma.psh";
+            // Decide if we apply manual gamma based on output RT format (we use non-sRGB -> manual gamma = 1)
+            ShaderMacro Macros[] = {
+                {"APPLY_MANUAL_GAMMA", "1"}
+            };
+            CI.Macros = {Macros, static_cast<Uint32>(_countof(Macros))};
+            m_pDevice->CreateShader(CI, &pPS);
+        }
+
+        GraphicsPipelineStateCreateInfo PSOCI;
+        PSOCI.PSODesc.Name                                = "PostFX Gamma PSO";
+        PSOCI.PSODesc.PipelineType                        = PIPELINE_TYPE_GRAPHICS;
+        PSOCI.pVS                                         = pVS;
+        PSOCI.pPS                                         = pPS;
+        PSOCI.GraphicsPipeline.PrimitiveTopology          = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        PSOCI.GraphicsPipeline.NumRenderTargets           = 1;
+        // Match the post target's format
+        PSOCI.GraphicsPipeline.RTVFormats[0]              = m_pPostTexture ? m_pPostTexture->GetDesc().Format : m_pSwapChain->GetDesc().ColorBufferFormat;
+        PSOCI.GraphicsPipeline.DSVFormat                  = TEX_FORMAT_UNKNOWN;
+        PSOCI.GraphicsPipeline.DepthStencilDesc.DepthEnable      = False;
+        PSOCI.GraphicsPipeline.DepthStencilDesc.DepthWriteEnable = False;
+        PSOCI.GraphicsPipeline.RasterizerDesc.CullMode    = CULL_MODE_NONE;
+
+        // Resource layout: one dynamic SRV and immutable sampler
+        ShaderResourceVariableDesc Vars[] = {
+            {SHADER_TYPE_PIXEL, "g_TextureColor", SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE}
+        };
+        PSOCI.PSODesc.ResourceLayout.DefaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+        PSOCI.PSODesc.ResourceLayout.Variables           = Vars;
+        PSOCI.PSODesc.ResourceLayout.NumVariables        = _countof(Vars);
+
+        SamplerDesc Smpl;
+        Smpl.MinFilter = FILTER_TYPE_LINEAR;
+        Smpl.MagFilter = FILTER_TYPE_LINEAR;
+        Smpl.MipFilter = FILTER_TYPE_LINEAR;
+        Smpl.AddressU  = TEXTURE_ADDRESS_CLAMP;
+        Smpl.AddressV  = TEXTURE_ADDRESS_CLAMP;
+        Smpl.AddressW  = TEXTURE_ADDRESS_CLAMP;
+        ImmutableSamplerDesc Imtbl[] = {
+            {SHADER_TYPE_PIXEL, "g_TextureColor", Smpl}
+        };
+        PSOCI.PSODesc.ResourceLayout.ImmutableSamplers    = Imtbl;
+        PSOCI.PSODesc.ResourceLayout.NumImmutableSamplers = _countof(Imtbl);
+
+        m_pDevice->CreateGraphicsPipelineState(PSOCI, &m_pPostGammaPSO);
+        if (m_pPostGammaPSO)
+        {
+            m_pPostGammaPSO->CreateShaderResourceBinding(&m_PostGammaSRB, true);
+        }
+    }
+
     void C6GERender::Update(double CurrTime, double ElapsedTime, bool DoUpdateUI)
     {
         SampleBase::Update(CurrTime, ElapsedTime, DoUpdateUI);
@@ -2474,8 +3199,9 @@ else
         if (!IsPlaying())
             return;
 
-    // Apply rotation
-    m_CubeWorldMatrix = float4x4::RotationY(static_cast<float>(CurrTime) * 1.0f) * float4x4::RotationX(-PI_F * 0.1f);
+    // Legacy matrices may still be used for RT; leave them identity unless user updates entities explicitly
+    m_CubeWorldMatrix = float4x4::Identity();
+    m_SecondCubeWorldMatrix = float4x4::Identity();
 
         // Camera is at (0, 0, -5) looking along the Z axis
         float4x4 View = float4x4::Translation(0.f, 0.0f, 5.0f);
@@ -2488,6 +3214,14 @@ else
 
         // Compute camera view-projection matrix (world transforms applied per-object)
     m_CameraViewProjMatrix = View * SrfPreTransform * Proj;
+    }
+
+    void C6GERender::EnsureWorld()
+    {
+        if (!m_World)
+            m_World = std::make_unique<ECS::World>();
+        if (!m_RenderSystem)
+            m_RenderSystem = std::make_unique<C6GE::Systems::RenderSystem>(this);
     }
 
     void C6GERender::WindowResize(Uint32 Width, Uint32 Height)
@@ -2514,6 +3248,8 @@ else
         {
             m_PendingRTRestart = true;
         }
+        // Bump temporal index to reset jitter/feedback a bit after resize
+        m_TemporalFrameIndex = 0;
     }
     }
 
