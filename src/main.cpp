@@ -1,4 +1,4 @@
-﻿#define METAL_ENABLED 0
+#define METAL_ENABLED 0
 #include <iostream>
 #include <thread>
 #include <chrono>
@@ -846,13 +846,33 @@ int main()
 #endif
     float font_scale = xscale; // Use xscale for font and style scaling
 
-    // Load a larger font (Roboto-Medium.ttf is available in external/imgui/misc/fonts/)
+    // Load a larger font (Roboto-Medium.ttf is available in src/Assets/)
     ImGuiIO& io_font = ImGui::GetIO();
     io_font.Fonts->Clear();
-    io_font.Fonts->AddFontFromFileTTF("Roboto-Medium.ttf", 10.0f * font_scale);
-    io_font.Fonts->AddFontFromFileTTF("Roboto-Medium.ttf", 18.0f * font_scale);
-    // Optionally, add default font as fallback
-    // io_font.Fonts->AddFontDefault();
+    
+    // Try multiple possible paths for the font file
+    const char* font_paths[] = {
+        "../../src/Assets/Roboto-Medium.ttf",
+        "../src/Assets/Roboto-Medium.ttf", 
+        "src/Assets/Roboto-Medium.ttf",
+        "Assets/Roboto-Medium.ttf"
+    };
+    
+    bool font_loaded = false;
+    for (const char* font_path : font_paths) {
+        ImFont* font1 = io_font.Fonts->AddFontFromFileTTF(font_path, 10.0f * font_scale);
+        ImFont* font2 = io_font.Fonts->AddFontFromFileTTF(font_path, 18.0f * font_scale);
+        if (font1 != nullptr && font2 != nullptr) {
+            font_loaded = true;
+            std::cout << "Successfully loaded font from: " << font_path << std::endl;
+            break;
+        }
+    }
+    
+    if (!font_loaded) {
+        std::cout << "Warning: Could not load Roboto-Medium.ttf, using default font" << std::endl;
+        io_font.Fonts->AddFontDefault();
+    }
     // Scale all style sizes
     ImGui::GetStyle().ScaleAllSizes(font_scale);
     // Rebuild font atlas

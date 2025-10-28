@@ -31,6 +31,7 @@
 #include <vector>
 #include <thread>
 #include <mutex>
+#include <unordered_map>
 #include "SampleBase.hpp"
 #include "FirstPersonCamera.hpp"
 #include "DiligentTools/AssetLoader/interface/DXSDKMeshLoader.hpp"
@@ -77,6 +78,8 @@ namespace Diligent
 
         void CreateFramebuffer();
 
+        void CreateMSAARenderTarget();
+
         void ResizeFramebuffer(Uint32 Width, Uint32 Height);
 
         void WindowResize(Uint32 Width, Uint32 Height) override final;
@@ -99,9 +102,14 @@ namespace Diligent
     // Shadow map visualization creation removed
     void CreateShadowMap();
     void RenderShadowMap();
-    void RenderCube(const float4x4& CameraViewProj, bool IsShadowPass);
-    void RenderPlane();
+    void RenderCube(const float4x4& CameraViewProj, bool IsShadowPass, RESOURCE_STATE_TRANSITION_MODE TransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    void RenderPlane(RESOURCE_STATE_TRANSITION_MODE TransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     // Shadow map visualization removed
+    
+    // Render pass methods
+    void CreateMainRenderPass();
+    RefCntAutoPtr<IFramebuffer> CreateMainFramebuffer();
+    IFramebuffer* GetCurrentMainFramebuffer();
 
     RefCntAutoPtr<IPipelineState>         m_pCubePSO;
     RefCntAutoPtr<IPipelineState>         m_pCubeShadowPSO;
@@ -122,6 +130,11 @@ namespace Diligent
     RefCntAutoPtr<ITextureView>           m_ShadowMapSRV;
     FirstPersonCamera m_Camera;
 
+    // Render pass support
+    RefCntAutoPtr<IRenderPass>  m_pMainRenderPass;
+    std::unordered_map<ITextureView*, RefCntAutoPtr<IFramebuffer>> m_FramebufferCache;
+    bool m_UseRenderPasses = false; // Enable render passes when supported
+
     float4x4       m_CubeWorldMatrix;
     float4x4       m_CameraViewProjMatrix;
     float4x4       m_WorldToShadowMapUVDepthMatr;
@@ -139,6 +152,12 @@ namespace Diligent
         Uint32 m_FramebufferWidth = 800;
         Uint32 m_FramebufferHeight = 600;
         ImTextureID m_ViewportTextureID = 0;
+
+        // MSAA settings
+        Uint8  m_SampleCount = 1;
+        std::vector<Uint8> m_SupportedSampleCounts;
+        RefCntAutoPtr<ITextureView> m_pMSColorRTV;
+        RefCntAutoPtr<ITextureView> m_pMSDepthDSV;
     };
 
 } // namespace Diligent

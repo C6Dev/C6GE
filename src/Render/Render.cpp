@@ -118,25 +118,78 @@ namespace Diligent
     {
         SampleBase::Initialize(InitInfo);
 
+        // Initialize MSAA settings
+        const TextureFormatInfoExt& ColorFmtInfo = m_pDevice->GetTextureFormatInfoExt(m_pSwapChain->GetDesc().ColorBufferFormat);
+        const TextureFormatInfoExt& DepthFmtInfo = m_pDevice->GetTextureFormatInfoExt(m_pSwapChain->GetDesc().DepthBufferFormat);
+        Uint32 supportedSampleCounts = ColorFmtInfo.SampleCounts & DepthFmtInfo.SampleCounts;
+        
+        // Populate supported sample counts vector
+        m_SupportedSampleCounts.clear();
+        m_SupportedSampleCounts.push_back(1); // Always support 1x (no MSAA)
+        if (supportedSampleCounts & SAMPLE_COUNT_2)
+            m_SupportedSampleCounts.push_back(2);
+        if (supportedSampleCounts & SAMPLE_COUNT_4)
+            m_SupportedSampleCounts.push_back(4);
+        if (supportedSampleCounts & SAMPLE_COUNT_8)
+            m_SupportedSampleCounts.push_back(8);
+        if (supportedSampleCounts & SAMPLE_COUNT_16)
+            m_SupportedSampleCounts.push_back(16);
+        
+        // Set default sample count
+        if (supportedSampleCounts & SAMPLE_COUNT_4)
+            m_SampleCount = 4;
+        else if (supportedSampleCounts & SAMPLE_COUNT_2)
+            m_SampleCount = 2;
+        else
+        {
+            LOG_WARNING_MESSAGE(ColorFmtInfo.Name, " + ", DepthFmtInfo.Name, " pair does not allow multisampling on this device");
+            m_SampleCount = 1;
+        }
+
         // Load play/pause icons (after m_pDevice is valid)
         TextureLoadInfo loadInfo;
         loadInfo.IsSRGB = true;
         RefCntAutoPtr<ITexture> playTex, pauseTex;
-        CreateTextureFromFile("Editor/PlayIcon.png", loadInfo, m_pDevice, &playTex);
-        if (!playTex)
-            std::cerr << "[C6GE] Failed to load Editor/PlayIcon.png" << std::endl;
-        else if (auto srv = playTex->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE))
-            m_PlayIconSRV = srv;
-        else
-            std::cerr << "[C6GE] Failed to get SRV for PlayIcon.png" << std::endl;
+        
+        try {
+            CreateTextureFromFile("Editor/PlayIcon.png", loadInfo, m_pDevice, &playTex);
+            if (playTex)
+            {
+                auto srv = playTex->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+                if (srv)
+                    m_PlayIconSRV = srv;
+                else
+                    std::cerr << "[C6GE] Failed to get SRV for PlayIcon.png" << std::endl;
+            }
+            else
+            {
+                std::cerr << "[C6GE] Failed to load Editor/PlayIcon.png" << std::endl;
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "[C6GE] Exception loading PlayIcon.png: " << e.what() << std::endl;
+        }
 
-        CreateTextureFromFile("Editor/PauseIcon.png", loadInfo, m_pDevice, &pauseTex);
-        if (!pauseTex)
-            std::cerr << "[C6GE] Failed to load Editor/PauseIcon.png" << std::endl;
-        else if (auto srv = pauseTex->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE))
-            m_PauseIconSRV = srv;
-        else
-            std::cerr << "[C6GE] Failed to get SRV for PauseIcon.png" << std::endl;
+        try {
+            CreateTextureFromFile("Editor/PauseIcon.png", loadInfo, m_pDevice, &pauseTex);
+            if (pauseTex)
+            {
+                auto srv = pauseTex->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+                if (srv)
+                    m_PauseIconSRV = srv;
+                else
+                    std::cerr << "[C6GE] Failed to get SRV for PauseIcon.png" << std::endl;
+            }
+            else
+            {
+                std::cerr << "[C6GE] Failed to load Editor/PauseIcon.png" << std::endl;
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "[C6GE] Exception loading PauseIcon.png: " << e.what() << std::endl;
+        }
 
         // Initialize camera position to look at the cube
         m_Camera.SetPos(float3(0.f, 0.f, 5.f));
@@ -150,9 +203,37 @@ namespace Diligent
         // Load textured cube with normals (required for lighting)
         m_CubeVertexBuffer = TexturedCube::CreateVertexBuffer(m_pDevice, GEOMETRY_PRIMITIVE_VERTEX_FLAG_ALL);
         m_CubeIndexBuffer = TexturedCube::CreateIndexBuffer(m_pDevice);
-        m_TextureSRV = TexturedCube::LoadTexture(m_pDevice, "C6GELogo.png")->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
-        if (m_CubeSRB)
-            m_CubeSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_Texture")->Set(m_TextureSRV);
+        
+        // Safely load texture with error handling
+        try {
+            auto texture = TexturedCube::LoadTexture(m_pDevice, "../../src/Assets/C6GELogo.png");
+            if (texture)
+            {
+                m_TextureSRV = texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+                if (!m_TextureSRV)
+                {
+                    std::cerr << "[C6GE] Failed to get SRV for C6GELogo.png" << std::endl;
+                }
+            }
+            else
+            {
+                std::cerr << "[C6GE] Failed to load texture: ../../src/Assets/C6GELogo.png" << std::endl;
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "[C6GE] Exception loading texture: " << e.what() << std::endl;
+        }
+        
+        // Only bind texture if both SRB and texture are valid
+        if (m_CubeSRB && m_TextureSRV)
+        {
+            auto textureVar = m_CubeSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_Texture");
+            if (textureVar)
+                textureVar->Set(m_TextureSRV);
+            else
+                std::cerr << "[C6GE] Failed to find g_Texture variable in SRB" << std::endl;
+        }
 
         // Ensure framebuffer is created after swap chain and device are ready.
         if (m_pSwapChain)
@@ -170,11 +251,60 @@ namespace Diligent
                 m_FramebufferHeight = std::max(1u, m_FramebufferHeight);
             }
         }
+        else
+        {
+            std::cerr << "[C6GE] Warning: SwapChain is null during initialization" << std::endl;
+            m_FramebufferWidth = std::max(1u, m_FramebufferWidth);
+            m_FramebufferHeight = std::max(1u, m_FramebufferHeight);
+        }
 
-    CreateFramebuffer();
+        try {
+            CreateFramebuffer();
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "[C6GE] Exception creating framebuffer: " << e.what() << std::endl;
+            throw; // Re-throw as this is critical
+        }
 
-    // Create shadow map and bind it to plane SRB / shadow-visualization SRB
-    CreateShadowMap();
+        try {
+            CreateMSAARenderTarget();
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "[C6GE] Exception creating MSAA render target: " << e.what() << std::endl;
+            throw; // Re-throw as this is critical
+        }
+
+        // Create shadow map and bind it to plane SRB / shadow-visualization SRB
+        try {
+            CreateShadowMap();
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "[C6GE] Exception creating shadow map: " << e.what() << std::endl;
+            throw; // Re-throw as this is critical
+        }
+
+        // Create main render pass (for Vulkan/Metal optimization)
+        try {
+            CreateMainRenderPass();
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "[C6GE] Exception creating main render pass: " << e.what() << std::endl;
+            // Non-critical - continue without render passes
+            m_UseRenderPasses = false;
+        }
+
+        // Transition all resources to their required states for rendering
+        // This is critical when using render passes, as transitions are not allowed inside
+        StateTransitionDesc Barriers[] = {
+            {m_VSConstants, RESOURCE_STATE_UNKNOWN, RESOURCE_STATE_CONSTANT_BUFFER, STATE_TRANSITION_FLAG_UPDATE_STATE},
+            {m_CubeVertexBuffer, RESOURCE_STATE_UNKNOWN, RESOURCE_STATE_VERTEX_BUFFER, STATE_TRANSITION_FLAG_UPDATE_STATE},
+            {m_CubeIndexBuffer, RESOURCE_STATE_UNKNOWN, RESOURCE_STATE_INDEX_BUFFER, STATE_TRANSITION_FLAG_UPDATE_STATE}
+        };
+        m_pImmediateContext->TransitionResourceStates(_countof(Barriers), Barriers);
 
     // Cube vertex/index buffers were already created with normals above. Keep them.
     printf("[Initialize] Cube VB=%p IB=%p\n", (void *)m_CubeVertexBuffer.RawPtr(), (void *)m_CubeIndexBuffer.RawPtr());
@@ -279,6 +409,57 @@ namespace Diligent
             if (ImGui::Begin("Render Settings", &RenderSettingsOpen, ImGuiWindowFlags_NoCollapse))
             {
                 ImGui::SliderFloat("Line Width", &m_LineWidth, 1.f, 10.f);
+                
+                // MSAA Settings
+                if (ImGui::CollapsingHeader("Anti-Aliasing", ImGuiTreeNodeFlags_DefaultOpen))
+                {
+                    if (!m_SupportedSampleCounts.empty())
+                    {
+                        // Create a list of sample count options
+                        std::vector<const char*> sampleCountNames;
+                        std::vector<Uint8> sampleCountValues;
+                        
+                        for (Uint8 sampleCount : m_SupportedSampleCounts)
+                        {
+                            static std::string names[8]; // Static storage for strings
+                            int index = sampleCountNames.size();
+                            if (sampleCount == 1)
+                                names[index] = "Disabled (1x)";
+                            else
+                                names[index] = std::to_string(sampleCount) + "x MSAA";
+                            
+                            sampleCountNames.push_back(names[index].c_str());
+                            sampleCountValues.push_back(sampleCount);
+                        }
+                        
+                        // Find current selection
+                        int currentSelection = 0;
+                        for (size_t i = 0; i < sampleCountValues.size(); ++i)
+                        {
+                            if (sampleCountValues[i] == m_SampleCount)
+                            {
+                                currentSelection = static_cast<int>(i);
+                                break;
+                            }
+                        }
+                        
+                        if (ImGui::Combo("Sample Count", &currentSelection, sampleCountNames.data(), static_cast<int>(sampleCountNames.size())))
+                        {
+                            Uint8 newSampleCount = sampleCountValues[currentSelection];
+                            if (newSampleCount != m_SampleCount)
+                            {
+                                m_SampleCount = newSampleCount;
+                                // Recreate MSAA render targets with new sample count
+                                CreateMSAARenderTarget();
+                            }
+                        }
+                    }
+                    else
+                    {
+                        ImGui::Text("MSAA not supported on this device");
+                    }
+                }
+                
                 if (ImGui::CollapsingHeader("Shadows", ImGuiTreeNodeFlags_DefaultOpen))
                 {
                     ImGui::Checkbox("Shadow Maps", &RenderShadows);
@@ -290,6 +471,31 @@ namespace Diligent
                             m_ShadowMapSize = shadowRes;
                             CreateShadowMap();
                         }
+                    }
+                }
+                
+                if (ImGui::CollapsingHeader("Advanced", ImGuiTreeNodeFlags_DefaultOpen))
+                {
+                    if (m_pMainRenderPass)
+                    {
+                        if (ImGui::Checkbox("Use Render Passes", &m_UseRenderPasses))
+                        {
+                            // Clear cache when toggling
+                            m_FramebufferCache.clear();
+                        }
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("(?)");
+                        if (ImGui::IsItemHovered())
+                        {
+                            ImGui::BeginTooltip();
+                            ImGui::Text("Render passes optimize rendering on Vulkan/Metal");
+                            ImGui::Text("by reducing memory bandwidth usage");
+                            ImGui::EndTooltip();
+                        }
+                    }
+                    else
+                    {
+                        ImGui::TextDisabled("Render Passes: Not supported");
                     }
                 }
             }
@@ -577,7 +783,7 @@ namespace Diligent
             ShaderCI.Desc.ShaderType = SHADER_TYPE_VERTEX;
             ShaderCI.EntryPoint = "main";
             ShaderCI.Desc.Name = "Cube VS";
-            ShaderCI.FilePath = "cube.vsh";
+            ShaderCI.FilePath = "../../assets/cube.vsh";
             m_pDevice->CreateShader(ShaderCI, &pVS);
         }
 
@@ -588,7 +794,7 @@ namespace Diligent
             ShaderCI.Desc.ShaderType = SHADER_TYPE_GEOMETRY;
             ShaderCI.EntryPoint = "main";
             ShaderCI.Desc.Name = "Cube GS";
-            ShaderCI.FilePath = "cube.gsh";
+            ShaderCI.FilePath = "../../assets/cube.gsh";
             m_pDevice->CreateShader(ShaderCI, &pGS);
         }
 
@@ -598,7 +804,7 @@ namespace Diligent
             ShaderCI.Desc.ShaderType = SHADER_TYPE_PIXEL;
             ShaderCI.EntryPoint = "main";
             ShaderCI.Desc.Name = "Cube PS";
-            ShaderCI.FilePath = "cube.psh";
+            ShaderCI.FilePath = "../../assets/cube.psh";
             m_pDevice->CreateShader(ShaderCI, &pPS);
         }
 
@@ -730,7 +936,7 @@ namespace Diligent
         ShadowShaderCI.Desc.ShaderType = SHADER_TYPE_VERTEX;
         ShadowShaderCI.EntryPoint = "main";
         ShadowShaderCI.Desc.Name = "Cube Shadow VS";
-        ShadowShaderCI.FilePath = "cube_shadow.vsh";
+        ShadowShaderCI.FilePath = "../../assets/cube_shadow.vsh";
         m_pDevice->CreateShader(ShadowShaderCI, &pShadowVS);
 
         ShadowPSOCI.pVS = pShadowVS;
@@ -934,7 +1140,7 @@ namespace Diligent
         ShaderCI.Desc.ShaderType = SHADER_TYPE_VERTEX;
         ShaderCI.EntryPoint = "main";
         ShaderCI.Desc.Name = "Plane VS";
-        ShaderCI.FilePath = "plane.vsh";
+        ShaderCI.FilePath = "../../assets/plane.vsh";
         m_pDevice->CreateShader(ShaderCI, &pPlaneVS);
 
         // Create plane pixel shader
@@ -942,7 +1148,7 @@ namespace Diligent
         ShaderCI.Desc.ShaderType = SHADER_TYPE_PIXEL;
         ShaderCI.EntryPoint = "main";
         ShaderCI.Desc.Name = "Plane PS";
-        ShaderCI.FilePath = "plane.psh";
+        ShaderCI.FilePath = "../../assets/plane.psh";
         m_pDevice->CreateShader(ShaderCI, &pPlanePS);
 
         PSOCreateInfo.pVS = pPlaneVS;
@@ -1018,7 +1224,7 @@ namespace Diligent
         NoShadowCI.Desc.ShaderType = SHADER_TYPE_PIXEL;
         NoShadowCI.EntryPoint = "main";
         NoShadowCI.Desc.Name = "Plane NoShadow PS";
-        NoShadowCI.FilePath = "plane_no_shadow.psh";
+        NoShadowCI.FilePath = "../../assets/plane_no_shadow.psh";
         m_pDevice->CreateShader(NoShadowCI, &pNoShadowPS);
     NoShadowPSOCI.pVS = pPlaneVS;
     NoShadowPSOCI.pPS = pNoShadowPS;
@@ -1083,6 +1289,129 @@ namespace Diligent
         // Visualization SRB removed; only bind shadow map to plane SRB
     }
 
+    void C6GERender::CreateMainRenderPass()
+    {
+        // Disable render passes by default for now - they need more careful integration
+        // TODO: Properly handle resource state transitions and ensure compatibility
+        m_UseRenderPasses = false;
+        
+        // Enable render passes for all backends (when enabled via UI)
+        // Render passes provide benefits on all modern APIs:
+        // - Vulkan/Metal: Native support, optimal performance
+        // - D3D12: Optimizes resource barriers and transitions  
+        // - D3D11/OpenGL: Abstraction layer, minimal overhead
+
+        // Create a render pass with MSAA support
+        // Attachment 0 - Color buffer (MSAA if enabled, or regular)
+        // Attachment 1 - Depth buffer (MSAA if enabled, or regular)
+        constexpr Uint32 NumAttachments = 2;
+
+        RenderPassAttachmentDesc Attachments[NumAttachments];
+        
+        // Color attachment
+        Attachments[0].Format       = m_pSwapChain->GetDesc().ColorBufferFormat;
+        Attachments[0].SampleCount  = m_SampleCount;
+        Attachments[0].InitialState = RESOURCE_STATE_RENDER_TARGET;
+        Attachments[0].FinalState   = RESOURCE_STATE_RENDER_TARGET;
+        Attachments[0].LoadOp       = ATTACHMENT_LOAD_OP_CLEAR;
+        Attachments[0].StoreOp      = ATTACHMENT_STORE_OP_STORE;
+
+        // Depth attachment
+        Attachments[1].Format       = m_pSwapChain->GetDesc().DepthBufferFormat;
+        Attachments[1].SampleCount  = m_SampleCount;
+        Attachments[1].InitialState = RESOURCE_STATE_DEPTH_WRITE;
+        Attachments[1].FinalState   = RESOURCE_STATE_DEPTH_WRITE;
+        Attachments[1].LoadOp       = ATTACHMENT_LOAD_OP_CLEAR;
+        Attachments[1].StoreOp      = ATTACHMENT_STORE_OP_DISCARD; // Don't need depth after rendering
+
+        // Single subpass for now - render everything in one pass
+        SubpassDesc Subpasses[1];
+
+        AttachmentReference RTAttachmentRef = {0, RESOURCE_STATE_RENDER_TARGET};
+        AttachmentReference DepthAttachmentRef = {1, RESOURCE_STATE_DEPTH_WRITE};
+
+        Subpasses[0].RenderTargetAttachmentCount = 1;
+        Subpasses[0].pRenderTargetAttachments    = &RTAttachmentRef;
+        Subpasses[0].pDepthStencilAttachment     = &DepthAttachmentRef;
+
+        RenderPassDesc RPDesc;
+        RPDesc.Name            = "Main render pass";
+        RPDesc.AttachmentCount = NumAttachments;
+        RPDesc.pAttachments    = Attachments;
+        RPDesc.SubpassCount    = 1;
+        RPDesc.pSubpasses      = Subpasses;
+
+        m_pDevice->CreateRenderPass(RPDesc, &m_pMainRenderPass);
+        
+        if (m_pMainRenderPass)
+        {
+            std::cout << "[C6GE] Created main render pass successfully" << std::endl;
+        }
+        else
+        {
+            std::cerr << "[C6GE] Failed to create main render pass" << std::endl;
+            m_UseRenderPasses = false;
+        }
+    }
+
+    RefCntAutoPtr<IFramebuffer> C6GERender::CreateMainFramebuffer()
+    {
+        if (!m_pMainRenderPass)
+        {
+            RefCntAutoPtr<IFramebuffer> pNull;
+            return pNull;
+        }
+
+        ITextureView* pAttachments[2];
+        
+        if (m_SampleCount > 1 && m_pMSColorRTV && m_pMSDepthDSV)
+        {
+            pAttachments[0] = m_pMSColorRTV;
+            pAttachments[1] = m_pMSDepthDSV;
+        }
+        else
+        {
+            pAttachments[0] = m_pFramebufferRTV;
+            pAttachments[1] = m_pFramebufferDSV;
+        }
+
+        FramebufferDesc FBDesc;
+        FBDesc.Name            = "Main framebuffer";
+        FBDesc.pRenderPass     = m_pMainRenderPass;
+        FBDesc.AttachmentCount = 2;
+        FBDesc.ppAttachments   = pAttachments;
+
+        RefCntAutoPtr<IFramebuffer> pFramebuffer;
+        m_pDevice->CreateFramebuffer(FBDesc, &pFramebuffer);
+        
+        return pFramebuffer;
+    }
+
+    IFramebuffer* C6GERender::GetCurrentMainFramebuffer()
+    {
+        if (!m_UseRenderPasses || !m_pMainRenderPass)
+            return nullptr;
+
+        // Use framebuffer RTV as key (it's always the same for our off-screen buffer)
+        ITextureView* pKey = m_pFramebufferRTV;
+
+        auto fb_it = m_FramebufferCache.find(pKey);
+        if (fb_it != m_FramebufferCache.end())
+        {
+            return fb_it->second;
+        }
+        else
+        {
+            auto pFramebuffer = CreateMainFramebuffer();
+            if (pFramebuffer)
+            {
+                auto it = m_FramebufferCache.emplace(pKey, pFramebuffer);
+                return it.first->second;
+            }
+            return nullptr;
+        }
+    }
+
     void C6GERender::RenderShadowMap()
     {
         // Compute world->light projection matrix and store to m_WorldToShadowMapUVDepthMatr
@@ -1141,7 +1470,7 @@ namespace Diligent
         RenderCube(WorldToLightProjSpaceMatr, true);
     }
 
-    void C6GERender::RenderCube(const float4x4& CameraViewProj, bool IsShadowPass)
+    void C6GERender::RenderCube(const float4x4& CameraViewProj, bool IsShadowPass, RESOURCE_STATE_TRANSITION_MODE TransitionMode)
     {
         // Update constant buffer
         {
@@ -1161,8 +1490,8 @@ namespace Diligent
         }
 
         IBuffer* pBuffs[] = {m_CubeVertexBuffer};
-        m_pImmediateContext->SetVertexBuffers(0, 1, pBuffs, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
-        m_pImmediateContext->SetIndexBuffer(m_CubeIndexBuffer, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        m_pImmediateContext->SetVertexBuffers(0, 1, pBuffs, nullptr, TransitionMode, SET_VERTEX_BUFFERS_FLAG_RESET);
+        m_pImmediateContext->SetIndexBuffer(m_CubeIndexBuffer, 0, TransitionMode);
 
         if (IsShadowPass)
         {
@@ -1173,7 +1502,7 @@ namespace Diligent
             }
             m_pImmediateContext->SetPipelineState(m_pCubeShadowPSO);
             if (m_CubeShadowSRB)
-                m_pImmediateContext->CommitShaderResources(m_CubeShadowSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+                m_pImmediateContext->CommitShaderResources(m_CubeShadowSRB, TransitionMode);
         }
         else
         {
@@ -1184,7 +1513,7 @@ namespace Diligent
             }
             m_pImmediateContext->SetPipelineState(m_pCubePSO);
             if (m_CubeSRB)
-                m_pImmediateContext->CommitShaderResources(m_CubeSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+                m_pImmediateContext->CommitShaderResources(m_CubeSRB, TransitionMode);
         }
 
         DrawIndexedAttribs DrawAttrs;
@@ -1194,7 +1523,7 @@ namespace Diligent
         m_pImmediateContext->DrawIndexed(DrawAttrs);
     }
 
-    void C6GERender::RenderPlane()
+    void C6GERender::RenderPlane(RESOURCE_STATE_TRANSITION_MODE TransitionMode)
     {
         struct PlaneConsts
         {
@@ -1291,14 +1620,14 @@ namespace Diligent
             }
 
             m_pImmediateContext->SetPipelineState(pSelectedPSO);
-            m_pImmediateContext->CommitShaderResources(m_PlaneSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+            m_pImmediateContext->CommitShaderResources(m_PlaneSRB, TransitionMode);
         }
         else
         {
             // No-shadow PSO: ensure its SRB (if any) is committed to satisfy backend validation
             if (m_PlaneNoShadowSRB)
             {
-                m_pImmediateContext->CommitShaderResources(m_PlaneNoShadowSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+                m_pImmediateContext->CommitShaderResources(m_PlaneNoShadowSRB, TransitionMode);
             }
             m_pImmediateContext->SetPipelineState(pSelectedPSO);
         }
@@ -1334,9 +1663,17 @@ else
         m_pFramebufferSRV.Release();
         m_pFramebufferDepth.Release();
         m_pFramebufferDSV.Release();
+        
+        // Release MSAA resources
+        m_pMSColorRTV.Release();
+        m_pMSDepthDSV.Release();
+        
+        // Clear framebuffer cache when resizing
+        m_FramebufferCache.clear();
 
         // Recreate framebuffer with new size
         CreateFramebuffer();
+        CreateMSAARenderTarget();
     }
 
     // Render a frame
@@ -1357,19 +1694,72 @@ else
         }
 
         // 2) Render scene into off-screen framebuffer for ImGui viewport
-        ITextureView *pRTV = m_pFramebufferRTV;
-        ITextureView *pDSV = m_pFramebufferDSV;
+        ITextureView *pRTV = (m_SampleCount > 1 && m_pMSColorRTV) ? m_pMSColorRTV : m_pFramebufferRTV;
+        ITextureView *pDSV = (m_SampleCount > 1 && m_pMSDepthDSV) ? m_pMSDepthDSV : m_pFramebufferDSV;
         float4 ClearColor = {0.350f, 0.350f, 0.350f, 1.0f};
         if (m_ConvertPSOutputToGamma)
             ClearColor = LinearToSRGB(ClearColor);
 
-        m_pImmediateContext->SetRenderTargets(1, &pRTV, pDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        m_pImmediateContext->ClearRenderTarget(pRTV, ClearColor.Data(), RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        m_pImmediateContext->ClearDepthStencil(pDSV, CLEAR_DEPTH_FLAG, 1.f, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        // Use render pass if available and supported
+        if (m_UseRenderPasses && m_pMainRenderPass)
+        {
+            IFramebuffer* pFramebuffer = GetCurrentMainFramebuffer();
+            if (pFramebuffer)
+            {
+                BeginRenderPassAttribs RPBeginInfo;
+                RPBeginInfo.pRenderPass  = m_pMainRenderPass;
+                RPBeginInfo.pFramebuffer = pFramebuffer;
 
-        // Render cube and plane (they update their own constant buffers)
-        RenderCube(m_CameraViewProjMatrix, false);
-        RenderPlane();
+                OptimizedClearValue ClearValues[2];
+                ClearValues[0].Color[0] = ClearColor.r;
+                ClearValues[0].Color[1] = ClearColor.g;
+                ClearValues[0].Color[2] = ClearColor.b;
+                ClearValues[0].Color[3] = ClearColor.a;
+                ClearValues[1].DepthStencil.Depth = 1.f;
+
+                RPBeginInfo.pClearValues        = ClearValues;
+                RPBeginInfo.ClearValueCount     = 2;
+                RPBeginInfo.StateTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+                
+                m_pImmediateContext->BeginRenderPass(RPBeginInfo);
+
+                // Render cube and plane (they update their own constant buffers)
+                // Note: Inside render pass, MUST use RESOURCE_STATE_TRANSITION_MODE_VERIFY
+                RenderCube(m_CameraViewProjMatrix, false, RESOURCE_STATE_TRANSITION_MODE_VERIFY);
+                RenderPlane(RESOURCE_STATE_TRANSITION_MODE_VERIFY);
+
+                m_pImmediateContext->EndRenderPass();
+            }
+            else
+            {
+                // Fallback to traditional rendering
+                m_pImmediateContext->SetRenderTargets(1, &pRTV, pDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+                m_pImmediateContext->ClearRenderTarget(pRTV, ClearColor.Data(), RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+                m_pImmediateContext->ClearDepthStencil(pDSV, CLEAR_DEPTH_FLAG, 1.f, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+                RenderCube(m_CameraViewProjMatrix, false, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+                RenderPlane(RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+            }
+        }
+        else
+        {
+            // Traditional rendering without render passes
+            m_pImmediateContext->SetRenderTargets(1, &pRTV, pDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+            m_pImmediateContext->ClearRenderTarget(pRTV, ClearColor.Data(), RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+            m_pImmediateContext->ClearDepthStencil(pDSV, CLEAR_DEPTH_FLAG, 1.f, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+            RenderCube(m_CameraViewProjMatrix, false, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+            RenderPlane(RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        }
+
+        // If using MSAA, resolve the multi-sampled render target to the framebuffer
+        if (m_SampleCount > 1 && m_pMSColorRTV && m_pFramebufferTexture)
+        {
+            ResolveTextureSubresourceAttribs ResolveAttribs;
+            ResolveAttribs.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+            ResolveAttribs.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+            m_pImmediateContext->ResolveTextureSubresource(m_pMSColorRTV->GetTexture(), m_pFramebufferTexture, ResolveAttribs);
+        }
 
         // Shadow visualization removed. No additional overlays.
 
@@ -1382,6 +1772,71 @@ else
         m_pImmediateContext->SetRenderTargets(1, &pRTV, pDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
         m_pImmediateContext->ClearRenderTarget(pRTV, ClearColorSwap.Data(), RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
         m_pImmediateContext->ClearDepthStencil(pDSV, CLEAR_DEPTH_FLAG, 1.f, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    }
+
+    void C6GERender::CreateMSAARenderTarget()
+    {
+        if (m_SampleCount == 1)
+            return;
+
+        const SwapChainDesc& SCDesc = m_pSwapChain->GetDesc();
+        // Create window-size multi-sampled offscreen render target
+        TextureDesc ColorDesc;
+        ColorDesc.Name           = "Multisampled render target";
+        ColorDesc.Type           = RESOURCE_DIM_TEX_2D;
+        ColorDesc.BindFlags      = BIND_RENDER_TARGET;
+        ColorDesc.Width          = m_FramebufferWidth;
+        ColorDesc.Height         = m_FramebufferHeight;
+        ColorDesc.MipLevels      = 1;
+        ColorDesc.Format         = SCDesc.ColorBufferFormat;
+        bool NeedsSRGBConversion = m_pDevice->GetDeviceInfo().IsD3DDevice() && (ColorDesc.Format == TEX_FORMAT_RGBA8_UNORM_SRGB || ColorDesc.Format == TEX_FORMAT_BGRA8_UNORM_SRGB);
+        if (NeedsSRGBConversion)
+        {
+            // Internally Direct3D swap chain images are not SRGB, and ResolveSubresource
+            // requires source and destination formats to match exactly or be typeless.
+            // So we will have to create a typeless texture and use SRGB render target view with it.
+            ColorDesc.Format = ColorDesc.Format == TEX_FORMAT_RGBA8_UNORM_SRGB ? TEX_FORMAT_RGBA8_TYPELESS : TEX_FORMAT_BGRA8_TYPELESS;
+        }
+
+        // Set the desired number of samples
+        ColorDesc.SampleCount = m_SampleCount;
+        // Define optimal clear value
+        ColorDesc.ClearValue.Format   = SCDesc.ColorBufferFormat;
+        ColorDesc.ClearValue.Color[0] = 0.125f;
+        ColorDesc.ClearValue.Color[1] = 0.125f;
+        ColorDesc.ClearValue.Color[2] = 0.125f;
+        ColorDesc.ClearValue.Color[3] = 1.f;
+        RefCntAutoPtr<ITexture> pColor;
+        m_pDevice->CreateTexture(ColorDesc, nullptr, &pColor);
+
+        // Store the render target view
+        m_pMSColorRTV.Release();
+        if (NeedsSRGBConversion)
+        {
+            TextureViewDesc RTVDesc;
+            RTVDesc.ViewType = TEXTURE_VIEW_RENDER_TARGET;
+            RTVDesc.Format   = SCDesc.ColorBufferFormat;
+            pColor->CreateView(RTVDesc, &m_pMSColorRTV);
+        }
+        else
+        {
+            m_pMSColorRTV = pColor->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET);
+        }
+
+        // Create window-size multi-sampled depth buffer
+        TextureDesc DepthDesc = ColorDesc;
+        DepthDesc.Name        = "Multisampled depth buffer";
+        DepthDesc.Format      = SCDesc.DepthBufferFormat;
+        DepthDesc.BindFlags   = BIND_DEPTH_STENCIL;
+        // Define optimal clear value
+        DepthDesc.ClearValue.Format               = DepthDesc.Format;
+        DepthDesc.ClearValue.DepthStencil.Depth   = 1;
+        DepthDesc.ClearValue.DepthStencil.Stencil = 0;
+
+        RefCntAutoPtr<ITexture> pDepth;
+        m_pDevice->CreateTexture(DepthDesc, nullptr, &pDepth);
+        // Store the depth-stencil view
+        m_pMSDepthDSV = pDepth->GetDefaultView(TEXTURE_VIEW_DEPTH_STENCIL);
     }
 
     void C6GERender::Update(double CurrTime, double ElapsedTime, bool DoUpdateUI)
