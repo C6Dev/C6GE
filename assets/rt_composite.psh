@@ -1,0 +1,8 @@
+Texture2D g_RTOutput; SamplerState g_RTOutput_sampler;
+
+float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD0) : SV_Target
+{
+    // c.r encodes the shadow modulation factor in [0,1]
+    float factor = g_RTOutput.Sample(g_RTOutput_sampler, uv).r;
+    return float4(factor, factor, factor, 1.0);
+}

@@ -135,6 +135,46 @@ namespace Diligent
     std::unordered_map<ITextureView*, RefCntAutoPtr<IFramebuffer>> m_FramebufferCache;
     bool m_UseRenderPasses = false; // Enable render passes when supported
 
+    // Ray tracing (hybrid) support flags
+    bool m_RayTracingSupported = false; // Device capability check
+    bool m_EnableRayTracing    = false; // User toggle (default off)
+    bool m_RayTracingInitialized = false; // Internal init state
+    bool m_PendingRTRestart   = false;   // Defer RT destroy/reinit to the next frame after resize
+
+    // Ray tracing (hybrid) stubbed API
+    void InitializeRayTracing();
+    void DestroyRayTracing();
+    void RenderRayTracingPath();
+    void CreateRayTracingOutputTexture(Uint32 Width, Uint32 Height);
+    void CreateRTDebugPSOs();
+    void CreateRayTracingAS();
+    void DestroyRayTracingAS();
+    void UpdateTLAS();
+
+    // Ray tracing resources (incremental)
+    RefCntAutoPtr<ITexture>     m_pRTOutputTex;
+    RefCntAutoPtr<ITextureView> m_pRTOutputUAV;
+    RefCntAutoPtr<ITextureView> m_pRTOutputSRV;
+
+    // Acceleration structures (placeholders)
+    RefCntAutoPtr<IBottomLevelAS> m_pBLAS_Cube;
+    RefCntAutoPtr<IBottomLevelAS> m_pBLAS_Plane;
+    RefCntAutoPtr<ITopLevelAS>    m_pTLAS;
+    RefCntAutoPtr<IBuffer>        m_pTLASInstances;
+    RefCntAutoPtr<IBuffer>        m_pTLASScratch;
+
+    // Ray tracing geometry copies (created with BIND_RAY_TRACING)
+    RefCntAutoPtr<IBuffer>        m_CubeRTVertexBuffer;
+    RefCntAutoPtr<IBuffer>        m_CubeRTIndexBuffer;
+
+    // RT composite overlay PSO
+    RefCntAutoPtr<IPipelineState>         m_pRTCompositePSO;
+    RefCntAutoPtr<IShaderResourceBinding> m_RTCompositeSRB;
+    // Ray query (shadows) compute PSO
+    RefCntAutoPtr<IPipelineState>         m_pRTShadowPSO;
+    RefCntAutoPtr<IShaderResourceBinding> m_RTShadowSRB;
+    RefCntAutoPtr<IBuffer>                m_RTConstants;
+
     float4x4       m_CubeWorldMatrix;
     float4x4       m_CameraViewProjMatrix;
     float4x4       m_WorldToShadowMapUVDepthMatr;
