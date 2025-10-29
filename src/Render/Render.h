@@ -187,7 +187,12 @@ namespace Diligent
     RefCntAutoPtr<ITextureView>       m_pPostRTV;
     RefCntAutoPtr<ITextureView>       m_pPostSRV;
     RefCntAutoPtr<IPipelineState>     m_pPostGammaPSO;   // Simple gamma-correction PSO (fullscreen)
-    RefCntAutoPtr<IShaderResourceBinding> m_PostGammaSRB;
+    static constexpr Uint32           kPostSRBHistory = 3;
+    RefCntAutoPtr<IShaderResourceBinding> m_PostGammaSRBs[kPostSRBHistory] = {};
+    Uint32                            m_PostGammaSRBIndex = 0;
+    // Cache SRBs per input SRV to avoid updating descriptors while in-flight.
+    // Keyed by the ITextureView* of the input color texture (framebuffer SRV, TAA SRV, etc.).
+    std::unordered_map<ITextureView*, RefCntAutoPtr<IShaderResourceBinding>> m_PostGammaSRBCache;
 
     // Temporal Anti-Aliasing (TAA)
     bool m_EnableTAA = false; // UI toggle

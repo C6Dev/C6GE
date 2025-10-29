@@ -167,13 +167,18 @@ target_link_directories(Runtime PRIVATE
     ${CMAKE_BINARY_DIR}/external/DiligentEngine/DiligentCore/Platforms/Apple
 )
 
-# Copy assets folder contents into exe dir
-set(ASSETS_DIR "${CMAKE_SOURCE_DIR}/src/Assets")
+# Copy runtime asset folders next to executables
+set(ASSETS_DIR           "${CMAKE_SOURCE_DIR}/src/Assets")
+set(SHADER_ASSETS_DIR    "${CMAKE_SOURCE_DIR}/assets")
+
 add_custom_command(
     TARGET C6GE POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${ASSETS_DIR}"
-            "$<TARGET_FILE_DIR:C6GE>"
+        "${ASSETS_DIR}"
+        "$<TARGET_FILE_DIR:C6GE>"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${SHADER_ASSETS_DIR}"
+        "$<TARGET_FILE_DIR:C6GE>/assets"
 )
 
 # Copy Diligent backend DLLs into exe dir
@@ -213,6 +218,17 @@ foreach(DLL_TARGET IN LISTS DILIGENT_DLL_TARGETS)
         )
     endif()
 endforeach()
+
+# Also stage assets for Runtime target
+add_custom_command(
+    TARGET Runtime POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${ASSETS_DIR}"
+        "$<TARGET_FILE_DIR:Runtime>"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${SHADER_ASSETS_DIR}"
+        "$<TARGET_FILE_DIR:Runtime>/assets"
+)
 
 if(PLATFORM_WIN32)
 copy_required_dlls(C6GE DXC_REQUIRED YES)

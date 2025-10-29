@@ -260,7 +260,7 @@ namespace Diligent
         
         // Safely load texture with error handling
         try {
-            auto texture = TexturedCube::LoadTexture(m_pDevice, "../../src/Assets/C6GELogo.png");
+            auto texture = TexturedCube::LoadTexture(m_pDevice, "C6GELogo.png");
             if (texture)
             {
                 m_TextureSRV = texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
@@ -271,7 +271,7 @@ namespace Diligent
             }
             else
             {
-                std::cerr << "[C6GE] Failed to load texture: ../../src/Assets/C6GELogo.png" << std::endl;
+                std::cerr << "[C6GE] Failed to load texture: C6GELogo.png" << std::endl;
             }
         }
         catch (const std::exception& e)
@@ -287,6 +287,40 @@ namespace Diligent
                 textureVar->Set(m_TextureSRV);
             else
                 std::cerr << "[C6GE] Failed to find g_Texture variable in SRB" << std::endl;
+        }
+        else if (m_CubeSRB && !m_TextureSRV)
+        {
+            // Create a 1x1 white fallback texture to satisfy g_Texture binding
+            try
+            {
+                TextureDesc Desc;
+                Desc.Name      = "Fallback White Texture";
+                Desc.Type      = RESOURCE_DIM_TEX_2D;
+                Desc.Width     = 1;
+                Desc.Height    = 1;
+                Desc.MipLevels = 1;
+                Desc.Format    = TEX_FORMAT_RGBA8_UNORM;
+                Desc.BindFlags = BIND_SHADER_RESOURCE;
+                const Uint8 White[4] = {255, 255, 255, 255};
+                TextureSubResData SubRes;
+                SubRes.pData   = White;
+                SubRes.Stride  = 4;
+                TextureData InitData;
+                InitData.pSubResources = &SubRes;
+                InitData.NumSubresources = 1;
+                RefCntAutoPtr<ITexture> pWhite;
+                m_pDevice->CreateTexture(Desc, &InitData, &pWhite);
+                if (pWhite)
+                {
+                    m_TextureSRV = pWhite->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+                    if (auto* textureVar = m_CubeSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_Texture"))
+                        textureVar->Set(m_TextureSRV);
+                }
+            }
+            catch (...)
+            {
+                // Silent fallback failure; draw will log missing resource
+            }
         }
 
         // Ensure framebuffer is created after swap chain and device are ready.
@@ -496,21 +530,8 @@ namespace Diligent
                 if (y < vpPos.y) y = vpPos.y;
             }
             ImGui::SetNextWindowPos(ImVec2(x, y), ImGuiCond_Always);
-        // Ensure ImGui display size and framebuffer scale are set correctly (for HiDPI/Retina)
-        ImGui::GetIO().DisplaySize = ImVec2((float)m_FramebufferWidth, (float)m_FramebufferHeight);
-#ifdef __APPLE__
-        // On macOS, framebuffer scale may be >1 for Retina
-        ImGui::GetIO().DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
-        if (m_pSwapChain)
-        {
-            const auto& scDesc = m_pSwapChain->GetDesc();
-            if (scDesc.Width > 0 && scDesc.Height > 0)
-            {
-                ImGui::GetIO().DisplayFramebufferScale.x = (float)scDesc.Width / (float)m_FramebufferWidth;
-                ImGui::GetIO().DisplayFramebufferScale.y = (float)scDesc.Height / (float)m_FramebufferHeight;
-            }
-        }
-#endif
+            // Note: DisplaySize/FramebufferScale are now set once per-frame in main.cpp.
+            // Avoid overriding them here to prevent DPI-related clipping on macOS.
             ImGui::Begin("PlayPauseBar", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus);
             // Ensure play/pause bar is always above the viewport
             if (ImGui::FindWindowByName("PlayPauseBar"))
@@ -891,16 +912,11 @@ namespace Diligent
                 return;
             }
 
-            // Create a fullscreen dockspace
+            // Create a fullscreen dockspace occupying the main viewport work area
+            // Use WorkPos/WorkSize so OS title bars and ImGui main menu bar are accounted for.
             auto *viewport = ImGui::GetMainViewport();
-            // Offset dockspace below the main menu bar
-            ImVec2 dockspacePos = viewport->Pos;
-            float menuBarHeight = ImGui::GetFrameHeight();
-            dockspacePos.y += menuBarHeight;
-            ImVec2 dockspaceSize = viewport->Size;
-            dockspaceSize.y -= menuBarHeight;
-            ImGui::SetNextWindowPos(dockspacePos);
-            ImGui::SetNextWindowSize(dockspaceSize);
+            ImGui::SetNextWindowPos(viewport->WorkPos);
+            ImGui::SetNextWindowSize(viewport->WorkSize);
             ImGui::SetNextWindowViewport(viewport->ID);
 
             ImGuiWindowFlags dockspace_window_flags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
@@ -1223,10 +1239,14 @@ namespace Diligent
                             };
 
                             const float3x3 R = BuildRotationOnly(tr.rotationEuler);
+                            // Diligent's Matrix3x3 * Vector3 operator requires the vector as a non-const lvalue
+                            float3 ex{1,0,0};
+                            float3 ey{0,1,0};
+                            float3 ez{0,0,1};
                             const float3 axesLocalW[3] = {
-                                normalize(m_GizmoLocal ? R * float3{1,0,0} : float3{1,0,0}),
-                                normalize(m_GizmoLocal ? R * float3{0,1,0} : float3{0,1,0}),
-                                normalize(m_GizmoLocal ? R * float3{0,0,1} : float3{0,0,1})
+                                normalize(m_GizmoLocal ? (R * ex) : ex),
+                                normalize(m_GizmoLocal ? (R * ey) : ey),
+                                normalize(m_GizmoLocal ? (R * ez) : ez)
                             };
 
                             // Helpers to project world->screen (in pixels within the image rect)
@@ -1786,12 +1806,14 @@ end_properties_window:
         PSOCreateInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
 
         // clang-format off
-        // This tutorial will render to a single render target
+    // This tutorial will render to a single render target
         PSOCreateInfo.GraphicsPipeline.NumRenderTargets             = 1;
         // Set render target format which is the format of the swap chain's color buffer
         PSOCreateInfo.GraphicsPipeline.RTVFormats[0]                = m_pSwapChain->GetDesc().ColorBufferFormat;
         // Set depth buffer format which is the format of the swap chain's back buffer
         PSOCreateInfo.GraphicsPipeline.DSVFormat                    = m_pSwapChain->GetDesc().DepthBufferFormat;
+    // Match pipeline sample count with current offscreen attachments (MSAA resolve happens later)
+    PSOCreateInfo.GraphicsPipeline.SmplDesc.Count               = m_SampleCount;
         // Primitive topology defines what kind of primitives will be rendered by this pipeline state
         PSOCreateInfo.GraphicsPipeline.PrimitiveTopology            = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
         // Cull back faces
@@ -1832,7 +1854,7 @@ end_properties_window:
             ShaderCI.Desc.ShaderType = SHADER_TYPE_VERTEX;
             ShaderCI.EntryPoint = "main";
             ShaderCI.Desc.Name = "Cube VS";
-            ShaderCI.FilePath = "../../assets/cube.vsh";
+            ShaderCI.FilePath = "assets/cube.vsh";
             m_pDevice->CreateShader(ShaderCI, &pVS);
         }
 
@@ -1843,7 +1865,7 @@ end_properties_window:
             ShaderCI.Desc.ShaderType = SHADER_TYPE_GEOMETRY;
             ShaderCI.EntryPoint = "main";
             ShaderCI.Desc.Name = "Cube GS";
-            ShaderCI.FilePath = "../../assets/cube.gsh";
+            ShaderCI.FilePath = "assets/cube.gsh";
             m_pDevice->CreateShader(ShaderCI, &pGS);
         }
 
@@ -1853,7 +1875,7 @@ end_properties_window:
             ShaderCI.Desc.ShaderType = SHADER_TYPE_PIXEL;
             ShaderCI.EntryPoint = "main";
             ShaderCI.Desc.Name = "Cube PS";
-            ShaderCI.FilePath = "../../assets/cube.psh";
+            ShaderCI.FilePath = "assets/cube.psh";
             m_pDevice->CreateShader(ShaderCI, &pPS);
         }
 
@@ -1985,7 +2007,7 @@ end_properties_window:
         ShadowShaderCI.Desc.ShaderType = SHADER_TYPE_VERTEX;
         ShadowShaderCI.EntryPoint = "main";
         ShadowShaderCI.Desc.Name = "Cube Shadow VS";
-        ShadowShaderCI.FilePath = "../../assets/cube_shadow.vsh";
+    ShadowShaderCI.FilePath = "assets/cube_shadow.vsh";
         m_pDevice->CreateShader(ShadowShaderCI, &pShadowVS);
 
         ShadowPSOCI.pVS = pShadowVS;
@@ -2191,7 +2213,7 @@ end_properties_window:
         ShaderCI.Desc.ShaderType = SHADER_TYPE_VERTEX;
         ShaderCI.EntryPoint = "main";
         ShaderCI.Desc.Name = "Plane VS";
-        ShaderCI.FilePath = "../../assets/plane.vsh";
+    ShaderCI.FilePath = "assets/plane.vsh";
         m_pDevice->CreateShader(ShaderCI, &pPlaneVS);
 
         // Create plane pixel shader
@@ -2199,10 +2221,10 @@ end_properties_window:
         ShaderCI.Desc.ShaderType = SHADER_TYPE_PIXEL;
         ShaderCI.EntryPoint = "main";
         ShaderCI.Desc.Name = "Plane PS";
-        ShaderCI.FilePath = "../../assets/plane.psh";
+    ShaderCI.FilePath = "assets/plane.psh";
         m_pDevice->CreateShader(ShaderCI, &pPlanePS);
 
-        PSOCreateInfo.pVS = pPlaneVS;
+    PSOCreateInfo.pVS = pPlaneVS;
         PSOCreateInfo.pPS = pPlanePS;
 
         PSOCreateInfo.PSODesc.ResourceLayout.DefaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
@@ -2231,7 +2253,9 @@ end_properties_window:
             PSOCreateInfo.PSODesc.ResourceLayout.NumImmutableSamplers = sizeof(ImtblSamplers)/sizeof(ImtblSamplers[0]);
         }
 
-        m_pDevice->CreateGraphicsPipelineState(PSOCreateInfo, &m_pPlanePSO);
+    // Match pipeline sample count with offscreen attachments
+    PSOCreateInfo.GraphicsPipeline.SmplDesc.Count = m_SampleCount;
+    m_pDevice->CreateGraphicsPipelineState(PSOCreateInfo, &m_pPlanePSO);
 
         if (!m_pPlanePSO)
         {
@@ -2275,11 +2299,12 @@ end_properties_window:
         NoShadowCI.Desc.ShaderType = SHADER_TYPE_PIXEL;
         NoShadowCI.EntryPoint = "main";
         NoShadowCI.Desc.Name = "Plane NoShadow PS";
-        NoShadowCI.FilePath = "../../assets/plane_no_shadow.psh";
+        NoShadowCI.FilePath = "assets/plane_no_shadow.psh";
         m_pDevice->CreateShader(NoShadowCI, &pNoShadowPS);
     NoShadowPSOCI.pVS = pPlaneVS;
     NoShadowPSOCI.pPS = pNoShadowPS;
     NoShadowPSOCI.PSODesc.Name = "Plane NoShadow PSO";
+        NoShadowPSOCI.GraphicsPipeline.SmplDesc.Count = m_SampleCount;
         // No shadow variable exposure in this PSO
         NoShadowPSOCI.PSODesc.ResourceLayout.NumVariables = 0;
         NoShadowPSOCI.PSODesc.ResourceLayout.Variables = nullptr;
@@ -2343,7 +2368,7 @@ end_properties_window:
         CI.Desc.ShaderType = SHADER_TYPE_VERTEX;
         CI.EntryPoint = "main";
         CI.Desc.Name = "GLTF Shadow VS";
-        CI.FilePath = "../../assets/gltf_shadow.vsh";
+    CI.FilePath = "assets/gltf_shadow.vsh";
         m_pDevice->CreateShader(CI, &pVS);
 
         PSOCI.pVS = pVS;
@@ -2396,7 +2421,7 @@ end_properties_window:
         CI.Desc.ShaderType = SHADER_TYPE_VERTEX;
         CI.EntryPoint = "main";
         CI.Desc.Name = "GLTF Shadow Skinned VS";
-        CI.FilePath = "../../assets/gltf_shadow_skinned.vsh";
+    CI.FilePath = "assets/gltf_shadow_skinned.vsh";
         m_pDevice->CreateShader(CI, &pVS);
 
         PSOCI.pVS = pVS;
@@ -3115,15 +3140,30 @@ else
                 pAfterAA_SRV = m_pFramebufferSRV;
         }
 
-        if (m_EnablePostProcessing && m_PostGammaCorrection && m_pPostRTV && m_pPostGammaPSO && m_PostGammaSRB)
+        if (m_EnablePostProcessing && m_PostGammaCorrection && m_pPostRTV && m_pPostGammaPSO)
         {
-            // Bind input SRV from framebuffer
-            if (auto* var = m_PostGammaSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_TextureColor"))
-                var->Set(pAfterAA_SRV, SET_SHADER_RESOURCE_FLAG_ALLOW_OVERWRITE);
+            // Use or create an SRB bound to the specific input SRV to avoid updating descriptors in-flight
+            RefCntAutoPtr<IShaderResourceBinding> pSRB;
+            auto it = m_PostGammaSRBCache.find(pAfterAA_SRV);
+            if (it != m_PostGammaSRBCache.end())
+            {
+                pSRB = it->second;
+            }
+            else
+            {
+                m_pPostGammaPSO->CreateShaderResourceBinding(&pSRB, true);
+                if (pSRB)
+                {
+                    if (auto* var = pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_TextureColor"))
+                        var->Set(pAfterAA_SRV);
+                    m_PostGammaSRBCache.emplace(pAfterAA_SRV, pSRB);
+                }
+            }
 
             m_pImmediateContext->SetRenderTargets(1, &m_pPostRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
             m_pImmediateContext->SetPipelineState(m_pPostGammaPSO);
-            m_pImmediateContext->CommitShaderResources(m_PostGammaSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+            if (pSRB)
+                m_pImmediateContext->CommitShaderResources(pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
             DrawAttribs fsTri{3, DRAW_FLAG_VERIFY_ALL};
             m_pImmediateContext->Draw(fsTri);
 
@@ -3771,14 +3811,14 @@ else
                 CI.Desc.ShaderType = SHADER_TYPE_VERTEX;
                 CI.EntryPoint = "main";
                 CI.Desc.Name = "RT Composite VS";
-                CI.FilePath = "../../assets/rt_composite.vsh";
+                CI.FilePath = "assets/rt_composite.vsh";
                 m_pDevice->CreateShader(CI, &pVS);
             }
             {
                 CI.Desc.ShaderType = SHADER_TYPE_PIXEL;
                 CI.EntryPoint = "main";
                 CI.Desc.Name = "RT Composite PS";
-                CI.FilePath = "../../assets/rt_composite.psh";
+                CI.FilePath = "assets/rt_composite.psh";
                 m_pDevice->CreateShader(CI, &pPS);
             }
 
@@ -3794,6 +3834,8 @@ else
             PSOCI.GraphicsPipeline.DepthStencilDesc.DepthEnable = False;
             PSOCI.GraphicsPipeline.DepthStencilDesc.DepthWriteEnable = False;
             PSOCI.GraphicsPipeline.RasterizerDesc.CullMode = CULL_MODE_NONE;
+            // Match MSAA sample count with current offscreen render target
+            PSOCI.GraphicsPipeline.SmplDesc.Count = m_SampleCount;
 
             auto& RT0 = PSOCI.GraphicsPipeline.BlendDesc.RenderTargets[0];
             RT0.BlendEnable = True;
@@ -3847,7 +3889,7 @@ else
             CI.Desc.ShaderType = SHADER_TYPE_COMPUTE;
             CI.EntryPoint = "main";
             CI.Desc.Name = "RT Shadow CS";
-            CI.FilePath = "../../assets/rt_shadow.csh";
+            CI.FilePath = "assets/rt_shadow.csh";
             // Ray queries require DXC and HLSL SM 6.5+
             CI.ShaderCompiler = SHADER_COMPILER_DXC;
             CI.HLSLVersion = {6, 5};
@@ -3903,14 +3945,14 @@ else
                 CI.Desc.ShaderType = SHADER_TYPE_VERTEX;
                 CI.EntryPoint = "main";
                 CI.Desc.Name = "RT Add Composite VS";
-                CI.FilePath = "../../assets/rt_composite.vsh";
+                CI.FilePath = "assets/rt_composite.vsh";
                 m_pDevice->CreateShader(CI, &pVS);
             }
             {
                 CI.Desc.ShaderType = SHADER_TYPE_PIXEL;
                 CI.EntryPoint = "main";
                 CI.Desc.Name = "RT Add Composite PS";
-                CI.FilePath = "../../assets/rt_reflect_composite.psh";
+                CI.FilePath = "assets/rt_reflect_composite.psh";
                 m_pDevice->CreateShader(CI, &pPS);
             }
 
@@ -3926,6 +3968,7 @@ else
             PSOCI.GraphicsPipeline.DepthStencilDesc.DepthEnable = False;
             PSOCI.GraphicsPipeline.DepthStencilDesc.DepthWriteEnable = False;
             PSOCI.GraphicsPipeline.RasterizerDesc.CullMode = CULL_MODE_NONE;
+            PSOCI.GraphicsPipeline.SmplDesc.Count = m_SampleCount;
 
             auto& RT0 = PSOCI.GraphicsPipeline.BlendDesc.RenderTargets[0];
             RT0.BlendEnable = True;
@@ -4558,6 +4601,8 @@ else
         m_pPostRTV.Release();
         m_pPostSRV.Release();
         m_pPostTexture.Release();
+        // Invalidate any cached SRBs referencing old SRVs
+        m_PostGammaSRBCache.clear();
     }
 
     void C6GERender::CreatePostFXPSOs()
@@ -4578,14 +4623,14 @@ else
             CI.Desc.ShaderType = SHADER_TYPE_VERTEX;
             CI.EntryPoint      = "main";
             CI.Desc.Name       = "PostFX VS";
-            CI.FilePath        = "../../assets/rt_composite.vsh"; // fullscreen triangle VS
+            CI.FilePath        = "assets/rt_composite.vsh"; // fullscreen triangle VS
             m_pDevice->CreateShader(CI, &pVS);
         }
         {
             CI.Desc.ShaderType = SHADER_TYPE_PIXEL;
             CI.EntryPoint      = "main";
             CI.Desc.Name       = "PostFX Gamma PS";
-            CI.FilePath        = "../../assets/post_gamma.psh";
+            CI.FilePath        = "assets/post_gamma.psh";
             // Decide if we apply manual gamma based on output RT format (we use non-sRGB -> manual gamma = 1)
             ShaderMacro Macros[] = {
                 {"APPLY_MANUAL_GAMMA", "1"}
@@ -4610,7 +4655,7 @@ else
 
         // Resource layout: one dynamic SRV and immutable sampler
         ShaderResourceVariableDesc Vars[] = {
-            {SHADER_TYPE_PIXEL, "g_TextureColor", SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE}
+            {SHADER_TYPE_PIXEL, "g_TextureColor", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC}
         };
         PSOCI.PSODesc.ResourceLayout.DefaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
         PSOCI.PSODesc.ResourceLayout.Variables           = Vars;
@@ -4632,7 +4677,8 @@ else
         m_pDevice->CreateGraphicsPipelineState(PSOCI, &m_pPostGammaPSO);
         if (m_pPostGammaPSO)
         {
-            m_pPostGammaPSO->CreateShaderResourceBinding(&m_PostGammaSRB, true);
+            // Clear SRB cache on PSO (re)creation
+            m_PostGammaSRBCache.clear();
         }
     }
 

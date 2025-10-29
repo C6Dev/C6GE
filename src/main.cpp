@@ -854,10 +854,10 @@ int main()
     
     // Try multiple possible paths for the font file
     const char* font_paths[] = {
-        "../../src/Assets/Roboto-Medium.ttf",
-        "../src/Assets/Roboto-Medium.ttf", 
-        "src/Assets/Roboto-Medium.ttf",
-        "Assets/Roboto-Medium.ttf"
+        "Roboto-Medium.ttf",
+        "Roboto-Medium.ttf", 
+        "Roboto-Medium.ttf",
+        "Roboto-Medium.ttf"
     };
     
     bool font_loaded = false;
