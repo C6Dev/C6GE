@@ -1,4 +1,3 @@
-#define METAL_ENABLED 0
 #include <iostream>
 #include <thread>
 #include <chrono>
@@ -728,7 +727,7 @@ bool InitializeDiligentEngine(
 #endif
 #endif // _WIN32
 
-#if defined(__APPLE__) && METAL_ENABLED
+#if defined(__APPLE__) && METAL_SUPPORTED
     if (auto* pFactoryMtl = LoadAndGetEngineFactoryMtl())
     {
         RefCntAutoPtr<IEngineFactoryMtl> factoryMtl(pFactoryMtl); 
@@ -1045,8 +1044,10 @@ imGuiImpl->NewFrame(windowW, windowH, scDesc.PreTransform);
     // -------------------
     // Cleanup
     // -------------------
-    delete sample;
+    // Tear down ImGui backend first to ensure it no longer references engine views
     imGuiImpl.reset();
+    // Then destroy the sample (releases textures/views)
+    delete sample;
     glfwDestroyWindow(window);
     glfwTerminate();
 

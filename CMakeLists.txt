@@ -4,6 +4,59 @@ project(C6GE)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Render backend selection: use a cache STRING (not BOOL) so -DRENDER_BACKEND=metal works
+# Default to Metal on macOS
+set(_DEFAULT_BACKEND "metal")
+if(APPLE)
+    set(_DEFAULT_BACKEND "metal")
+endif()
+set(RENDER_BACKEND "${_DEFAULT_BACKEND}" CACHE STRING "Choose render backend (metal/vulkan/opengl/d3d11/d3d12)")
+set_property(CACHE RENDER_BACKEND PROPERTY STRINGS metal vulkan opengl d3d11 d3d12)
+
+# Normalize user input for comparisons but do not overwrite cache entry
+set(_RENDER_BACKEND "${RENDER_BACKEND}")
+string(TOLOWER "${_RENDER_BACKEND}" _RENDER_BACKEND)
+
+if(_RENDER_BACKEND STREQUAL "metal")
+    message(STATUS "Configuring Diligent Engine for Metal backend")
+    # Enable only Metal by default
+    set(DILIGENT_NO_METAL OFF CACHE BOOL "Disable Metal backend" FORCE)
+    set(DILIGENT_NO_VULKAN ON CACHE BOOL "Disable Vulkan backend" FORCE)
+    set(DILIGENT_NO_OPENGL ON CACHE BOOL "Disable OpenGL/GLES backend" FORCE)
+    set(DILIGENT_NO_DIRECT3D11 ON CACHE BOOL "Disable Direct3D11 backend" FORCE)
+    set(DILIGENT_NO_DIRECT3D12 ON CACHE BOOL "Disable Direct3D12 backend" FORCE)
+elseif(_RENDER_BACKEND STREQUAL "vulkan")
+    message(STATUS "Configuring Diligent Engine for Vulkan backend")
+    set(DILIGENT_NO_VULKAN OFF CACHE BOOL "Disable Vulkan backend")
+    set(DILIGENT_NO_METAL ON CACHE BOOL "Disable Metal backend")
+    set(DILIGENT_NO_OPENGL ON CACHE BOOL "Disable OpenGL/GLES backend")
+    set(DILIGENT_NO_DIRECT3D11 ON CACHE BOOL "Disable Direct3D11 backend")
+    set(DILIGENT_NO_DIRECT3D12 ON CACHE BOOL "Disable Direct3D12 backend")
+elseif(_RENDER_BACKEND STREQUAL "opengl")
+    message(STATUS "Configuring Diligent Engine for OpenGL backend")
+    set(DILIGENT_NO_OPENGL OFF CACHE BOOL "Disable OpenGL/GLES backend")
+    set(DILIGENT_NO_METAL ON CACHE BOOL "Disable Metal backend")
+    set(DILIGENT_NO_VULKAN ON CACHE BOOL "Disable Vulkan backend")
+    set(DILIGENT_NO_DIRECT3D11 ON CACHE BOOL "Disable Direct3D11 backend")
+    set(DILIGENT_NO_DIRECT3D12 ON CACHE BOOL "Disable Direct3D12 backend")
+elseif(_RENDER_BACKEND STREQUAL "d3d11")
+    message(STATUS "Configuring Diligent Engine for Direct3D11 backend")
+    set(DILIGENT_NO_DIRECT3D11 OFF CACHE BOOL "Disable Direct3D11 backend")
+    set(DILIGENT_NO_DIRECT3D12 ON CACHE BOOL "Disable Direct3D12 backend")
+    set(DILIGENT_NO_METAL ON CACHE BOOL "Disable Metal backend")
+    set(DILIGENT_NO_VULKAN ON CACHE BOOL "Disable Vulkan backend")
+    set(DILIGENT_NO_OPENGL ON CACHE BOOL "Disable OpenGL/GLES backend")
+elseif(_RENDER_BACKEND STREQUAL "d3d12")
+    message(STATUS "Configuring Diligent Engine for Direct3D12 backend")
+    set(DILIGENT_NO_DIRECT3D12 OFF CACHE BOOL "Disable Direct3D12 backend")
+    set(DILIGENT_NO_DIRECT3D11 ON CACHE BOOL "Disable Direct3D11 backend")
+    set(DILIGENT_NO_METAL ON CACHE BOOL "Disable Metal backend")
+    set(DILIGENT_NO_VULKAN ON CACHE BOOL "Disable Vulkan backend")
+    set(DILIGENT_NO_OPENGL ON CACHE BOOL "Disable OpenGL/GLES backend")
+else()
+    message(FATAL_ERROR "Unknown backend '${RENDER_BACKEND}'. Valid options are: metal, vulkan, opengl, d3d11, d3d12")
+endif()
+
 
 # Enable DiligentTools and Samples
 set(DILIGENT_TOOLS ON CACHE BOOL "Enable DiligentTools" FORCE)
@@ -13,18 +66,15 @@ set(DILIGENT_MACOS_PLATFORM ON CACHE BOOL "Enable macOS platform" FORCE)
 
 
 
-# Default: Metal ON, Vulkan ON, OpenGL OFF, D3D11/12 OFF
-if(NOT DEFINED DILIGENT_METAL_SUPPORTED)
-    set(DILIGENT_METAL_SUPPORTED ON CACHE BOOL "Enable Metal backend" FORCE)
+# On Apple, default to disabling Vulkan and OpenGL unless user overrides
+if(APPLE)
+    if(NOT DEFINED DILIGENT_NO_VULKAN)
+        set(DILIGENT_NO_VULKAN ON CACHE BOOL "Disable Vulkan backend by default on Apple")
+    endif()
+    if(NOT DEFINED DILIGENT_NO_OPENGL)
+        set(DILIGENT_NO_OPENGL ON CACHE BOOL "Disable OpenGL/GLES backend by default on Apple")
+    endif()
 endif()
-if(NOT DEFINED DILIGENT_VULKAN_SUPPORTED)
-    set(DILIGENT_VULKAN_SUPPORTED ON CACHE BOOL "Enable Vulkan backend" FORCE)
-endif()
-if(NOT DEFINED DILIGENT_OPENGL_SUPPORTED)
-    set(DILIGENT_OPENGL_SUPPORTED OFF CACHE BOOL "Disable OpenGL backend" FORCE)
-endif()
-set(DILIGENT_D3D11_SUPPORTED OFF CACHE BOOL "Disable Direct3D11 backend" FORCE)
-set(DILIGENT_D3D12_SUPPORTED OFF CACHE BOOL "Disable Direct3D12 backend" FORCE)
 
 # DiligentEngine will now use our docking ImGui via symlink
 

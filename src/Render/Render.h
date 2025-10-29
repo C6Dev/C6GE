@@ -61,8 +61,10 @@ namespace Diligent
 
     class C6GERender final : public SampleBase
     {
-        // Play/pause icon textures
+        // Play/pause icons: keep parent textures alive to ensure default SRVs remain valid
+        RefCntAutoPtr<ITexture>     m_PlayIconTex;
         RefCntAutoPtr<ITextureView> m_PlayIconSRV;
+        RefCntAutoPtr<ITexture>     m_PauseIconTex;
         RefCntAutoPtr<ITextureView> m_PauseIconSRV;
 
     public:
@@ -150,7 +152,11 @@ namespace Diligent
     RefCntAutoPtr<IBuffer>                m_CubeIndexBuffer;
     RefCntAutoPtr<IBuffer>                m_VSConstants;
     float                                  m_LineWidth = 1.0f;
+    // Keep the source texture alive to ensure default SRV remains valid
+    RefCntAutoPtr<ITexture>               m_CubeTexture;
     RefCntAutoPtr<ITextureView>           m_TextureSRV;
+    // Fallback white texture if primary texture fails to load; keep parent alive for default SRV
+    RefCntAutoPtr<ITexture>               m_FallbackWhiteTex;
     RefCntAutoPtr<IShaderResourceBinding> m_CubeSRB;
     RefCntAutoPtr<IShaderResourceBinding> m_CubeShadowSRB;
     RefCntAutoPtr<IShaderResourceBinding> m_PlaneSRB;
@@ -158,6 +164,7 @@ namespace Diligent
     // Visualization SRB removed
     RefCntAutoPtr<ITextureView>           m_ShadowMapDSV;
     RefCntAutoPtr<ITextureView>           m_ShadowMapSRV;
+    RefCntAutoPtr<ITexture>               m_ShadowMapTex; // Keep parent alive for default SRVs
     FirstPersonCamera m_Camera;
 
     // Render pass support
@@ -305,7 +312,9 @@ namespace Diligent
         // MSAA settings
         Uint8  m_SampleCount = 1;
         std::vector<Uint8> m_SupportedSampleCounts;
+    RefCntAutoPtr<ITexture>      m_pMSColorTex;  // Parent for m_pMSColorRTV
         RefCntAutoPtr<ITextureView> m_pMSColorRTV;
+    RefCntAutoPtr<ITexture>      m_pMSDepthTex;  // Parent for m_pMSDepthDSV
         RefCntAutoPtr<ITextureView> m_pMSDepthDSV;
 
         // ECS world and render system

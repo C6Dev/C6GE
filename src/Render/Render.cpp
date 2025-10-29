@@ -135,6 +135,78 @@ namespace Diligent
 
     C6GERender::~C6GERender()
     {
+        // Release SRBs first so their internal caches drop references before views/textures are torn down
+        for (auto& srb : m_PostGammaSRBs)
+            srb.Release();
+        m_RTCompositeSRB.Release();
+        m_RTAddCompositeSRB.Release();
+        m_RTShadowSRB.Release();
+        m_GLTFShadowSkinnedSRB.Release();
+        m_GLTFShadowSRB.Release();
+        m_PlaneNoShadowSRB.Release();
+        m_PlaneSRB.Release();
+        m_CubeShadowSRB.Release();
+        m_CubeSRB.Release();
+
+        // Clear SRB-related caches before releasing attachments
+        m_PostGammaSRBCache.clear();
+        m_FramebufferCache.clear();
+
+        // Explicitly release GPU views/resources in a safe order to avoid dangling ImGui references
+        auto release_view = [](const char* name, RefCntAutoPtr<ITextureView>& v) {
+            if (v)
+            {
+                printf("[C6GE][~C6GERender] Releasing view %s = %p\n", name, (void*)v.RawPtr());
+                v.Release();
+            }
+        };
+        auto release_tex = [](const char* name, RefCntAutoPtr<ITexture>& t) {
+            if (t)
+            {
+                printf("[C6GE][~C6GERender] Releasing texture %s = %p\n", name, (void*)t.RawPtr());
+                t.Release();
+            }
+        };
+
+        // Views that ImGui may reference directly
+        release_view("m_pViewportDisplaySRV", m_pViewportDisplaySRV);
+        release_view("m_PlayIconSRV", m_PlayIconSRV);
+        release_view("m_PauseIconSRV", m_PauseIconSRV);
+
+        // Post-processing targets
+        release_view("m_pPostSRV", m_pPostSRV);
+        release_view("m_pPostRTV", m_pPostRTV);
+
+        // Ray tracing outputs
+        release_view("m_pRTOutputSRV", m_pRTOutputSRV);
+        release_view("m_pRTOutputUAV", m_pRTOutputUAV);
+
+        // Framebuffer views
+        release_view("m_pMSDepthDSV", m_pMSDepthDSV);
+        release_view("m_pMSColorRTV", m_pMSColorRTV);
+        release_view("m_pFramebufferDSV", m_pFramebufferDSV);
+        release_view("m_pFramebufferRTV", m_pFramebufferRTV);
+        release_view("m_pFramebufferSRV", m_pFramebufferSRV);
+
+        // Shadow map views
+        release_view("m_ShadowMapSRV", m_ShadowMapSRV);
+        release_view("m_ShadowMapDSV", m_ShadowMapDSV);
+
+        // Cube texture SRV
+        release_view("m_TextureSRV", m_TextureSRV);
+
+        // Release textures (parents) after views
+        release_tex("m_pMSDepthTex", m_pMSDepthTex);
+        release_tex("m_pMSColorTex", m_pMSColorTex);
+        release_tex("m_pFramebufferDepth", m_pFramebufferDepth);
+        release_tex("m_pFramebufferTexture", m_pFramebufferTexture);
+        release_tex("m_ShadowMapTex", m_ShadowMapTex);
+        release_tex("m_FallbackWhiteTex", m_FallbackWhiteTex);
+        release_tex("m_CubeTexture", m_CubeTexture);
+        release_tex("m_pRTOutputTex", m_pRTOutputTex);
+        release_tex("m_pPostTexture", m_pPostTexture);
+        release_tex("m_PlayIconTex", m_PlayIconTex);
+        release_tex("m_PauseIconTex", m_PauseIconTex);
     }
 
     void C6GERender::ModifyEngineInitInfo(const ModifyEngineInitInfoAttribs &Attribs)
@@ -188,13 +260,11 @@ namespace Diligent
         // Load play/pause icons (after m_pDevice is valid)
         TextureLoadInfo loadInfo;
         loadInfo.IsSRGB = true;
-        RefCntAutoPtr<ITexture> playTex, pauseTex;
-        
         try {
-            CreateTextureFromFile("Editor/PlayIcon.png", loadInfo, m_pDevice, &playTex);
-            if (playTex)
+            CreateTextureFromFile("Editor/PlayIcon.png", loadInfo, m_pDevice, &m_PlayIconTex);
+            if (m_PlayIconTex)
             {
-                auto srv = playTex->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+                auto srv = m_PlayIconTex->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
                 if (srv)
                     m_PlayIconSRV = srv;
                 else
@@ -211,10 +281,10 @@ namespace Diligent
         }
 
         try {
-            CreateTextureFromFile("Editor/PauseIcon.png", loadInfo, m_pDevice, &pauseTex);
-            if (pauseTex)
+            CreateTextureFromFile("Editor/PauseIcon.png", loadInfo, m_pDevice, &m_PauseIconTex);
+            if (m_PauseIconTex)
             {
-                auto srv = pauseTex->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+                auto srv = m_PauseIconTex->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
                 if (srv)
                     m_PauseIconSRV = srv;
                 else
@@ -260,10 +330,10 @@ namespace Diligent
         
         // Safely load texture with error handling
         try {
-            auto texture = TexturedCube::LoadTexture(m_pDevice, "C6GELogo.png");
-            if (texture)
+            m_CubeTexture = TexturedCube::LoadTexture(m_pDevice, "C6GELogo.png");
+            if (m_CubeTexture)
             {
-                m_TextureSRV = texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+                m_TextureSRV = m_CubeTexture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
                 if (!m_TextureSRV)
                 {
                     std::cerr << "[C6GE] Failed to get SRV for C6GELogo.png" << std::endl;
@@ -308,11 +378,10 @@ namespace Diligent
                 TextureData InitData;
                 InitData.pSubResources = &SubRes;
                 InitData.NumSubresources = 1;
-                RefCntAutoPtr<ITexture> pWhite;
-                m_pDevice->CreateTexture(Desc, &InitData, &pWhite);
-                if (pWhite)
+                m_pDevice->CreateTexture(Desc, &InitData, &m_FallbackWhiteTex);
+                if (m_FallbackWhiteTex)
                 {
-                    m_TextureSRV = pWhite->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+                    m_TextureSRV = m_FallbackWhiteTex->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
                     if (auto* textureVar = m_CubeSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_Texture"))
                         textureVar->Set(m_TextureSRV);
                 }
@@ -2478,10 +2547,13 @@ end_properties_window:
         SMDesc.Height = m_ShadowMapSize;
         SMDesc.Format = m_ShadowMapFormat;
         SMDesc.BindFlags = BIND_SHADER_RESOURCE | BIND_DEPTH_STENCIL;
-        RefCntAutoPtr<ITexture> ShadowMap;
-        m_pDevice->CreateTexture(SMDesc, nullptr, &ShadowMap);
-        m_ShadowMapSRV = ShadowMap->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
-        m_ShadowMapDSV = ShadowMap->GetDefaultView(TEXTURE_VIEW_DEPTH_STENCIL);
+        m_ShadowMapTex.Release();
+        m_pDevice->CreateTexture(SMDesc, nullptr, &m_ShadowMapTex);
+        if (m_ShadowMapTex)
+        {
+            m_ShadowMapSRV = m_ShadowMapTex->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+            m_ShadowMapDSV = m_ShadowMapTex->GetDefaultView(TEXTURE_VIEW_DEPTH_STENCIL);
+        }
 
         // Create SRBs that use shadow map as mutable variable
         m_PlaneSRB.Release();
@@ -4530,8 +4602,9 @@ else
         ColorDesc.ClearValue.Color[1] = 0.125f;
         ColorDesc.ClearValue.Color[2] = 0.125f;
         ColorDesc.ClearValue.Color[3] = 1.f;
-        RefCntAutoPtr<ITexture> pColor;
-        m_pDevice->CreateTexture(ColorDesc, nullptr, &pColor);
+    RefCntAutoPtr<ITexture> pColor;
+    m_pDevice->CreateTexture(ColorDesc, nullptr, &pColor);
+    m_pMSColorTex = pColor; // keep parent alive for default RTV
 
         // Store the render target view
         m_pMSColorRTV.Release();
@@ -4540,11 +4613,13 @@ else
             TextureViewDesc RTVDesc;
             RTVDesc.ViewType = TEXTURE_VIEW_RENDER_TARGET;
             RTVDesc.Format   = SCDesc.ColorBufferFormat;
-            pColor->CreateView(RTVDesc, &m_pMSColorRTV);
+            if (m_pMSColorTex)
+                m_pMSColorTex->CreateView(RTVDesc, &m_pMSColorRTV);
         }
         else
         {
-            m_pMSColorRTV = pColor->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET);
+            if (m_pMSColorTex)
+                m_pMSColorRTV = m_pMSColorTex->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET);
         }
 
         // Create window-size multi-sampled depth buffer
@@ -4559,8 +4634,10 @@ else
 
         RefCntAutoPtr<ITexture> pDepth;
         m_pDevice->CreateTexture(DepthDesc, nullptr, &pDepth);
+        m_pMSDepthTex = pDepth; // keep parent alive for default DSV
         // Store the depth-stencil view
-        m_pMSDepthDSV = pDepth->GetDefaultView(TEXTURE_VIEW_DEPTH_STENCIL);
+        if (m_pMSDepthTex)
+            m_pMSDepthDSV = m_pMSDepthTex->GetDefaultView(TEXTURE_VIEW_DEPTH_STENCIL);
     }
 
     void C6GERender::CreatePostFXTargets()
