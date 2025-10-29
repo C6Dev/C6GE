@@ -10,14 +10,35 @@ namespace Diligent { namespace C6GE { namespace Systems {
 void RenderSystem::RenderShadows(ECS::World& world, const float4x4& lightViewProj)
 {
     auto& reg = world.Registry();
-    auto view = reg.view<ECS::Transform, ECS::StaticMesh>();
-    for (auto e : view)
+    // Shadow pass: only built-in cube casts into shadow via raster for now
+    if (m_Renderer)
     {
-        const auto& tr = view.get<ECS::Transform>(e);
-        const auto& sm = view.get<ECS::StaticMesh>(e);
-        if (m_Renderer && sm.type == ECS::StaticMesh::MeshType::Cube)
-            m_Renderer->RenderCubeWithWorld(tr.WorldMatrix(), lightViewProj, true,
-                                            RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        auto viewStatic = reg.view<ECS::Transform, ECS::StaticMesh>();
+        for (auto e : viewStatic)
+        {
+            const auto& tr = viewStatic.get<ECS::Transform>(e);
+            const auto& sm = viewStatic.get<ECS::StaticMesh>(e);
+            if (sm.type == ECS::StaticMesh::MeshType::Cube)
+                m_Renderer->RenderCubeWithWorld(tr.WorldMatrix(), lightViewProj, true,
+                                                RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        }
+        auto viewMesh = reg.view<ECS::Transform, ECS::Mesh>();
+        for (auto e : viewMesh)
+        {
+            const auto& tr = viewMesh.get<ECS::Transform>(e);
+            const auto& mesh = viewMesh.get<ECS::Mesh>(e);
+            if (mesh.kind == ECS::Mesh::Kind::Static && mesh.staticType == ECS::Mesh::StaticType::Cube)
+            {
+                m_Renderer->RenderCubeWithWorld(tr.WorldMatrix(), lightViewProj, true,
+                                                RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+            }
+            else if (mesh.kind == ECS::Mesh::Kind::Dynamic && !mesh.assetId.empty())
+            {
+                // Render dynamic glTF into shadow map (depth-only)
+                m_Renderer->RenderGLTFShadowWithWorld(mesh.assetId, tr.WorldMatrix(), lightViewProj,
+                                                      RESOURCE_STATE_TRANSITION_MODE_VERIFY);
+            }
+        }
     }
 }
 
@@ -25,13 +46,37 @@ void RenderSystem::RenderScene(ECS::World& world, const float4x4& cameraViewProj
                                RESOURCE_STATE_TRANSITION_MODE TransitionMode)
 {
     auto& reg = world.Registry();
-    auto view = reg.view<ECS::Transform, ECS::StaticMesh>();
-    for (auto e : view)
+    if (!m_Renderer)
+        return;
     {
-        const auto& tr = view.get<ECS::Transform>(e);
-        const auto& sm = view.get<ECS::StaticMesh>(e);
-        if (m_Renderer && sm.type == ECS::StaticMesh::MeshType::Cube)
-            m_Renderer->RenderCubeWithWorld(tr.WorldMatrix(), cameraViewProj, false, TransitionMode);
+        auto viewStatic = reg.view<ECS::Transform, ECS::StaticMesh>();
+        for (auto e : viewStatic)
+        {
+            const auto& tr = viewStatic.get<ECS::Transform>(e);
+            const auto& sm = viewStatic.get<ECS::StaticMesh>(e);
+            if (sm.type == ECS::StaticMesh::MeshType::Cube)
+                m_Renderer->RenderCubeWithWorld(tr.WorldMatrix(), cameraViewProj, false, TransitionMode);
+        }
+    }
+    {
+        auto viewMesh = reg.view<ECS::Transform, ECS::Mesh>();
+        for (auto e : viewMesh)
+        {
+            const auto& tr = viewMesh.get<ECS::Transform>(e);
+            const auto& mesh = viewMesh.get<ECS::Mesh>(e);
+            if (mesh.kind == ECS::Mesh::Kind::Static && mesh.staticType == ECS::Mesh::StaticType::Cube)
+            {
+                m_Renderer->RenderCubeWithWorld(tr.WorldMatrix(), cameraViewProj, false, TransitionMode);
+            }
+            else if (mesh.kind == ECS::Mesh::Kind::Dynamic && !mesh.assetId.empty())
+            {
+                // Delegate GLTF draw to renderer
+                // Renderer will handle GLTF renderer begin state internally
+                // (Transition mode verify to avoid extra barriers inside loop)
+                m_Renderer->RenderGLTFWithWorld(mesh.assetId, tr.WorldMatrix(), cameraViewProj,
+                                                RESOURCE_STATE_TRANSITION_MODE_VERIFY);
+            }
+        }
     }
 }
 

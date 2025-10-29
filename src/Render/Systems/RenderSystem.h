@@ -4,7 +4,7 @@
 #include "AdvancedMath.hpp"
 
 namespace Diligent { class C6GERender; }
-namespace Diligent { namespace ECS { class World; struct Transform; struct StaticMesh; } }
+namespace Diligent { namespace ECS { class World; struct Transform; struct StaticMesh; struct Mesh; } }
 
 namespace Diligent { namespace C6GE { namespace Systems {
 

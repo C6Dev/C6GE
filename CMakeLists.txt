@@ -77,10 +77,14 @@ add_executable(C6GE
     src/main.cpp
     src/Render/Render.cpp
     src/Render/Systems/RenderSystem.cpp
+    src/Project/Project.cpp
+    src/Platform/FileDialog.cpp
     external/DiligentEngine/DiligentSamples/Tutorials/Common/src/TexturedCube.cpp
     src/EditorTheme/EditorTheme.cpp
     # ImGui platform backend for GLFW (required for multi-viewport platform windows)
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends/imgui_impl_glfw.cpp
+    # ImGuizmo manipulator (source file)
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/ImGuizmo/ImGuizmo.cpp
 )
 
 # Include directories
@@ -95,6 +99,7 @@ target_include_directories(C6GE PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentTools/Imgui/src
     ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentTools/ThirdParty/imgui/backends
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/ImGuizmo
     
 )
 
@@ -102,10 +107,14 @@ add_executable(Runtime
     src/Runtime/Runtime.cpp
     src/Render/Render.cpp
     src/Render/Systems/RenderSystem.cpp
+    src/Project/Project.cpp
+    src/Platform/FileDialog.cpp
     external/DiligentEngine/DiligentSamples/Tutorials/Common/src/TexturedCube.cpp
     src/EditorTheme/EditorTheme.cpp
     # ImGui platform backend for GLFW (required for multi-viewport platform windows)
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends/imgui_impl_glfw.cpp
+    # ImGuizmo manipulator (source file)
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/ImGuizmo/ImGuizmo.cpp
 )
 
 # Include directories
@@ -120,6 +129,7 @@ target_include_directories(Runtime PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentTools/Imgui/src
     ${CMAKE_CURRENT_SOURCE_DIR}/external/DiligentEngine/DiligentTools/ThirdParty/imgui/backends
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/ImGuizmo
 )
 
 # Link libraries

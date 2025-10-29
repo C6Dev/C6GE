@@ -30,6 +30,15 @@ struct StaticMesh {
     enum class MeshType { Cube } type { MeshType::Cube };
 };
 
+// General Mesh component: can be a built-in static mesh or a dynamic imported model (glTF)
+struct Mesh {
+    enum class Kind { Static, Dynamic } kind { Kind::Static };
+    // Static built-in type
+    enum class StaticType { Cube } staticType { StaticType::Cube };
+    // Dynamic asset identifier (e.g., path to glTF or cache id). Empty if none assigned.
+    std::string assetId;
+};
+
 // Simple directional light tag; could be extended to per-entity
 struct DirectionalLight {
     Diligent::float3 direction { -0.49f, -0.60f, 0.64f };

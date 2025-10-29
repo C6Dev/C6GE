@@ -41,7 +41,8 @@ namespace Diligent
 #include "GraphicsAccessories.hpp"
 #include "AdvancedMath.hpp"
 #include "DiligentTools/ThirdParty/imgui/imgui.h"
-#include "DiligentTools/ThirdParty/imGuIZMO.quat/imGuIZMO.h"
+#include "DiligentTools/ThirdParty/imgui/imgui_internal.h"
+#include "ImGuizmo.h"
 #include "DiligentTools/Imgui/interface/ImGuiImplDiligent.hpp"
 
 #include "CallbackWrapper.hpp"
@@ -54,6 +55,12 @@ namespace Diligent
 #include <random>
 #include <string>
 #include <algorithm>
+#include <cstring>
+// STL containers
+#include <array>
+// File IO for model resolution
+#include <fstream>
+#include <sstream>
 // STL containers
 #include <vector>
 
@@ -65,6 +72,15 @@ namespace Diligent
 #include "Runtime/ECS/World.h"
 #include "Runtime/ECS/Components.h"
 #include "Render/Systems/RenderSystem.h"
+// File dialog helper
+#include "Platform/FileDialog.h"
+// PBR frame structures for C++ access: include HLSL shader structs into C++ under Diligent::HLSL namespace
+namespace Diligent { namespace HLSL
+{
+#include "DiligentFX/Shaders/Common/public/BasicStructures.fxh"
+#include "DiligentFX/Shaders/PBR/public/PBR_Structures.fxh"
+#include "DiligentFX/Shaders/PBR/private/RenderPBR_Structures.fxh"
+} } // namespace Diligent::HLSL
 
 // Helper alias to map opaque storage to the settings type declared by the TAA module
 using TAASettings = Diligent::HLSL::TemporalAntiAliasingAttribs;
@@ -380,6 +396,70 @@ namespace Diligent
 
     // Initialize ECS world and systems, but do not create any objects here
     EnsureWorld();
+
+    // Initialize project system: try to find nearest .c6proj, else create default in CWD
+    try {
+        m_Project = std::make_unique<ProjectSystem::ProjectManager>();
+        namespace fs = std::filesystem;
+        fs::path start = fs::current_path();
+        auto proj = ProjectSystem::ProjectManager::FindNearestProject(start);
+        if (!proj.empty()) {
+            if (m_Project->Load(proj)) {
+                std::cout << "[C6GE] Loaded project: " << m_Project->GetConfig().projectName << "\n";
+            }
+        } else {
+            fs::path def = start / "C6GEProject.c6proj";
+            if (m_Project->CreateDefault(def, "C6GE Project")) {
+                std::cout << "[C6GE] Created default project at " << def.string() << "\n";
+            }
+        }
+        // Auto-load startup world if present
+        if (m_Project) {
+            auto sw = m_Project->GetConfig().startupWorld;
+            if (!sw.empty() && fs::exists(sw) && m_World) {
+                // Local adapter to bridge to WorldIO
+                class Adapter : public ProjectSystem::ECSWorldLike {
+                    Diligent::ECS::World& W;
+                public:
+                    Adapter(Diligent::ECS::World& w):W(w){}
+                    void Clear() override {
+                        auto& reg = W.Registry();
+                        std::vector<entt::entity> to_destroy;
+                        auto view = reg.view<ECS::Name>();
+                        for (auto e : view) to_destroy.push_back(e);
+                        for (auto e : to_destroy) W.DestroyEntity(e);
+                    }
+                    void* CreateObject(const std::string& name) override {
+                        auto obj = W.CreateObject(name);
+                        return reinterpret_cast<void*>(static_cast<uintptr_t>(obj.Handle()));
+                    }
+                    void SetTransform(void* handle, const ProjectSystem::ECSWorldLike::TransformData& t) override {
+                        auto e = static_cast<entt::entity>(reinterpret_cast<uintptr_t>(handle));
+                        auto& reg = W.Registry();
+                        ECS::Transform tr; tr.position = float3{t.position[0],t.position[1],t.position[2]};
+                        tr.rotationEuler = float3{t.rotationEuler[0],t.rotationEuler[1],t.rotationEuler[2]};
+                        tr.scale = float3{t.scale[0],t.scale[1],t.scale[2]};
+                        reg.emplace_or_replace<ECS::Transform>(e, tr);
+                    }
+                    void SetMesh(void* handle, ProjectSystem::ECSWorldLike::MeshKind kind, const std::string& assetId) override {
+                        auto e = static_cast<entt::entity>(reinterpret_cast<uintptr_t>(handle));
+                        auto& reg = W.Registry();
+                        if (kind == ProjectSystem::ECSWorldLike::MeshKind::StaticCube) {
+                            reg.emplace_or_replace<ECS::StaticMesh>(e, ECS::StaticMesh{ECS::StaticMesh::MeshType::Cube});
+                        } else if (kind == ProjectSystem::ECSWorldLike::MeshKind::DynamicGLTF) {
+                            ECS::Mesh m; m.kind = ECS::Mesh::Kind::Dynamic; m.assetId = assetId; reg.emplace_or_replace<ECS::Mesh>(e, m);
+                        }
+                    }
+                    std::vector<ProjectSystem::ECSWorldLike::ObjectViewItem> EnumerateObjects() const override {
+                        std::vector<ProjectSystem::ECSWorldLike::ObjectViewItem> out; return out; /* not used for load */
+                    }
+                } adapter(*m_World);
+                ProjectSystem::WorldIO::Load(sw, adapter);
+            }
+        }
+    } catch (...) {
+        std::cerr << "[C6GE] Project initialization failed (non-fatal)." << std::endl;
+    }
     }
 
     void C6GERender::UpdateUI()
@@ -475,6 +555,131 @@ namespace Diligent
         }
 
         // Remove fixed positioning - let the window be freely movable and resizable
+        // Project window
+        if (ImGui::Begin("Project", nullptr, ImGuiWindowFlags_None))
+        {
+            if (m_Project)
+            {
+                const auto& cfg = m_Project->GetConfig();
+                ImGui::Text("Project: %s", cfg.projectName.c_str());
+                ImGui::TextDisabled("Engine %s", cfg.engineVersion.c_str());
+                if (ImGui::Button("Save Project")) { m_Project->Save(); }
+                ImGui::SameLine();
+                if (ImGui::Button("Save World"))
+                {
+                    if (m_World)
+                    {
+                        // Adapter for save
+                        class Adapter : public ProjectSystem::ECSWorldLike {
+                            Diligent::ECS::World& W;
+                        public:
+                            Adapter(Diligent::ECS::World& w):W(w){}
+                            void Clear() override {}
+                            void* CreateObject(const std::string&) override { return nullptr; }
+                            void SetTransform(void*, const TransformData&) override {}
+                            void SetMesh(void*, MeshKind, const std::string&) override {}
+                            std::vector<ObjectViewItem> EnumerateObjects() const override {
+                                std::vector<ObjectViewItem> out; auto& reg = W.Registry(); auto view = reg.view<ECS::Name>();
+                                for (auto e : view) {
+                                    ObjectViewItem it; it.handle = reinterpret_cast<void*>(static_cast<uintptr_t>(e)); it.name = view.get<ECS::Name>(e).value;
+                                    it.hasTransform = reg.any_of<ECS::Transform>(e);
+                                    if (it.hasTransform) {
+                                        const auto& tr = reg.get<ECS::Transform>(e);
+                                        it.tr.position[0]=tr.position.x; it.tr.position[1]=tr.position.y; it.tr.position[2]=tr.position.z;
+                                        it.tr.rotationEuler[0]=tr.rotationEuler.x; it.tr.rotationEuler[1]=tr.rotationEuler.y; it.tr.rotationEuler[2]=tr.rotationEuler.z;
+                                        it.tr.scale[0]=tr.scale.x; it.tr.scale[1]=tr.scale.y; it.tr.scale[2]=tr.scale.z;
+                                    }
+                                    it.meshKind = MeshKind::None; it.assetId.clear();
+                                    if (reg.any_of<ECS::StaticMesh>(e)) it.meshKind = MeshKind::StaticCube;
+                                    if (reg.any_of<ECS::Mesh>(e)) {
+                                        const auto& m = reg.get<ECS::Mesh>(e);
+                                        if (m.kind == ECS::Mesh::Kind::Static && m.staticType == ECS::Mesh::StaticType::Cube) it.meshKind = MeshKind::StaticCube;
+                                        else if (m.kind == ECS::Mesh::Kind::Dynamic) { it.meshKind = MeshKind::DynamicGLTF; it.assetId = m.assetId; }
+                                    }
+                                    out.push_back(std::move(it));
+                                }
+                                return out;
+                            }
+                        } adapter(*m_World);
+                        ProjectSystem::WorldIO::Save(cfg.startupWorld, adapter);
+                    }
+                }
+                ImGui::Separator();
+                // Worlds list
+                if (ImGui::CollapsingHeader("Worlds", ImGuiTreeNodeFlags_DefaultOpen))
+                {
+                    auto worlds = m_Project->ListWorldFiles();
+                    for (auto& w : worlds)
+                    {
+                        auto label = w.filename().string();
+                        if (ImGui::Selectable(label.c_str(), false))
+                        {
+                            if (m_World)
+                            {
+                                class Adapter : public ProjectSystem::ECSWorldLike {
+                                    Diligent::ECS::World& W;
+                                public: Adapter(Diligent::ECS::World& w):W(w){}
+                                    void Clear() override { auto& reg=W.Registry(); std::vector<entt::entity> v; auto view = reg.view<ECS::Name>(); for (auto e: view) v.push_back(e); for (auto e: v) W.DestroyEntity(e);} 
+                                    void* CreateObject(const std::string& name) override { auto obj=W.CreateObject(name); return reinterpret_cast<void*>(static_cast<uintptr_t>(obj.Handle())); }
+                                    void SetTransform(void* h, const ProjectSystem::ECSWorldLike::TransformData& t) override { auto e=static_cast<entt::entity>(reinterpret_cast<uintptr_t>(h)); auto& reg=W.Registry(); ECS::Transform tr; tr.position=float3{t.position[0],t.position[1],t.position[2]}; tr.rotationEuler=float3{t.rotationEuler[0],t.rotationEuler[1],t.rotationEuler[2]}; tr.scale=float3{t.scale[0],t.scale[1],t.scale[2]}; reg.emplace_or_replace<ECS::Transform>(e,tr);} 
+                                    void SetMesh(void* h, ProjectSystem::ECSWorldLike::MeshKind kind, const std::string& assetId) override { auto e=static_cast<entt::entity>(reinterpret_cast<uintptr_t>(h)); auto& reg=W.Registry(); if (kind==ProjectSystem::ECSWorldLike::MeshKind::StaticCube) reg.emplace_or_replace<ECS::StaticMesh>(e, ECS::StaticMesh{ECS::StaticMesh::MeshType::Cube}); else if (kind==ProjectSystem::ECSWorldLike::MeshKind::DynamicGLTF) { ECS::Mesh m; m.kind=ECS::Mesh::Kind::Dynamic; m.assetId=assetId; reg.emplace_or_replace<ECS::Mesh>(e,m);} }
+                                    std::vector<ProjectSystem::ECSWorldLike::ObjectViewItem> EnumerateObjects() const override { return {}; }
+                                } adapter(*m_World);
+                                ProjectSystem::WorldIO::Load(w, adapter);
+                                m_Project->GetConfig().startupWorld = w;
+                            }
+                        }
+                    }
+                    // New world quick-create
+                    static char worldName[128] = "NewWorld";
+                    ImGui::InputText("##WorldName", worldName, sizeof(worldName));
+                    ImGui::SameLine();
+                    if (ImGui::Button("New World"))
+                    {
+                        auto path = cfg.worldsDir / (std::string(worldName) + ".world");
+                        if (m_World)
+                        {
+                            class Adapter : public ProjectSystem::ECSWorldLike { public: Adapter(Diligent::ECS::World&){} void Clear() override {} void* CreateObject(const std::string&) override { return nullptr;} void SetTransform(void*, const TransformData&) override {} void SetMesh(void*, MeshKind, const std::string&) override {} std::vector<ObjectViewItem> EnumerateObjects() const override { return {}; } } adapter(*m_World);
+                            // Save current (maybe empty) as template
+                            ProjectSystem::WorldIO::Save(path, adapter);
+                            m_Project->GetConfig().startupWorld = path;
+                        }
+                    }
+                }
+                // Models list
+                if (ImGui::CollapsingHeader("Models", ImGuiTreeNodeFlags_DefaultOpen))
+                {
+                    if (ImGui::Button("Import glTF..."))
+                    {
+                        std::string picked;
+                        if (Platform::OpenFileDialogGLTF(picked))
+                        {
+                            auto out = m_Project->ConvertGLTFToC6M(picked);
+                            (void)out;
+                        }
+                    }
+                    auto models = m_Project->ListModelFiles();
+                    for (auto& m : models)
+                    {
+                        bool sel = false;
+                        ImGui::Selectable(m.filename().string().c_str(), &sel);
+                        if (ImGui::BeginPopupContextItem())
+                        {
+                            if (ImGui::MenuItem("Reveal in Explorer"))
+                            {
+                                // Not implemented cross-platform here
+                            }
+                            ImGui::EndPopup();
+                        }
+                    }
+                }
+            }
+            else
+            {
+                ImGui::TextDisabled("No project loaded");
+            }
+        }
+        ImGui::End();
 
         if (RenderSettingsOpen)
         {
@@ -849,7 +1054,410 @@ namespace Diligent
                     // Choose which texture to display: post-processed, TAA, or raw framebuffer
                         // Use cached SRV decided at the end of Render()
                         ITextureView* pDisplaySRV = m_pViewportDisplaySRV ? m_pViewportDisplaySRV.RawPtr() : m_pFramebufferSRV.RawPtr();
+                    // Draw the viewport image and remember its rectangle
                     ImGui::Image(reinterpret_cast<void*>(pDisplaySRV), contentSize);
+
+                    // Viewport interaction: click-to-select (basic picking for cubes) and gizmo overlay
+                    const ImVec2 imgMin = ImGui::GetItemRectMin();
+                    const ImVec2 imgMax = ImGui::GetItemRectMax();
+                    const ImVec2 imgSize = ImVec2(imgMax.x - imgMin.x, imgMax.y - imgMin.y);
+
+                    // Mouse inside image?
+                    const ImVec2 mousePos = ImGui::GetIO().MousePos;
+                    const bool mouseOverImage = (mousePos.x >= imgMin.x && mousePos.x <= imgMax.x && mousePos.y >= imgMin.y && mousePos.y <= imgMax.y);
+
+                    // Click to select objects (StaticMesh::Cube and glTF Mesh via AABB)
+                    if (mouseOverImage && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                    {
+                        // Build picking ray in world space using inverse ViewProj
+                        const float ndcX = (mousePos.x - imgMin.x) / imgSize.x * 2.0f - 1.0f;
+                        const float ndcY = 1.0f - (mousePos.y - imgMin.y) / imgSize.y * 2.0f; // flip Y
+                        const float4 ndcNear = float4{ndcX, ndcY, 0.0f, 1.0f};
+                        const float4 ndcFar  = float4{ndcX, ndcY, 1.0f, 1.0f};
+                        const auto InvVP = m_CameraViewProjMatrix.Inverse();
+                        float4 wNear = ndcNear * InvVP;
+                        float4 wFar  = ndcFar * InvVP;
+                        if (wNear.w != 0) wNear = wNear / wNear.w;
+                        if (wFar.w  != 0) wFar  = wFar / wFar.w;
+                        const float3 RayOrigin = float3{wNear.x, wNear.y, wNear.z};
+                        const float3 RayDir    = normalize(float3{wFar.x - wNear.x, wFar.y - wNear.y, wFar.z - wNear.z});
+
+                        EnsureWorld();
+                        entt::entity best = entt::null;
+                        float bestT = +FLT_MAX;
+                        if (m_World)
+                        {
+                            auto& reg = m_World->Registry();
+                            // Test static cubes: unit cube in object space [-1,1]^3 transformed by entity Transform
+                            auto view = reg.view<ECS::Transform, ECS::StaticMesh>();
+                            for (auto e : view)
+                            {
+                                const auto& sm = view.get<ECS::StaticMesh>(e);
+                                if (sm.type != ECS::StaticMesh::MeshType::Cube)
+                                    continue;
+                                const auto& tr = view.get<ECS::Transform>(e);
+                                const float4x4 World = tr.WorldMatrix();
+                                const float4x4 InvWorld = World.Inverse();
+                                // Transform ray to object space
+                                const float4 ro4 = float4{RayOrigin.x, RayOrigin.y, RayOrigin.z, 1.0f} * InvWorld;
+                                const float4 rd4 = float4{RayDir.x, RayDir.y, RayDir.z, 0.0f} * InvWorld;
+                                const float3 rayOObj = float3{ro4.x, ro4.y, ro4.z};
+                                const float3 rayDObj = normalize(float3{rd4.x, rd4.y, rd4.z});
+
+                                // Axis-aligned unit cube AABB in object space
+                                const BoundBox AABB{float3{-1.f, -1.f, -1.f}, float3{+1.f, +1.f, +1.f}};
+                                float tEnter = 0, tExit = 0;
+                                if (IntersectRayAABB(rayOObj, rayDObj, AABB, tEnter, tExit))
+                                {
+                                    if (tEnter >= 0 && tEnter < bestT)
+                                    {
+                                        bestT = tEnter;
+                                        best = e;
+                                    }
+                                }
+                            }
+
+                            // Test dynamic glTF meshes using the asset's model-space AABB
+                            auto viewGltf = reg.view<ECS::Transform, ECS::Mesh>();
+                            for (auto e : viewGltf)
+                            {
+                                const auto& m = viewGltf.get<ECS::Mesh>(e);
+                                if (m.kind != ECS::Mesh::Kind::Dynamic || m.assetId.empty())
+                                    continue;
+                                auto itAsset = m_GltfAssets.find(m.assetId);
+                                if (itAsset == m_GltfAssets.end())
+                                    continue;
+                                const BoundBox& AABB = itAsset->second.Bounds;
+                                // Some models may have invalid BB if empty
+                                if (AABB.Min.x > AABB.Max.x || AABB.Min.y > AABB.Max.y || AABB.Min.z > AABB.Max.z)
+                                    continue;
+                                const auto& tr = viewGltf.get<ECS::Transform>(e);
+                                const float4x4 World = tr.WorldMatrix();
+                                const float4x4 InvWorld = World.Inverse();
+                                const float4 ro4 = float4{RayOrigin.x, RayOrigin.y, RayOrigin.z, 1.0f} * InvWorld;
+                                const float4 rd4 = float4{RayDir.x, RayDir.y, RayDir.z, 0.0f} * InvWorld;
+                                const float3 rayOObj = float3{ro4.x, ro4.y, ro4.z};
+                                const float3 rayDObj = normalize(float3{rd4.x, rd4.y, rd4.z});
+                                float tEnter = 0, tExit = 0;
+                                if (IntersectRayAABB(rayOObj, rayDObj, AABB, tEnter, tExit))
+                                {
+                                    if (tEnter >= 0 && tEnter < bestT)
+                                    {
+                                        bestT = tEnter;
+                                        best = e;
+                                    }
+                                }
+                            }
+                        }
+                        if (best != entt::null)
+                        {
+                            m_SelectedEntity = best;
+                        }
+                    }
+
+                    // Initialize ImGuizmo drawing area to match the viewport image
+                    ImGuizmo::BeginFrame();
+                    ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
+                    ImGuizmo::SetOrthographic(false);
+                    ImGuizmo::SetRect(imgMin.x, imgMin.y, imgSize.x, imgSize.y);
+
+                    // Hotkeys for gizmo op when mouse is over the image
+                    if (mouseOverImage && ImGui::IsWindowFocused())
+                    {
+                        if (ImGui::IsKeyPressed(ImGuiKey_W)) m_GizmoOperation = GizmoOperation::Translate;
+                        if (ImGui::IsKeyPressed(ImGuiKey_E)) m_GizmoOperation = GizmoOperation::Rotate;
+                        if (ImGui::IsKeyPressed(ImGuiKey_R)) m_GizmoOperation = GizmoOperation::Scale;
+                    }
+
+                    // Gizmo overlay: translate gizmo centered on object (no boxed widget)
+                    EnsureWorld();
+                    if (m_World)
+                    {
+                        auto& reg = m_World->Registry();
+                        if (m_SelectedEntity != entt::null && reg.valid(m_SelectedEntity) && reg.any_of<ECS::Transform>(m_SelectedEntity))
+                        {
+                            auto& tr = reg.get<ECS::Transform>(m_SelectedEntity);
+                            // Tiny toolbar in the top-left of the image: T / R / S
+                            ImDrawList* dl = ImGui::GetWindowDrawList();
+                            const float pad = 6.0f;
+                            ImVec2 tbPos = ImVec2(imgMin.x + pad, imgMin.y + pad);
+                            ImGui::SetCursorScreenPos(tbPos);
+                            ImGui::BeginGroup();
+                            {
+                                auto button = [&](const char* label, bool active){
+                                    if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.05f,0.80f,0.75f,0.35f));
+                                    bool pressed = ImGui::Button(label);
+                                    if (active) ImGui::PopStyleColor();
+                                    ImGui::SameLine(0, 4);
+                                    return pressed;
+                                };
+                                bool t = (m_GizmoOperation == GizmoOperation::Translate);
+                                bool r = (m_GizmoOperation == GizmoOperation::Rotate);
+                                bool s = (m_GizmoOperation == GizmoOperation::Scale);
+                                if (button("T", t)) m_GizmoOperation = GizmoOperation::Translate;
+                                if (button("R", r)) m_GizmoOperation = GizmoOperation::Rotate;
+                                if (button("S", s)) m_GizmoOperation = GizmoOperation::Scale;
+                            }
+                            ImGui::EndGroup();
+                            
+                            // If switching into Rotate, (re)initialize axis-angle from current transform
+                            if (m_GizmoOperation == GizmoOperation::Rotate && m_LastGizmoOperation != GizmoOperation::Rotate)
+                            {
+                                const QuaternionF qx = QuaternionF::RotationFromAxisAngle(float3{1,0,0}, tr.rotationEuler.x);
+                                const QuaternionF qy = QuaternionF::RotationFromAxisAngle(float3{0,1,0}, tr.rotationEuler.y);
+                                const QuaternionF qz = QuaternionF::RotationFromAxisAngle(float3{0,0,1}, tr.rotationEuler.z);
+                                const QuaternionF q  = qx * qy * qz;
+                                float3 axis{}; float angle = 0;
+                                QuaternionF(q).GetAxisAngle(axis, angle);
+                                if (length(axis) == 0) axis = float3{1,0,0};
+                                m_GizmoAxisAngle = float4{axis.x, axis.y, axis.z, angle};
+                                m_GizmoEntityLast = m_SelectedEntity;
+                            }
+
+                            // Build local axis basis (unit vectors) in world space
+                            auto BuildRotationOnly = [](const float3& euler)->float3x3{
+                                const float3x3 Rx = float3x3::RotationX(euler.x);
+                                const float3x3 Ry = float3x3::RotationY(euler.y);
+                                const float3x3 Rz = float3x3::RotationZ(euler.z);
+                                return Rx * Ry * Rz; // matches Transform::WorldMatrix composition order
+                            };
+
+                            const float3x3 R = BuildRotationOnly(tr.rotationEuler);
+                            const float3 axesLocalW[3] = {
+                                normalize(m_GizmoLocal ? R * float3{1,0,0} : float3{1,0,0}),
+                                normalize(m_GizmoLocal ? R * float3{0,1,0} : float3{0,1,0}),
+                                normalize(m_GizmoLocal ? R * float3{0,0,1} : float3{0,0,1})
+                            };
+
+                            // Helpers to project world->screen (in pixels within the image rect)
+                            auto WorldToScreen = [&](const float3& p)->ImVec2{
+                                const float4 hp = float4{p.x, p.y, p.z, 1.0f} * m_CameraViewProjMatrix;
+                                float2 ndc = float2{hp.x, hp.y} / (hp.w != 0.0f ? hp.w : 1.0f);
+                                ImVec2 uv = ImVec2(0.5f * ndc.x + 0.5f, 0.5f * -ndc.y + 0.5f);
+                                return ImVec2(imgMin.x + uv.x * imgSize.x, imgMin.y + uv.y * imgSize.y);
+                            };
+
+                            // Compute screen position of object origin
+                            const float3 objPosW = tr.position;
+                            const ImVec2 originSS = WorldToScreen(objPosW);
+
+                            // Axis screen directions and endpoints with constant on-screen length
+                            const float axisLenPx = 90.0f;
+                            ImU32 axisCol[3] = { IM_COL32(235,70,70,255), IM_COL32(70,235,90,255), IM_COL32(70,140,235,255) };
+                            ImU32 axisColHL[3] = { IM_COL32(255,140,140,255), IM_COL32(140,255,170,255), IM_COL32(140,200,255,255) };
+
+                            // Build rays for mouse position (for dragging) and compute camera position
+                            auto BuildRay = [&](const ImVec2& mp){
+                                const float ndcX = (mp.x - imgMin.x) / imgSize.x * 2.0f - 1.0f;
+                                const float ndcY = 1.0f - (mp.y - imgMin.y) / imgSize.y * 2.0f;
+                                const float4 ndcNear = float4{ndcX, ndcY, 0.0f, 1.0f};
+                                const float4 ndcFar  = float4{ndcX, ndcY, 1.0f, 1.0f};
+                                const auto InvVP = m_CameraViewProjMatrix.Inverse();
+                                float4 wNear = ndcNear * InvVP;
+                                float4 wFar  = ndcFar  * InvVP;
+                                if (wNear.w != 0) wNear = wNear / wNear.w;
+                                if (wFar.w  != 0) wFar  = wFar  / wFar.w;
+                                float3 ro = float3{wNear.x, wNear.y, wNear.z};
+                                float3 rd = normalize(float3{wFar.x - wNear.x, wFar.y - wNear.y, wFar.z - wNear.z});
+                                return std::pair<float3,float3>{ro, rd};
+                            };
+
+                            // Camera world position from inverse view
+                            const float4x4 InvView = m_ViewMatrix.Inverse();
+                            float4 CamOrigin4 = float4{0,0,0,1} * InvView;
+                            const float3 CamPos = float3{CamOrigin4.x, CamOrigin4.y, CamOrigin4.z};
+                            const float3 CamDir = normalize(objPosW - CamPos);
+                            // Camera right vector in world space (used for blue axis special-case movement)
+                            float4 CamRight4 = float4{1,0,0,0} * InvView;
+                            const float3 CamRight = normalize(float3{CamRight4.x, CamRight4.y, CamRight4.z});
+                            // Camera forward vector in world (used for red axis special-case)
+                            float4 CamFwd4 = float4{0,0,-1,0} * InvView; // RH: -Z is forward
+                            const float3 CamForward = normalize(float3{CamFwd4.x, CamFwd4.y, CamFwd4.z});
+
+                            // Determine hover axis and draw axes
+                            int hoveredAxis = -1;
+                            float bestDist = 1e9f;
+                            struct AxisVis { ImVec2 a, b; ImU32 col; } vis[3]{};
+                            for (int i=0;i<3;++i)
+                            {
+                                // Project a point slightly along the axis to get screen direction
+                                const ImVec2 p0 = originSS;
+                                ImVec2 end;
+                                if (i == 2)
+                                {
+                                    // Blue axis: fixed screen-right arrow (do not reorient to camera)
+                                    end = ImVec2(p0.x + axisLenPx, p0.y);
+                                }
+                                else if (i == 0)
+                                {
+                                    // Red axis: use camera-forward projected direction
+                                    const ImVec2 p1 = WorldToScreen(objPosW + CamForward);
+                                    ImVec2 dir = ImVec2(p1.x - p0.x, p1.y - p0.y);
+                                    const float len = std::sqrt(dir.x*dir.x + dir.y*dir.y);
+                                    if (len < 1e-3f) dir = ImVec2(0,-1); else { dir.x/=len; dir.y/=len; }
+                                    end = ImVec2(p0.x + dir.x*axisLenPx, p0.y + dir.y*axisLenPx);
+                                }
+                                else
+                                {
+                                    const ImVec2 p1 = WorldToScreen(objPosW + axesLocalW[i]);
+                                    ImVec2 dir = ImVec2(p1.x - p0.x, p1.y - p0.y);
+                                    const float len = std::sqrt(dir.x*dir.x + dir.y*dir.y);
+                                    if (len < 1e-3f) dir = ImVec2(1,0); else { dir.x/=len; dir.y/=len; }
+                                    end = ImVec2(p0.x + dir.x*axisLenPx, p0.y + dir.y*axisLenPx);
+                                }
+                                vis[i] = {p0, end, axisCol[i]};
+                                // Hover test: distance from mouse to segment
+                                auto distPtSeg = [](ImVec2 p, ImVec2 a, ImVec2 b){
+                                    ImVec2 ab{b.x-a.x, b.y-a.y};
+                                    ImVec2 ap{p.x-a.x, p.y-a.y};
+                                    float t = (ab.x*ap.x + ab.y*ap.y) / (ab.x*ab.x + ab.y*ab.y + 1e-5f);
+                                    t = std::max(0.0f, std::min(1.0f, t));
+                                    ImVec2 c{a.x + ab.x*t, a.y + ab.y*t};
+                                    ImVec2 d{p.x - c.x, p.y - c.y};
+                                    return std::sqrt(d.x*d.x + d.y*d.y);
+                                };
+                                const float d = distPtSeg(mousePos, p0, end);
+                                if (mouseOverImage && d < 12.0f && d < bestDist)
+                                {
+                                    bestDist = d;
+                                    hoveredAxis = i;
+                                }
+                            }
+
+                            // Begin dragging on click over an axis
+                            if (!m_GizmoDragging && mouseOverImage && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && hoveredAxis != -1)
+                            {
+                                m_GizmoDragging  = true;
+                                m_GizmoAxis      = hoveredAxis;
+                                // Blue axis uses camera-right; red uses camera-forward; green uses local/world Y
+                                if (hoveredAxis == 2)      m_GizmoAxisDirW = CamRight;
+                                else if (hoveredAxis == 0) m_GizmoAxisDirW = CamForward;
+                                else                       m_GizmoAxisDirW = axesLocalW[hoveredAxis];
+                                m_GizmoStartPosW = tr.position;
+                                m_GizmoStartScale= tr.scale;
+                                // Define drag plane that contains the axis and is most facing the camera at drag start
+                                const float3 CamDir0 = normalize(objPosW - CamPos);
+                                m_GizmoDragPlaneNormal = normalize(cross(m_GizmoAxisDirW, cross(CamDir0, m_GizmoAxisDirW)));
+                                m_GizmoDragPlanePoint  = m_GizmoStartPosW;
+                                auto [ro0, rd0] = BuildRay(mousePos);
+                                // Ray-plane intersection at start
+                                float denom = dot(rd0, m_GizmoDragPlaneNormal);
+                                float t = 0.0f;
+                                if (std::abs(denom) > 1e-4f)
+                                {
+                                    t = dot((m_GizmoDragPlanePoint - ro0), m_GizmoDragPlaneNormal) / denom;
+                                }
+                                const float3 hit = ro0 + rd0 * t;
+                                m_GizmoStartT = dot(hit - m_GizmoDragPlanePoint, m_GizmoAxisDirW); // param along axis at start
+                            }
+
+                            // Update dragging
+                            if (m_GizmoDragging)
+                            {
+                                // End drag when mouse released or mouse leaves image while released
+                                if (ImGui::IsMouseReleased(ImGuiMouseButton_Left))
+                                {
+                                    m_GizmoDragging = false;
+                                }
+                                else
+                                {
+                                    // Recompute intersection on the saved drag plane (constant during drag)
+                                    const float3 axis = m_GizmoAxisDirW;
+                                    auto [ro, rd] = BuildRay(mousePos);
+                                    float denom = dot(rd, m_GizmoDragPlaneNormal);
+                                    float t = 0.0f;
+                                    if (std::abs(denom) > 1e-4f)
+                                    {
+                                        t = dot((m_GizmoDragPlanePoint - ro), m_GizmoDragPlaneNormal) / denom;
+                                    }
+                                    const float3 hit = ro + rd * t;
+                                    const float currT = dot(hit - m_GizmoDragPlanePoint, axis);
+                                    const float deltaT = currT - m_GizmoStartT;
+                                    if (m_GizmoOperation == GizmoOperation::Translate)
+                                    {
+                                        tr.position = m_GizmoStartPosW + axis * deltaT;
+                                    }
+                                    else if (m_GizmoOperation == GizmoOperation::Scale)
+                                    {
+                                        // Scale sensitivity: 1 world unit along axis => +1 scale on that axis
+                                        float3 newScale = m_GizmoStartScale;
+                                        if (std::abs(axis.x) > 0.5f) newScale.x = std::max(0.0001f, m_GizmoStartScale.x + deltaT);
+                                        if (std::abs(axis.y) > 0.5f) newScale.y = std::max(0.0001f, m_GizmoStartScale.y + deltaT);
+                                        if (std::abs(axis.z) > 0.5f) newScale.z = std::max(0.0001f, m_GizmoStartScale.z + deltaT);
+                                        tr.scale = newScale;
+                                    }
+                                }
+                            }
+
+                            if (m_GizmoOperation == GizmoOperation::Translate || m_GizmoOperation == GizmoOperation::Scale)
+                            {
+                                // Draw axes (highlight active/hovered)
+                                for (int i=0;i<3;++i)
+                                {
+                                    const bool active = (m_GizmoDragging && i == m_GizmoAxis) || (!m_GizmoDragging && i == hoveredAxis);
+                                    const ImU32 col = active ? axisColHL[i] : axisCol[i];
+                                    // Drop shadow
+                                    dl->AddLine(vis[i].a, vis[i].b, IM_COL32(0,0,0,120), 7.0f);
+                                    // Main colored line
+                                    dl->AddLine(vis[i].a, vis[i].b, col, 5.0f);
+                                    // Arrow head
+                                    ImVec2 ab{vis[i].b.x - vis[i].a.x, vis[i].b.y - vis[i].a.y};
+                                    float L = std::sqrt(ab.x*ab.x + ab.y*ab.y);
+                                    if (L > 1.0f)
+                                    {
+                                        ImVec2 dir{ab.x/L, ab.y/L};
+                                        ImVec2 ort{-dir.y, dir.x};
+                                        float ah = 14.0f; // arrow size
+                                        ImVec2 p0 = ImVec2(vis[i].b.x, vis[i].b.y);
+                                        ImVec2 p1 = ImVec2(vis[i].b.x - dir.x*ah + ort.x*ah*0.5f, vis[i].b.y - dir.y*ah + ort.y*ah*0.5f);
+                                        ImVec2 p2 = ImVec2(vis[i].b.x - dir.x*ah - ort.x*ah*0.5f, vis[i].b.y - dir.y*ah - ort.y*ah*0.5f);
+                                        // Shadow then fill
+                                        ImU32 shadow = IM_COL32(0,0,0,120);
+                                        dl->AddTriangleFilled(p0, p1, p2, shadow);
+                                        dl->AddTriangleFilled(p0, p1, p2, col);
+                                    }
+                                }
+                            }
+                            else if (m_GizmoOperation == GizmoOperation::Rotate || m_GizmoOperation == GizmoOperation::Scale)
+                            {
+                                // Use ImGuizmo for rotate/scale manipulators
+                                // Prepare matrices as float arrays (row-major as stored by Diligent's float4x4)
+                                auto ToFloatArray = [](const float4x4& M)
+                                {
+                                    std::array<float,16> a{};
+                                    std::memcpy(a.data(), &M, sizeof(float) * 16);
+                                    return a;
+                                };
+
+                                auto viewM = ToFloatArray(m_ViewMatrix);
+                                auto projM = ToFloatArray(m_ProjMatrix);
+                                float4x4 world = tr.WorldMatrix();
+                                auto modelM = ToFloatArray(world);
+
+                                ImGuizmo::OPERATION op = (m_GizmoOperation == GizmoOperation::Rotate)
+                                                            ? ImGuizmo::ROTATE
+                                                            : ImGuizmo::SCALE;
+                                ImGuizmo::MODE mode = m_GizmoLocal ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
+
+                                // Manipulate updates modelM in-place when active
+                                ImGuizmo::Manipulate(viewM.data(), projM.data(), op, mode, modelM.data());
+
+                                if (ImGuizmo::IsUsing())
+                                {
+                                    float translation[3], rotationDeg[3], scale[3];
+                                    ImGuizmo::DecomposeMatrixToComponents(modelM.data(), translation, rotationDeg, scale);
+                                    tr.position = float3{translation[0], translation[1], translation[2]};
+                                    tr.scale    = float3{std::max(0.0001f, scale[0]), std::max(0.0001f, scale[1]), std::max(0.0001f, scale[2])};
+                                    // Convert degrees to radians for our Euler storage
+                                    const float deg2rad = PI_F / 180.0f;
+                                    tr.rotationEuler = float3{rotationDeg[0] * deg2rad, rotationDeg[1] * deg2rad, rotationDeg[2] * deg2rad};
+                                }
+                            }
+
+                            // Remember last op
+                            m_LastGizmoOperation = m_GizmoOperation;
+                        }
+                    }
                 }
                 else
                 {
@@ -868,6 +1476,45 @@ namespace Diligent
                 EnsureWorld();
                 if (m_World)
                 {
+                    // Toolbar: create objects
+                    static char newNameBuf[128] = "NewObject";
+                    ImGui::InputText("##NewName", newNameBuf, sizeof(newNameBuf));
+                    ImGui::SameLine();
+                    if (ImGui::Button("+ Empty"))
+                    {
+                        // Generate unique name if needed
+                        std::string base = (strlen(newNameBuf) > 0) ? std::string(newNameBuf) : std::string("Object");
+                        std::string name = base;
+                        int suffix = 1;
+                        while (m_World->HasObject(name)) {
+                            name = base + " (" + std::to_string(suffix++) + ")";
+                        }
+                        try {
+                            auto obj = m_World->CreateObject(name);
+                            auto& reg = m_World->Registry();
+                            // Ensure it has a Transform by default
+                            reg.emplace_or_replace<ECS::Transform>(obj.Handle(), ECS::Transform{});
+                            m_SelectedEntity = obj.Handle();
+                        } catch(...) {}
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("+ Cube"))
+                    {
+                        std::string base = (strlen(newNameBuf) > 0) ? std::string(newNameBuf) : std::string("Cube");
+                        std::string name = base;
+                        int suffix = 1;
+                        while (m_World->HasObject(name)) {
+                            name = base + " (" + std::to_string(suffix++) + ")";
+                        }
+                        try {
+                            auto obj = m_World->CreateObject(name);
+                            auto& reg = m_World->Registry();
+                            reg.emplace_or_replace<ECS::Transform>(obj.Handle(), ECS::Transform{});
+                            reg.emplace_or_replace<ECS::StaticMesh>(obj.Handle(), ECS::StaticMesh{ECS::StaticMesh::MeshType::Cube});
+                            m_SelectedEntity = obj.Handle();
+                        } catch(...) {}
+                    }
+
                     auto& reg = m_World->Registry();
                     // Build a view of all entities with Name
                     auto view = reg.view<ECS::Name>();
@@ -885,6 +1532,14 @@ namespace Diligent
                         {
                             if (ImGui::MenuItem("Deselect"))
                                 m_SelectedEntity = entt::null;
+                            if (ImGui::MenuItem("Delete"))
+                            {
+                                // Clear selection if deleting selected
+                                if (m_SelectedEntity == e)
+                                    m_SelectedEntity = entt::null;
+                                // Prefer to delete by entity to keep consistent with maps
+                                m_World->DestroyEntity(e);
+                            }
                             ImGui::EndPopup();
                         }
                     }
@@ -923,8 +1578,63 @@ namespace Diligent
                             buf[sizeof(buf)-1] = '\0';
                             if (ImGui::InputText("Name", buf, sizeof(buf)))
                             {
-                                name.value = buf;
+                                // Attempt to rename through world to keep maps in sync
+                                if (!m_World->RenameEntity(m_SelectedEntity, std::string(buf)))
+                                {
+                                    // Failed rename: keep existing name and show hint
+                                    ImGui::SameLine();
+                                    ImGui::TextDisabled("(name taken)");
+                                }
                             }
+                        }
+
+                        // Add/Remove and Delete controls
+                        if (ImGui::Button("Delete Object"))
+                        {
+                            m_World->DestroyEntity(m_SelectedEntity);
+                            m_SelectedEntity = entt::null;
+                            ImGui::End();
+                            // Early exit to avoid using invalid entity
+                            goto end_properties_window;
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::Button("Add Component"))
+                            ImGui::OpenPopup("AddComponentPopup");
+                        if (ImGui::BeginPopup("AddComponentPopup"))
+                        {
+                            if (!reg.any_of<ECS::Transform>(m_SelectedEntity))
+                            {
+                                if (ImGui::MenuItem("Transform"))
+                                {
+                                    reg.emplace<ECS::Transform>(m_SelectedEntity, ECS::Transform{});
+                                    ImGui::CloseCurrentPopup();
+                                }
+                            }
+                            if (!reg.any_of<ECS::StaticMesh>(m_SelectedEntity))
+                            {
+                                if (ImGui::BeginMenu("Static Mesh"))
+                                {
+                                    if (ImGui::MenuItem("Cube"))
+                                    {
+                                        reg.emplace<ECS::StaticMesh>(m_SelectedEntity, ECS::StaticMesh{ECS::StaticMesh::MeshType::Cube});
+                                        if (!reg.any_of<ECS::Transform>(m_SelectedEntity))
+                                            reg.emplace<ECS::Transform>(m_SelectedEntity, ECS::Transform{});
+                                        ImGui::CloseCurrentPopup();
+                                    }
+                                    ImGui::EndMenu();
+                                }
+                            }
+                            if (!reg.any_of<ECS::Mesh>(m_SelectedEntity))
+                            {
+                                if (ImGui::MenuItem("Mesh"))
+                                {
+                                    reg.emplace<ECS::Mesh>(m_SelectedEntity, ECS::Mesh{});
+                                    if (!reg.any_of<ECS::Transform>(m_SelectedEntity))
+                                        reg.emplace<ECS::Transform>(m_SelectedEntity, ECS::Transform{});
+                                    ImGui::CloseCurrentPopup();
+                                }
+                            }
+                            ImGui::EndPopup();
                         }
 
                         // Transform editor
@@ -964,9 +1674,86 @@ namespace Diligent
                                 ImGui::Text("Type: %s", meshType);
                             }
                         }
+
+                        // Mesh component (built-in or glTF)
+                        if (reg.any_of<ECS::Mesh>(m_SelectedEntity))
+                        {
+                            auto& mesh = reg.get<ECS::Mesh>(m_SelectedEntity);
+                            if (ImGui::CollapsingHeader("Mesh", ImGuiTreeNodeFlags_DefaultOpen))
+                            {
+                                // Kind selector
+                                int kind = mesh.kind == ECS::Mesh::Kind::Static ? 0 : 1;
+                                if (ImGui::Combo("Type", &kind, "Static\0Dynamic (glTF)\0"))
+                                {
+                                    mesh.kind = (kind == 0) ? ECS::Mesh::Kind::Static : ECS::Mesh::Kind::Dynamic;
+                                }
+                                if (mesh.kind == ECS::Mesh::Kind::Static)
+                                {
+                                    // Static built-in selection
+                                    int staticType = (mesh.staticType == ECS::Mesh::StaticType::Cube) ? 0 : 0;
+                                    if (ImGui::Combo("Static Mesh", &staticType, "Cube\0"))
+                                    {
+                                        mesh.staticType = ECS::Mesh::StaticType::Cube;
+                                    }
+                                }
+                                else
+                                {
+                                    // Dynamic: show asset id and controls to assign
+                                    char pathBuf[512];
+                                    strncpy(pathBuf, mesh.assetId.c_str(), sizeof(pathBuf));
+                                    pathBuf[sizeof(pathBuf)-1] = '\0';
+                                    ImGui::InputText("Asset Id / Path", pathBuf, sizeof(pathBuf));
+                                    if (ImGui::Button("Load from Path"))
+                                    {
+                                        mesh.assetId = pathBuf;
+                                        // Attempt to load immediately
+                                        LoadGLTFAsset(mesh.assetId);
+                                    }
+                                    ImGui::SameLine();
+                                    if (ImGui::Button("Browse..."))
+                                    {
+                                        std::string picked;
+                                        if (Platform::OpenFileDialogGLTF(picked))
+                                        {
+                                            mesh.assetId = picked;
+                                            LoadGLTFAsset(mesh.assetId);
+                                        }
+                                    }
+                                    ImGui::SameLine();
+                                    if (ImGui::Button("Engine Models"))
+                                    {
+                                        ImGui::OpenPopup("EngineModelPopup");
+                                    }
+                                    if (ImGui::BeginPopup("EngineModelPopup"))
+                                    {
+                                        // Show a few curated sample models from external/gltfassets/Models
+                                        struct BuiltinEntry { const char* Label; const char* RelPath; };
+                                        static BuiltinEntry entries[] = {
+                                            {"DamagedHelmet", "external/gltfassets/Models/DamagedHelmet/glTF/DamagedHelmet.gltf"},
+                                            {"Duck",          "external/gltfassets/Models/Duck/glTF/Duck.gltf"},
+                                            {"Sponza",        "external/gltfassets/Models/Sponza/glTF/Sponza.gltf"},
+                                            {"Suzanne",       "external/gltfassets/Models/Suzanne/glTF/Suzanne.gltf"},
+                                            {"BoomBox",       "external/gltfassets/Models/BoomBox/glTF/BoomBox.gltf"},
+                                        };
+                                        for (auto& e : entries)
+                                        {
+                                            if (ImGui::Selectable(e.Label))
+                                            {
+                                                mesh.assetId = e.RelPath;
+                                                LoadGLTFAsset(mesh.assetId);
+                                                ImGui::CloseCurrentPopup();
+                                            }
+                                        }
+                                        ImGui::EndPopup();
+                                    }
+                                }
+                            }
+                        }
+
                     }
                 }
             }
+end_properties_window:
             ImGui::End();
 
             if (ImGui::Begin("Console", nullptr, ImGuiWindowFlags_None))
@@ -1527,6 +2314,134 @@ namespace Diligent
         }
     }
 
+    void C6GERender::CreateGLTFShadowPSO()
+    {
+        if (m_pGLTFShadowPSO)
+            return;
+
+        GraphicsPipelineStateCreateInfo PSOCI;
+        PSOCI.PSODesc.Name = "GLTF Shadow PSO";
+        PSOCI.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+    PSOCI.GraphicsPipeline.NumRenderTargets = 0;
+    PSOCI.GraphicsPipeline.RTVFormats[0] = TEX_FORMAT_UNKNOWN;
+    PSOCI.GraphicsPipeline.DSVFormat = m_ShadowMapFormat;
+    PSOCI.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    // Disable culling in shadow pass to avoid missing geometry due to winding flips
+    PSOCI.GraphicsPipeline.RasterizerDesc.CullMode = CULL_MODE_NONE;
+    PSOCI.GraphicsPipeline.DepthStencilDesc.DepthEnable = True;
+
+        ShaderCreateInfo CI;
+        CI.SourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+        CI.Desc.UseCombinedTextureSamplers = true;
+        CI.CompileFlags = SHADER_COMPILE_FLAG_PACK_MATRIX_ROW_MAJOR;
+
+        RefCntAutoPtr<IShaderSourceInputStreamFactory> pShaderSourceFactory;
+        m_pEngineFactory->CreateDefaultShaderSourceStreamFactory(nullptr, &pShaderSourceFactory);
+        CI.pShaderSourceStreamFactory = pShaderSourceFactory;
+
+        RefCntAutoPtr<IShader> pVS;
+        CI.Desc.ShaderType = SHADER_TYPE_VERTEX;
+        CI.EntryPoint = "main";
+        CI.Desc.Name = "GLTF Shadow VS";
+        CI.FilePath = "../../assets/gltf_shadow.vsh";
+        m_pDevice->CreateShader(CI, &pVS);
+
+        PSOCI.pVS = pVS;
+        PSOCI.pPS = nullptr; // depth-only
+
+        // Position-only input, buffer slot 0 (matches GLTF default attributes)
+        LayoutElement LayoutElems[] = {
+            LayoutElement{0, 0, 3, VT_FLOAT32, False}
+        };
+        PSOCI.GraphicsPipeline.InputLayout.LayoutElements = LayoutElems;
+        PSOCI.GraphicsPipeline.InputLayout.NumElements = _countof(LayoutElems);
+
+        PSOCI.PSODesc.ResourceLayout.DefaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+
+        m_pDevice->CreateGraphicsPipelineState(PSOCI, &m_pGLTFShadowPSO);
+        if (m_pGLTFShadowPSO)
+        {
+            // Try to bind the common constants buffer
+            if (auto* var = m_pGLTFShadowPSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "Constants"))
+                var->Set(m_VSConstants);
+            m_pGLTFShadowPSO->CreateShaderResourceBinding(&m_GLTFShadowSRB, true);
+        }
+    }
+
+    void C6GERender::CreateGLTFShadowSkinnedPSO()
+    {
+        if (m_pGLTFShadowSkinnedPSO)
+            return;
+
+        GraphicsPipelineStateCreateInfo PSOCI;
+        PSOCI.PSODesc.Name = "GLTF Shadow Skinned PSO";
+        PSOCI.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+        PSOCI.GraphicsPipeline.NumRenderTargets = 0;
+        PSOCI.GraphicsPipeline.RTVFormats[0] = TEX_FORMAT_UNKNOWN;
+        PSOCI.GraphicsPipeline.DSVFormat = m_ShadowMapFormat;
+        PSOCI.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        PSOCI.GraphicsPipeline.RasterizerDesc.CullMode = CULL_MODE_NONE;
+        PSOCI.GraphicsPipeline.DepthStencilDesc.DepthEnable = True;
+
+        ShaderCreateInfo CI;
+        CI.SourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+        CI.Desc.UseCombinedTextureSamplers = true;
+        CI.CompileFlags = SHADER_COMPILE_FLAG_PACK_MATRIX_ROW_MAJOR;
+
+        RefCntAutoPtr<IShaderSourceInputStreamFactory> pShaderSourceFactory;
+        m_pEngineFactory->CreateDefaultShaderSourceStreamFactory(nullptr, &pShaderSourceFactory);
+        CI.pShaderSourceStreamFactory = pShaderSourceFactory;
+
+        RefCntAutoPtr<IShader> pVS;
+        CI.Desc.ShaderType = SHADER_TYPE_VERTEX;
+        CI.EntryPoint = "main";
+        CI.Desc.Name = "GLTF Shadow Skinned VS";
+        CI.FilePath = "../../assets/gltf_shadow_skinned.vsh";
+        m_pDevice->CreateShader(CI, &pVS);
+
+        PSOCI.pVS = pVS;
+        PSOCI.pPS = nullptr; // depth-only
+
+        // Position + Joints/Weights (DefaultVertexAttributes place JOINTS/WEIGHTS in buffer slot 1)
+        LayoutElement LayoutElems[] = {
+            LayoutElement{0, 0, 3, VT_FLOAT32, False}, // POSITION -> ATTRIB0 from VB0
+            LayoutElement{4, 1, 4, VT_FLOAT32, False}, // JOINTS_0 -> ATTRIB4 from VB1
+            LayoutElement{5, 1, 4, VT_FLOAT32, False}  // WEIGHTS_0 -> ATTRIB5 from VB1
+        };
+        PSOCI.GraphicsPipeline.InputLayout.LayoutElements = LayoutElems;
+        PSOCI.GraphicsPipeline.InputLayout.NumElements    = _countof(LayoutElems);
+
+        // Expose a mutable constant buffer for skin matrices and bind VS constants as static
+        PSOCI.PSODesc.ResourceLayout.DefaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+        ShaderResourceVariableDesc Vars[] = {
+            {SHADER_TYPE_VERTEX, "ShadowSkin", SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE}
+        };
+        PSOCI.PSODesc.ResourceLayout.Variables    = Vars;
+        PSOCI.PSODesc.ResourceLayout.NumVariables = _countof(Vars);
+
+        m_pDevice->CreateGraphicsPipelineState(PSOCI, &m_pGLTFShadowSkinnedPSO);
+        if (m_pGLTFShadowSkinnedPSO)
+        {
+            if (auto* var = m_pGLTFShadowSkinnedPSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "Constants"))
+                var->Set(m_VSConstants);
+            m_pGLTFShadowSkinnedPSO->CreateShaderResourceBinding(&m_GLTFShadowSkinnedSRB, true);
+
+            // Create skin joint matrices constant buffer matching the HLSL struct
+            struct ShadowSkinCB
+            {
+                float4x4 JointMatrices[256];
+                int      JointCount;
+                float3   _pad0;
+            };
+            CreateUniformBuffer(m_pDevice, sizeof(ShadowSkinCB), "GLTF Shadow Skin CB", &m_GLTFShadowSkinCB);
+            if (m_GLTFShadowSkinnedSRB && m_GLTFShadowSkinCB)
+            {
+                if (auto* v = m_GLTFShadowSkinnedSRB->GetVariableByName(SHADER_TYPE_VERTEX, "ShadowSkin"))
+                    v->Set(m_GLTFShadowSkinCB);
+            }
+        }
+    }
+
     // Shadow-map visualization has been removed. Visualization PSO creation was here previously.
 
     void C6GERender::CreateShadowMap()
@@ -2033,7 +2948,7 @@ else
         // 2) Render scene into off-screen framebuffer for ImGui viewport
         ITextureView *pRTV = (m_SampleCount > 1 && m_pMSColorRTV) ? m_pMSColorRTV : m_pFramebufferRTV;
         ITextureView *pDSV = (m_SampleCount > 1 && m_pMSDepthDSV) ? m_pMSDepthDSV : m_pFramebufferDSV;
-        float4 ClearColor = {0.350f, 0.350f, 0.350f, 1.0f};
+        float4 ClearColor = {0.0, 0.0, 0.0, 0.0f};
         if (m_ConvertPSOutputToGamma)
             ClearColor = LinearToSRGB(ClearColor);
 
@@ -2347,6 +3262,467 @@ else
             const Uint32 gy = (h + 7) / 8;
             DispatchComputeAttribs DispatchAttrs{gx, gy, 1};
             m_pImmediateContext->DispatchCompute(DispatchAttrs);
+        }
+    }
+
+    // --- GLTF Support ---------------------------------------------------------------
+    void C6GERender::EnsureGLTFRenderer()
+    {
+        if (m_GLTFRenderer)
+            return;
+
+        GLTF_PBR_Renderer::CreateInfo RendererCI;
+        RendererCI.NumRenderTargets = 1;
+        const auto& SCDesc = m_pSwapChain->GetDesc();
+        RendererCI.RTVFormats[0]    = SCDesc.ColorBufferFormat;
+        RendererCI.DSVFormat        = SCDesc.DepthBufferFormat;
+        RendererCI.PackMatrixRowMajor = true;
+        // Most GLTF color textures are authored in sRGB but are sampled via linear SRVs by default.
+        // Ask the PBR renderer to convert sRGB->linear in shader to ensure correct color.
+        RendererCI.TexColorConversionMode = GLTF_PBR_Renderer::CreateInfo::TEX_COLOR_CONVERSION_MODE_SRGB_TO_LINEAR;
+
+        // Create renderer (no state cache)
+        m_GLTFRenderer = std::make_unique<GLTF_PBR_Renderer>(m_pDevice, nullptr, m_pImmediateContext, RendererCI);
+        // Create frame attribs buffer
+        if (m_GLTFRenderer)
+        {
+            CreateUniformBuffer(m_pDevice, m_GLTFRenderer->GetPRBFrameAttribsSize(), "PBR frame attribs buffer", &m_GLTFFrameAttribsCB);
+            if (m_GLTFFrameAttribsCB)
+            {
+                StateTransitionDesc Barriers[] = {
+                    {m_GLTFFrameAttribsCB, RESOURCE_STATE_UNKNOWN, RESOURCE_STATE_CONSTANT_BUFFER, STATE_TRANSITION_FLAG_UPDATE_STATE},
+                };
+                m_pImmediateContext->TransitionResourceStates(_countof(Barriers), Barriers);
+            }
+        }
+    }
+
+    // Resolve a model asset id: supports raw .gltf/.glb or .c6m wrappers generated by the Project system
+    std::string C6GERender::ResolveModelAsset(const std::string& Id)
+    {
+        // Check cache
+        auto itc = m_ModelResolveCache.find(Id);
+        if (itc != m_ModelResolveCache.end())
+            return itc->second;
+
+        // If not a .c6m file, return as-is
+        auto has_ext = [](const std::string& s, const char* ext){
+            if (s.size() < strlen(ext)) return false;
+            std::string e = s.substr(s.size()-strlen(ext));
+            for (auto& c : e) c = (char)tolower(c);
+            std::string t(ext);
+            for (auto& c : t) c = (char)tolower(c);
+            return e == t;
+        };
+        if (!has_ext(Id, ".c6m")) {
+            m_ModelResolveCache[Id] = Id;
+            return Id;
+        }
+
+        // Try to read small JSON and extract "source"
+        std::string resolved = Id;
+        try {
+            std::ifstream f(Id, std::ios::in | std::ios::binary);
+            if (f) {
+                std::stringstream ss; ss << f.rdbuf();
+                std::string s = ss.str();
+                // very naive scan for source: "source" : "..."
+                size_t p = s.find("\"source\"");
+                if (p != std::string::npos) {
+                    p = s.find('"', p+1);
+                    p = s.find('"', p+1);
+                    size_t q1 = s.find('"', p+1);
+                    size_t q2 = q1 != std::string::npos ? s.find('"', q1+1) : std::string::npos;
+                    if (q1 != std::string::npos && q2 != std::string::npos && q2 > q1)
+                        resolved = s.substr(q1+1, q2-(q1+1));
+                }
+            }
+        } catch (...) {
+            // ignore
+        }
+        // If path is relative and we have a project, make it absolute from project root
+        if (m_Project && !resolved.empty()) {
+            namespace fs = std::filesystem;
+            fs::path p = resolved;
+            if (p.is_relative()) {
+                auto root = m_Project->GetConfig().rootDir;
+                p = root / p;
+                resolved = p.u8string();
+            }
+        }
+        m_ModelResolveCache[Id] = resolved;
+        return resolved;
+    }
+
+    std::string C6GERender::LoadGLTFAsset(const std::string& Path)
+    {
+        EnsureGLTFRenderer();
+        if (!m_GLTFRenderer)
+            return {};
+
+        // Normalize path for use as key
+        std::string Key = Path;
+        // Trim quotes if any
+        if (!Key.empty() && (Key.front() == '"' || Key.front() == '\''))
+            Key.erase(0, 1);
+        if (!Key.empty() && (Key.back() == '"' || Key.back() == '\''))
+            Key.pop_back();
+
+        // If it's a .c6m wrapper, resolve to real source path
+        Key = ResolveModelAsset(Key);
+
+        // If already loaded, return
+        if (m_GltfAssets.find(Key) != m_GltfAssets.end())
+            return Key;
+
+        GLTF::ModelCreateInfo CI;
+        CI.FileName             = Key.c_str();
+        CI.ComputeBoundingBoxes = true;
+
+        GltfAsset Asset;
+        Asset.SceneIndex = 0;
+        Asset.Model = std::make_unique<GLTF::Model>(m_pDevice, m_pImmediateContext, CI);
+        if (!Asset.Model)
+            return {};
+        // Create SRBs per material bound to our frame attribs
+        Asset.Bindings = m_GLTFRenderer->CreateResourceBindings(*Asset.Model, m_GLTFFrameAttribsCB);
+    // Default transforms for scene 0
+    Asset.Model->ComputeTransforms(Asset.SceneIndex, Asset.Transforms);
+    // Compute scene-space bounding box (model space relative to asset root)
+    Asset.Bounds = Asset.Model->ComputeBoundingBox(Asset.SceneIndex, Asset.Transforms);
+
+        m_GltfAssets.emplace(Key, std::move(Asset));
+        return Key;
+    }
+
+    void C6GERender::EnsureGLTFBLAS(const std::string& AssetId)
+    {
+        auto it = m_GltfAssets.find(AssetId);
+        if (it == m_GltfAssets.end())
+            return;
+        auto& Asset = it->second;
+        if (Asset.BLAS)
+            return; // already built
+
+        // Prepare RT-capable copies of VB0 (positions interleaved) and index buffer
+        IBuffer* pVB0 = Asset.Model->GetVertexBuffer(0, m_pDevice, m_pImmediateContext);
+        IBuffer* pIB  = Asset.Model->GetIndexBuffer(m_pDevice, m_pImmediateContext);
+        if (pVB0 == nullptr || pIB == nullptr)
+            return;
+
+        const auto& VBDesc = pVB0->GetDesc();
+        const auto& IBDesc = pIB->GetDesc();
+
+        // Create RT vertex buffer copy (default usage) and copy data
+        {
+            BufferDesc Desc;
+            Desc.Name               = "GLTF RT Vertex Buffer0";
+            Desc.Usage              = USAGE_DEFAULT;
+            Desc.BindFlags          = BIND_VERTEX_BUFFER | BIND_RAY_TRACING;
+            Desc.Size               = VBDesc.Size;
+            Desc.ElementByteStride  = VBDesc.ElementByteStride != 0 ? VBDesc.ElementByteStride : 32u;
+            m_pDevice->CreateBuffer(Desc, nullptr, &Asset.RTVertexBuffer0);
+            if (Asset.RTVertexBuffer0)
+            {
+                m_pImmediateContext->CopyBuffer(pVB0, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+                                                Asset.RTVertexBuffer0, 0, Desc.Size,
+                                                RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+            }
+        }
+
+        // Create RT index buffer copy (default usage) and copy data
+        {
+            BufferDesc Desc;
+            Desc.Name               = "GLTF RT Index Buffer";
+            Desc.Usage              = USAGE_DEFAULT;
+            Desc.BindFlags          = BIND_INDEX_BUFFER | BIND_RAY_TRACING;
+            Desc.Size               = IBDesc.Size;
+            Desc.ElementByteStride  = IBDesc.ElementByteStride != 0 ? IBDesc.ElementByteStride : 4u;
+            m_pDevice->CreateBuffer(Desc, nullptr, &Asset.RTIndexBuffer);
+            if (Asset.RTIndexBuffer)
+            {
+                m_pImmediateContext->CopyBuffer(pIB, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+                                                Asset.RTIndexBuffer, 0, Desc.Size,
+                                                RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+            }
+        }
+
+        if (!Asset.RTVertexBuffer0 || !Asset.RTIndexBuffer)
+            return;
+
+        // Compute counts for BLAS triangle desc
+        const Uint32 VertexStride = Asset.RTVertexBuffer0->GetDesc().ElementByteStride != 0 ? Asset.RTVertexBuffer0->GetDesc().ElementByteStride : 32u;
+        const Uint64 VBSize       = Asset.RTVertexBuffer0->GetDesc().Size;
+        const Uint32 NumVertices  = VertexStride != 0 ? static_cast<Uint32>(VBSize / VertexStride) : 0u;
+        const Uint32 IndexStride  = Asset.RTIndexBuffer->GetDesc().ElementByteStride != 0 ? Asset.RTIndexBuffer->GetDesc().ElementByteStride : 4u;
+        const Uint64 IBSize       = Asset.RTIndexBuffer->GetDesc().Size;
+        const Uint32 NumIndices   = IndexStride != 0 ? static_cast<Uint32>(IBSize / IndexStride) : 0u;
+        if (NumVertices == 0 || NumIndices < 3)
+            return;
+
+        BLASTriangleDesc Triangles{};
+        Triangles.GeometryName         = "GLTFModel";
+        Triangles.MaxVertexCount       = NumVertices;
+        Triangles.VertexValueType      = VT_FLOAT32;
+        Triangles.VertexComponentCount = 3; // position only
+        Triangles.MaxPrimitiveCount    = NumIndices / 3;
+        Triangles.IndexType            = (IndexStride == 2 ? VT_UINT16 : VT_UINT32);
+
+        BottomLevelASDesc ASDesc;
+        ASDesc.Name          = "GLTF BLAS";
+        ASDesc.Flags         = RAYTRACING_BUILD_AS_PREFER_FAST_TRACE;
+        ASDesc.pTriangles    = &Triangles;
+        ASDesc.TriangleCount = 1;
+        m_pDevice->CreateBLAS(ASDesc, &Asset.BLAS);
+        if (!Asset.BLAS)
+            return;
+
+        // Build BLAS
+        BufferDesc ScratchDesc;
+        ScratchDesc.Name      = "GLTF BLAS Scratch";
+        ScratchDesc.Usage     = USAGE_DEFAULT;
+        ScratchDesc.BindFlags = BIND_RAY_TRACING;
+        ScratchDesc.Size      = Asset.BLAS->GetScratchBufferSizes().Build;
+        RefCntAutoPtr<IBuffer> pScratch;
+        m_pDevice->CreateBuffer(ScratchDesc, nullptr, &pScratch);
+
+        BLASBuildTriangleData TriData{};
+        TriData.GeometryName         = Triangles.GeometryName;
+        TriData.pVertexBuffer        = Asset.RTVertexBuffer0;
+        TriData.VertexStride         = VertexStride;
+        TriData.VertexOffset         = 0;
+        TriData.VertexCount          = NumVertices;
+        TriData.VertexValueType      = Triangles.VertexValueType;
+        TriData.VertexComponentCount = Triangles.VertexComponentCount;
+        TriData.pIndexBuffer         = Asset.RTIndexBuffer;
+        TriData.IndexOffset          = 0;
+        TriData.PrimitiveCount       = NumIndices / 3;
+        TriData.IndexType            = Triangles.IndexType;
+        TriData.Flags                = RAYTRACING_GEOMETRY_FLAG_OPAQUE;
+
+        BuildBLASAttribs Build{};
+        Build.pBLAS                       = Asset.BLAS;
+        Build.pTriangleData               = &TriData;
+        Build.TriangleDataCount           = 1;
+        Build.pScratchBuffer              = pScratch;
+        Build.BLASTransitionMode          = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+        Build.GeometryTransitionMode      = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+        Build.ScratchBufferTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+        m_pImmediateContext->BuildBLAS(Build);
+    }
+
+    void C6GERender::RenderGLTFWithWorld(const std::string& AssetId, const float4x4& World, const float4x4& CameraViewProj,
+                                         RESOURCE_STATE_TRANSITION_MODE TransitionMode)
+    {
+        auto it = m_GltfAssets.find(AssetId);
+        if (it == m_GltfAssets.end())
+        {
+            // Try to load lazily if not present
+            auto LoadedId = LoadGLTFAsset(AssetId);
+            it = m_GltfAssets.find(LoadedId);
+            if (it == m_GltfAssets.end())
+                return;
+        }
+        EnsureGLTFRenderer();
+        if (!m_GLTFRenderer || !m_GLTFFrameAttribsCB)
+            return;
+
+        // Update frame camera attribs minimally
+        {
+            MapHelper<HLSL::PBRFrameAttribs> Frame{m_pImmediateContext, m_GLTFFrameAttribsCB, MAP_WRITE, MAP_FLAG_DISCARD};
+            // Zero initialize
+            memset(static_cast<void*>(Frame), 0, m_GLTFRenderer->GetPRBFrameAttribsSize());
+            // Fill camera basics
+            auto& Cam = Frame->Camera;
+            Cam.f4ViewportSize = float4{static_cast<float>(m_FramebufferWidth), static_cast<float>(m_FramebufferHeight),
+                                        m_FramebufferWidth > 0 ? 1.0f / static_cast<float>(m_FramebufferWidth) : 0.0f,
+                                        m_FramebufferHeight > 0 ? 1.0f / static_cast<float>(m_FramebufferHeight) : 0.0f};
+            Cam.fNearPlaneZ    = 0.1f;
+            Cam.fFarPlaneZ     = 100.0f;
+            Cam.fNearPlaneDepth = 0.0f;
+            Cam.fFarPlaneDepth  = 1.0f;
+            Cam.fHandness      = 1.0f; // right-handed
+            Cam.mViewProj      = CameraViewProj;
+            Cam.mView          = float4x4::Identity(); // not strictly needed by PBR if ViewProj is set
+            Cam.mProj          = float4x4::Identity();
+            Cam.mViewInv       = Cam.mView.Inverse();
+            Cam.mProjInv       = Cam.mProj.Inverse();
+            Cam.mViewProjInv   = Cam.mViewProj.Inverse();
+
+            // Renderer parameters defaults
+            auto& RendererParams = Frame->Renderer;
+            m_GLTFRenderer->SetInternalShaderParameters(RendererParams);
+            RendererParams.OcclusionStrength = 1.0f;
+            RendererParams.EmissionScale     = 1.0f;
+            RendererParams.AverageLogLum     = 0.3f;
+            RendererParams.MiddleGray        = 0.18f;
+            RendererParams.WhitePoint        = 3.0f;
+            // Provide at least one directional light so models aren't black without IBL.
+            // Light data immediately follows PBRFrameAttribs in the buffer.
+            {
+                HLSL::PBRLightAttribs* Lights = reinterpret_cast<HLSL::PBRLightAttribs*>(Frame + 1);
+                float3 Dir = normalize(m_LightDirection);
+                GLTF::Light DefaultDirLight;
+                DefaultDirLight.Type      = GLTF::Light::TYPE::DIRECTIONAL;
+                DefaultDirLight.Color     = float3{1, 1, 1};
+                DefaultDirLight.Intensity = 1.0f;
+                GLTF_PBR_Renderer::WritePBRLightShaderAttribs({&DefaultDirLight, nullptr, &Dir, /*DistanceScale*/ 1.0f}, Lights);
+                RendererParams.LightCount = 1;
+            }
+        }
+
+        m_GLTFRenderer->Begin(m_pImmediateContext);
+
+        // Ensure IBL textures produced by PBR renderer are in SHADER_RESOURCE state before use
+        {
+            std::vector<StateTransitionDesc> Barriers;
+            if (auto* IrrSRV = m_GLTFRenderer->GetIrradianceCubeSRV())
+            {
+                if (auto* Tex = IrrSRV->GetTexture())
+                    Barriers.emplace_back(StateTransitionDesc{Tex, RESOURCE_STATE_UNKNOWN, RESOURCE_STATE_SHADER_RESOURCE, STATE_TRANSITION_FLAG_UPDATE_STATE});
+            }
+            if (auto* PrefSRV = m_GLTFRenderer->GetPrefilteredEnvMapSRV())
+            {
+                if (auto* Tex = PrefSRV->GetTexture())
+                    Barriers.emplace_back(StateTransitionDesc{Tex, RESOURCE_STATE_UNKNOWN, RESOURCE_STATE_SHADER_RESOURCE, STATE_TRANSITION_FLAG_UPDATE_STATE});
+            }
+            if (!Barriers.empty())
+                m_pImmediateContext->TransitionResourceStates(static_cast<Uint32>(Barriers.size()), Barriers.data());
+        }
+
+        auto& Asset = it->second;
+        // Recompute transforms for this world root
+        Asset.Model->ComputeTransforms(Asset.SceneIndex, Asset.Transforms, World);
+
+        GLTF_PBR_Renderer::RenderInfo Info;
+        Info.SceneIndex    = Asset.SceneIndex;
+        Info.ModelTransform = float4x4::Identity(); // World already applied as root
+        // Enable full PBR texturing and lighting. Renderer will automatically ignore
+        // features that aren't present in a given material/mesh.
+        Info.Flags = GLTF_PBR_Renderer::PSO_FLAG_DEFAULT |
+                     GLTF_PBR_Renderer::PSO_FLAG_ALL_TEXTURES |
+                     GLTF_PBR_Renderer::PSO_FLAG_USE_TEXCOORD0 |
+                     GLTF_PBR_Renderer::PSO_FLAG_USE_TEXCOORD1 |
+                     GLTF_PBR_Renderer::PSO_FLAG_USE_VERTEX_NORMALS |
+                     GLTF_PBR_Renderer::PSO_FLAG_USE_VERTEX_TANGENTS |
+                     GLTF_PBR_Renderer::PSO_FLAG_ENABLE_TEXCOORD_TRANSFORM |
+                     GLTF_PBR_Renderer::PSO_FLAG_USE_LIGHTS;
+
+    m_GLTFRenderer->Render(m_pImmediateContext, *Asset.Model, Asset.Transforms, nullptr, Info, &Asset.Bindings);
+    }
+
+    void C6GERender::RenderGLTFShadowWithWorld(const std::string& AssetId, const float4x4& World, const float4x4& LightViewProj,
+                                               RESOURCE_STATE_TRANSITION_MODE TransitionMode)
+    {
+        auto it = m_GltfAssets.find(AssetId);
+        if (it == m_GltfAssets.end())
+        {
+            auto LoadedId = LoadGLTFAsset(AssetId);
+            it = m_GltfAssets.find(LoadedId);
+            if (it == m_GltfAssets.end())
+                return;
+        }
+        CreateGLTFShadowPSO();
+        CreateGLTFShadowSkinnedPSO();
+        if (!m_pGLTFShadowPSO)
+            return;
+
+        auto& Asset = it->second;
+        // Compute transforms with root World
+        Asset.Model->ComputeTransforms(Asset.SceneIndex, Asset.Transforms, World);
+
+        // Bind all GLTF VBs like the PBR renderer does to ensure strides/slots match
+        const Uint32 NumVBs = static_cast<Uint32>(Asset.Model->GetVertexBufferCount());
+        std::vector<IBuffer*> VBs(NumVBs);
+        for (Uint32 i = 0; i < NumVBs; ++i)
+            VBs[i] = Asset.Model->GetVertexBuffer(i, m_pDevice, m_pImmediateContext);
+        if (VBs.empty() || VBs[0] == nullptr)
+            return;
+        m_pImmediateContext->SetVertexBuffers(0, NumVBs, VBs.data(), nullptr, TransitionMode, SET_VERTEX_BUFFERS_FLAG_RESET);
+
+        IBuffer* pIB = Asset.Model->GetIndexBuffer(m_pDevice, m_pImmediateContext);
+        if (pIB)
+            m_pImmediateContext->SetIndexBuffer(pIB, 0, TransitionMode);
+        else
+            return; // require indices for now
+
+    // We'll pick PSO per node (skinned vs static) below
+
+    const Uint32 BaseVertex = Asset.Model->GetBaseVertex();
+    const Uint32 FirstIndexBase = Asset.Model->GetFirstIndexLocation();
+
+        // Iterate scene nodes with meshes
+        const auto& Scene = Asset.Model->Scenes[Asset.SceneIndex];
+        for (const auto* pNode : Scene.LinearNodes)
+        {
+            if (pNode == nullptr || pNode->pMesh == nullptr)
+                continue;
+
+            const float4x4 NodeGlobal = Asset.Transforms.NodeGlobalMatrices[pNode->Index];
+            const float4x4 WVP = NodeGlobal * LightViewProj;
+
+            // Update constants (WorldViewProj)
+            struct ShadowVSConstants
+            {
+                float4x4 g_WorldViewProj;
+                float4x4 g_NormalTranform; // unused in shader; keep layout compatible if needed
+                float4   g_LightDirection; // unused
+            };
+            {
+                MapHelper<ShadowVSConstants> C(m_pImmediateContext, m_VSConstants, MAP_WRITE, MAP_FLAG_DISCARD);
+                C->g_WorldViewProj = WVP;
+                C->g_NormalTranform = float4x4::Identity();
+                C->g_LightDirection = m_LightDirection;
+            }
+
+            // Choose skinned or static shadow PSO
+            const bool IsSkinned = (pNode->SkinTransformsIndex >= 0);
+            if (IsSkinned && m_pGLTFShadowSkinnedPSO && m_GLTFShadowSkinnedSRB && m_GLTFShadowSkinCB)
+            {
+                // Upload joint matrices for this skin
+                const int SkinIdx = pNode->SkinTransformsIndex;
+                const auto& Skin = Asset.Transforms.Skins[static_cast<size_t>(SkinIdx)];
+                struct ShadowSkinCB
+                {
+                    float4x4 JointMatrices[256];
+                    int      JointCount;
+                    float3   _pad0;
+                };
+                {
+                    MapHelper<ShadowSkinCB> M(m_pImmediateContext, m_GLTFShadowSkinCB, MAP_WRITE, MAP_FLAG_DISCARD);
+                    const size_t Count = std::min<size_t>(Skin.JointMatrices.size(), 256);
+                    // Zero out to be safe
+                    for (size_t i = 0; i < 256; ++i)
+                        M->JointMatrices[i] = float4x4::Identity();
+                    for (size_t i = 0; i < Count; ++i)
+                        M->JointMatrices[i] = Skin.JointMatrices[i];
+                    M->JointCount = static_cast<int>(Count);
+                    M->_pad0 = float3{0,0,0};
+                }
+                // Bind PSO and SRB for skinned shadow
+                m_pImmediateContext->SetPipelineState(m_pGLTFShadowSkinnedPSO);
+                m_pImmediateContext->CommitShaderResources(m_GLTFShadowSkinnedSRB, TransitionMode);
+            }
+            else
+            {
+                m_pImmediateContext->SetPipelineState(m_pGLTFShadowPSO);
+                if (m_GLTFShadowSRB)
+                    m_pImmediateContext->CommitShaderResources(m_GLTFShadowSRB, TransitionMode);
+            }
+
+            const auto& Mesh = *pNode->pMesh;
+            for (const auto& Prim : Mesh.Primitives)
+            {
+                if (Prim.IndexCount == 0)
+                    continue;
+                DrawIndexedAttribs Draw{};
+                Draw.IndexType = VT_UINT32; // GLTF resource manager stores indices in 32-bit buffer
+                Draw.NumIndices = Prim.IndexCount;
+                Draw.FirstIndexLocation = FirstIndexBase + Prim.FirstIndex;
+                Draw.BaseVertex = BaseVertex;
+                Draw.Flags = DRAW_FLAG_VERIFY_ALL;
+                m_pImmediateContext->DrawIndexed(Draw);
+            }
         }
     }
 
@@ -2852,13 +4228,16 @@ else
             m_pDevice->CreateBuffer(BuffDesc, nullptr, &m_pTLASInstances);
         }
 
-        // Build initial instances from ECS: plane + all cube meshes
+    // Build initial instances from ECS: plane + all cube meshes + glTF meshes
         std::vector<TLASBuildInstanceData> Instances;
+        std::vector<std::string>           InstanceNames; // keep storage for names while building
         Instances.reserve(16);
+        InstanceNames.reserve(16);
         // Plane (static)
         {
             TLASBuildInstanceData inst{};
-            inst.InstanceName = "Plane Instance";
+            InstanceNames.emplace_back("Plane");
+            inst.InstanceName = InstanceNames.back().c_str();
             inst.pBLAS        = m_pBLAS_Plane;
             inst.Mask         = 0xFF;
             inst.CustomId     = 0;
@@ -2867,7 +4246,7 @@ else
             inst.Transform.SetTranslation(0.f, 0.f, 0.f);
             Instances.push_back(inst);
         }
-        // ECS cubes
+        // ECS cubes and glTF
         if (m_World)
         {
             auto& reg = m_World->Registry();
@@ -2881,7 +4260,8 @@ else
                 const auto& tr = view.get<ECS::Transform>(e);
                 const float4x4 W = tr.WorldMatrix();
                 TLASBuildInstanceData inst{};
-                inst.InstanceName = "Cube Instance";
+                InstanceNames.emplace_back(std::string("Cube_") + std::to_string(static_cast<Uint32>(e)));
+                inst.InstanceName = InstanceNames.back().c_str();
                 inst.pBLAS        = m_pBLAS_Cube;
                 inst.Mask         = 0xFF;
                 inst.CustomId     = cid;
@@ -2891,6 +4271,35 @@ else
                 ++cid;
                 if (cid >= m_MaxTLASInstances)
                     break; // respect capacity hint
+            }
+
+            // glTF dynamic meshes
+            auto viewGltf = reg.view<ECS::Transform, ECS::Mesh>();
+            for (auto e : viewGltf)
+            {
+                const auto& m = viewGltf.get<ECS::Mesh>(e);
+                if (m.kind != ECS::Mesh::Kind::Dynamic || m.assetId.empty())
+                    continue;
+                EnsureGLTFBLAS(m.assetId);
+                auto itAsset = m_GltfAssets.find(m.assetId);
+                if (itAsset == m_GltfAssets.end())
+                    continue;
+                if (!itAsset->second.BLAS)
+                    continue;
+                const auto& tr = viewGltf.get<ECS::Transform>(e);
+                const float4x4 W = tr.WorldMatrix();
+                TLASBuildInstanceData inst{};
+                InstanceNames.emplace_back(std::string("GLTF_") + std::to_string(static_cast<Uint32>(e)));
+                inst.InstanceName = InstanceNames.back().c_str();
+                inst.pBLAS        = itAsset->second.BLAS;
+                inst.Mask         = 0xFF;
+                inst.CustomId     = cid;
+                inst.Transform.SetRotation(W.Data(), 4);
+                inst.Transform.SetTranslation(W.m30, W.m31, W.m32);
+                Instances.push_back(inst);
+                ++cid;
+                if (cid >= m_MaxTLASInstances)
+                    break;
             }
         }
 
@@ -2908,6 +4317,7 @@ else
 
         m_pImmediateContext->BuildTLAS(TLASAttribs);
 
+        m_LastTLASInstanceCount = TLASAttribs.InstanceCount;
         std::cout << "[C6GE] CreateRayTracingAS: built BLAS and TLAS with " << TLASAttribs.InstanceCount << " instance(s) from ECS." << std::endl;
     }
 
@@ -2930,14 +4340,17 @@ else
         if (!m_pTLAS || !m_pBLAS_Cube)
             return;
 
-        // Build instance list from ECS: plane + cube meshes
+    // Build instance list from ECS: plane + cube meshes + glTF meshes
         std::vector<TLASBuildInstanceData> Instances;
+        std::vector<std::string>           InstanceNames; // keep storage for names while building
         Instances.reserve(16);
+        InstanceNames.reserve(16);
         // Plane instance (static)
         if (m_pBLAS_Plane)
         {
             TLASBuildInstanceData inst{};
-            inst.InstanceName = "Plane Instance";
+            InstanceNames.emplace_back("Plane");
+            inst.InstanceName = InstanceNames.back().c_str();
             inst.pBLAS        = m_pBLAS_Plane;
             inst.Mask         = 0xFF;
             inst.CustomId     = 0;
@@ -2946,7 +4359,7 @@ else
             inst.Transform.SetTranslation(0.f, 0.f, 0.f);
             Instances.push_back(inst);
         }
-        // ECS cubes
+        // ECS cubes and glTF
         if (m_World)
         {
             auto& reg = m_World->Registry();
@@ -2960,8 +4373,38 @@ else
                 const auto& tr = view.get<ECS::Transform>(e);
                 const float4x4 W = tr.WorldMatrix();
                 TLASBuildInstanceData inst{};
-                inst.InstanceName = "Cube Instance";
+                InstanceNames.emplace_back(std::string("Cube_") + std::to_string(static_cast<Uint32>(e)));
+                inst.InstanceName = InstanceNames.back().c_str();
                 inst.pBLAS        = m_pBLAS_Cube;
+                inst.Mask         = 0xFF;
+                inst.CustomId     = cid;
+                inst.Transform.SetRotation(W.Data(), 4);
+                inst.Transform.SetTranslation(W.m30, W.m31, W.m32);
+                Instances.push_back(inst);
+                ++cid;
+                if (cid >= m_MaxTLASInstances)
+                    break;
+            }
+
+            // glTF dynamic meshes
+            auto viewGltf = reg.view<ECS::Transform, ECS::Mesh>();
+            for (auto e : viewGltf)
+            {
+                const auto& m = viewGltf.get<ECS::Mesh>(e);
+                if (m.kind != ECS::Mesh::Kind::Dynamic || m.assetId.empty())
+                    continue;
+                EnsureGLTFBLAS(m.assetId);
+                auto itAsset = m_GltfAssets.find(m.assetId);
+                if (itAsset == m_GltfAssets.end())
+                    continue;
+                if (!itAsset->second.BLAS)
+                    continue;
+                const auto& tr = viewGltf.get<ECS::Transform>(e);
+                const float4x4 W = tr.WorldMatrix();
+                TLASBuildInstanceData inst{};
+                InstanceNames.emplace_back(std::string("GLTF_") + std::to_string(static_cast<Uint32>(e)));
+                inst.InstanceName = InstanceNames.back().c_str();
+                inst.pBLAS        = itAsset->second.BLAS;
                 inst.Mask         = 0xFF;
                 inst.CustomId     = cid;
                 inst.Transform.SetRotation(W.Data(), 4);
@@ -2997,7 +4440,8 @@ else
 
         BuildTLASAttribs TLASAttribs{};
         TLASAttribs.pTLAS                        = m_pTLAS;
-        TLASAttribs.Update                       = true; // refit/update after initial build
+        // Rebuild if instance count changed; otherwise do a fast update
+        TLASAttribs.Update                       = (InstanceCount == m_LastTLASInstanceCount);
         TLASAttribs.pScratchBuffer               = m_pTLASScratch;
         TLASAttribs.pInstanceBuffer              = m_pTLASInstances;
         TLASAttribs.pInstances                   = Instances.empty() ? nullptr : Instances.data();
@@ -3008,6 +4452,7 @@ else
         TLASAttribs.ScratchBufferTransitionMode  = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
 
         m_pImmediateContext->BuildTLAS(TLASAttribs);
+        m_LastTLASInstanceCount = InstanceCount;
     }
 
     void C6GERender::CreateMSAARenderTarget()
@@ -3203,17 +4648,20 @@ else
     m_CubeWorldMatrix = float4x4::Identity();
     m_SecondCubeWorldMatrix = float4x4::Identity();
 
-        // Camera is at (0, 0, -5) looking along the Z axis
-        float4x4 View = float4x4::Translation(0.f, 0.0f, 5.0f);
+    // Camera is at (0, 0, -5) looking along the Z axis
+    float4x4 View = float4x4::Translation(0.f, 0.0f, 5.0f);
 
         // Get pretransform matrix that rotates the scene according the surface orientation
         float4x4 SrfPreTransform = GetSurfacePretransformMatrix(float3{0, 0, 1});
 
         // Get projection matrix adjusted to the current screen orientation
-        float4x4 Proj = GetAdjustedProjectionMatrix(PI_F / 4.0f, 0.1f, 100.f);
+    float4x4 Proj = GetAdjustedProjectionMatrix(PI_F / 4.0f, 0.1f, 100.f);
 
         // Compute camera view-projection matrix (world transforms applied per-object)
-    m_CameraViewProjMatrix = View * SrfPreTransform * Proj;
+    // Cache matrices for gizmo math
+    m_ViewMatrix           = View * SrfPreTransform; // include pretransform so it matches VP used for rendering
+    m_ProjMatrix           = Proj;
+    m_CameraViewProjMatrix = m_ViewMatrix * m_ProjMatrix;
     }
 
     void C6GERender::EnsureWorld()

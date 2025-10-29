@@ -40,6 +40,11 @@
 #include "ThreadSignal.hpp"
 #include "DiligentTools/ThirdParty/imgui/imgui.h"
 #include <entt/entt.hpp>
+// GLTF loader & renderer
+#include "DiligentTools/AssetLoader/interface/GLTFLoader.hpp"
+#include "DiligentFX/PBR/interface/GLTF_PBR_Renderer.hpp"
+// Project system
+#include "Project/Project.h"
 
 // Forward declarations for DiligentFX PostFX
 namespace Diligent
@@ -115,6 +120,12 @@ namespace Diligent
         // ECS accessors for external object creation
         class ECS::World* GetWorld() { return m_World.get(); }
         void EnsureWorld();
+        // Render a glTF asset with explicit world transform (used by RenderSystem)
+        void RenderGLTFWithWorld(const std::string& AssetId, const float4x4& World, const float4x4& CameraViewProj,
+                                 RESOURCE_STATE_TRANSITION_MODE TransitionMode);
+    // Render a glTF asset into the shadow map (depth-only) with explicit root transform
+    void RenderGLTFShadowWithWorld(const std::string& AssetId, const float4x4& World, const float4x4& LightViewProj,
+                       RESOURCE_STATE_TRANSITION_MODE TransitionMode);
     private:
     void CreateCubePSO();
     void CreatePlanePSO();
@@ -197,6 +208,13 @@ namespace Diligent
     void DestroyRayTracingAS();
     void UpdateTLAS();
 
+    // GLTF integration
+    void EnsureGLTFRenderer();
+    void CreateGLTFShadowPSO();
+    void CreateGLTFShadowSkinnedPSO();
+    // Returns normalized asset id (path-based)
+    std::string LoadGLTFAsset(const std::string& Path);
+
     // Ray tracing resources (incremental)
     RefCntAutoPtr<ITexture>     m_pRTOutputTex;
     RefCntAutoPtr<ITextureView> m_pRTOutputUAV;
@@ -220,12 +238,44 @@ namespace Diligent
     RefCntAutoPtr<IShaderResourceBinding> m_RTCompositeSRB;
     RefCntAutoPtr<IPipelineState>         m_pRTAddCompositePSO;   // additive (reflections)
     RefCntAutoPtr<IShaderResourceBinding> m_RTAddCompositeSRB;
+    // GLTF shadow (depth-only) PSO
+    RefCntAutoPtr<IPipelineState>         m_pGLTFShadowPSO;
+    RefCntAutoPtr<IShaderResourceBinding> m_GLTFShadowSRB;
+    // Skinned GLTF shadow PSO and constants
+    RefCntAutoPtr<IPipelineState>         m_pGLTFShadowSkinnedPSO;
+    RefCntAutoPtr<IShaderResourceBinding> m_GLTFShadowSkinnedSRB;
+    RefCntAutoPtr<IBuffer>                m_GLTFShadowSkinCB;
     // Ray query (shadows) compute PSO
     RefCntAutoPtr<IPipelineState>         m_pRTShadowPSO;
     RefCntAutoPtr<IShaderResourceBinding> m_RTShadowSRB;
     RefCntAutoPtr<IBuffer>                m_RTConstants;
     // TLAS capacity hint
     uint32_t                              m_MaxTLASInstances = 1024;
+    // Track last built instance count to decide rebuild vs update
+    uint32_t                              m_LastTLASInstanceCount = 0;
+
+    // GLTF renderer and asset cache
+    std::unique_ptr<GLTF_PBR_Renderer>    m_GLTFRenderer;
+    RefCntAutoPtr<IBuffer>                m_GLTFFrameAttribsCB;
+    struct GltfAsset
+    {
+        std::unique_ptr<GLTF::Model>                           Model;
+        GLTF::ModelTransforms                                   Transforms{};
+        GLTF_PBR_Renderer::ModelResourceBindings                Bindings;
+        Uint32                                                  SceneIndex = 0;
+            BoundBox                                                Bounds; // model-space AABB of the scene
+            // Ray tracing resources per-asset
+            RefCntAutoPtr<IBottomLevelAS>                           BLAS;
+            RefCntAutoPtr<IBuffer>                                  RTVertexBuffer0; // POSITION/INTERLEAVED buffer (slot 0)
+            RefCntAutoPtr<IBuffer>                                  RTIndexBuffer;
+    };
+    std::unordered_map<std::string, GltfAsset> m_GltfAssets;
+    // If an asset id is a .c6m wrapper, resolve to source glTF and cache
+    std::unordered_map<std::string, std::string> m_ModelResolveCache;
+    std::string ResolveModelAsset(const std::string& Id);
+
+        // Ensure a BLAS exists for a given glTF asset (lazy-built)
+        void EnsureGLTFBLAS(const std::string& AssetId);
 
     float4x4       m_CubeWorldMatrix;
     float4x4       m_SecondCubeWorldMatrix;
@@ -256,8 +306,32 @@ namespace Diligent
         // ECS world and render system
         std::unique_ptr<ECS::World> m_World;
         std::unique_ptr<C6GE::Systems::RenderSystem> m_RenderSystem;
+    // Project manager (current project)
+    std::unique_ptr<ProjectSystem::ProjectManager> m_Project;
         // Editor selection
         entt::entity m_SelectedEntity { entt::null };
+
+        // Viewport gizmos & picking
+        enum class GizmoOperation { Translate, Rotate, Scale };
+        GizmoOperation m_GizmoOperation = GizmoOperation::Translate; // default to translate per editor UX
+    GizmoOperation m_LastGizmoOperation = GizmoOperation::Translate;
+        bool           m_GizmoLocal     = true;                   // local vs world (reserved)
+        float4         m_GizmoAxisAngle = float4{1, 0, 0, 0};     // axis (xyz) + angle (w)
+        entt::entity   m_GizmoEntityLast { entt::null };          // to detect selection changes
+
+        // Gizmo interaction state (translate)
+        bool           m_GizmoDragging   = false;
+        int            m_GizmoAxis       = -1;     // 0=X,1=Y,2=Z
+        float3         m_GizmoAxisDirW   = float3{1,0,0};
+        float3         m_GizmoStartPosW  = float3{0,0,0};
+        float          m_GizmoStartT     = 0.0f;   // starting axis param at drag begin
+    float3         m_GizmoDragPlaneNormal = float3{0,1,0};
+    float3         m_GizmoDragPlanePoint  = float3{0,0,0};
+    float3         m_GizmoStartScale = float3{1,1,1};
+
+        // Cached camera matrices for viewport math
+        float4x4       m_ViewMatrix      = float4x4::Identity();
+        float4x4       m_ProjMatrix      = float4x4::Identity();
     };
 
 } // namespace Diligent
