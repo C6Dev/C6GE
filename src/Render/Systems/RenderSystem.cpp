@@ -19,18 +19,33 @@ void RenderSystem::RenderShadows(ECS::World& world, const float4x4& lightViewPro
             const auto& tr = viewStatic.get<ECS::Transform>(e);
             const auto& sm = viewStatic.get<ECS::StaticMesh>(e);
             if (sm.type == ECS::StaticMesh::MeshType::Cube)
+            {
                 m_Renderer->RenderCubeWithWorld(tr.WorldMatrix(), lightViewProj, true,
                                                 RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+            }
+            else if (sm.type == ECS::StaticMesh::MeshType::Plane)
+            {
+                m_Renderer->RenderPlaneWithWorld(tr.WorldMatrix(), lightViewProj, true,
+                                                 RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+            }
         }
         auto viewMesh = reg.view<ECS::Transform, ECS::Mesh>();
         for (auto e : viewMesh)
         {
             const auto& tr = viewMesh.get<ECS::Transform>(e);
             const auto& mesh = viewMesh.get<ECS::Mesh>(e);
-            if (mesh.kind == ECS::Mesh::Kind::Static && mesh.staticType == ECS::Mesh::StaticType::Cube)
+            if (mesh.kind == ECS::Mesh::Kind::Static)
             {
-                m_Renderer->RenderCubeWithWorld(tr.WorldMatrix(), lightViewProj, true,
-                                                RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+                if (mesh.staticType == ECS::Mesh::StaticType::Cube)
+                {
+                    m_Renderer->RenderCubeWithWorld(tr.WorldMatrix(), lightViewProj, true,
+                                                    RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+                }
+                else if (mesh.staticType == ECS::Mesh::StaticType::Plane)
+                {
+                    m_Renderer->RenderPlaneWithWorld(tr.WorldMatrix(), lightViewProj, true,
+                                                     RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+                }
             }
             else if (mesh.kind == ECS::Mesh::Kind::Dynamic && !mesh.assetId.empty())
             {
@@ -55,7 +70,13 @@ void RenderSystem::RenderScene(ECS::World& world, const float4x4& cameraViewProj
             const auto& tr = viewStatic.get<ECS::Transform>(e);
             const auto& sm = viewStatic.get<ECS::StaticMesh>(e);
             if (sm.type == ECS::StaticMesh::MeshType::Cube)
+            {
                 m_Renderer->RenderCubeWithWorld(tr.WorldMatrix(), cameraViewProj, false, TransitionMode);
+            }
+            else if (sm.type == ECS::StaticMesh::MeshType::Plane)
+            {
+                m_Renderer->RenderPlaneWithWorld(tr.WorldMatrix(), cameraViewProj, false, TransitionMode);
+            }
         }
     }
     {
@@ -64,9 +85,16 @@ void RenderSystem::RenderScene(ECS::World& world, const float4x4& cameraViewProj
         {
             const auto& tr = viewMesh.get<ECS::Transform>(e);
             const auto& mesh = viewMesh.get<ECS::Mesh>(e);
-            if (mesh.kind == ECS::Mesh::Kind::Static && mesh.staticType == ECS::Mesh::StaticType::Cube)
+            if (mesh.kind == ECS::Mesh::Kind::Static)
             {
-                m_Renderer->RenderCubeWithWorld(tr.WorldMatrix(), cameraViewProj, false, TransitionMode);
+                if (mesh.staticType == ECS::Mesh::StaticType::Cube)
+                {
+                    m_Renderer->RenderCubeWithWorld(tr.WorldMatrix(), cameraViewProj, false, TransitionMode);
+                }
+                else if (mesh.staticType == ECS::Mesh::StaticType::Plane)
+                {
+                    m_Renderer->RenderPlaneWithWorld(tr.WorldMatrix(), cameraViewProj, false, TransitionMode);
+                }
             }
             else if (mesh.kind == ECS::Mesh::Kind::Dynamic && !mesh.assetId.empty())
             {

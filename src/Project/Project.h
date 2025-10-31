@@ -53,6 +53,16 @@ public:
     virtual ~ECSWorldLike() = 0; // Make class polymorphic in this header
     struct TransformData { float position[3]{0,0,0}; float rotationEuler[3]{0,0,0}; float scale[3]{1,1,1}; };
     enum class MeshKind { None, StaticCube, DynamicGLTF };
+    struct DirectionalLightData { float direction[3]{0,0,0}; float intensity{1.0f}; };
+    struct PointLightData { float color[3]{1,1,1}; float intensity{1.0f}; float range{10.0f}; };
+    struct SpotLightData {
+        float direction[3]{0,-1,0};
+        float color[3]{1,1,1};
+        float intensity{1.0f};
+        float range{15.0f};
+        float angleDegrees{30.0f};
+    };
+    struct CameraData { float fovYRadians{0.785398163f}; float nearZ{0.1f}; float farZ{100.0f}; };
     struct ObjectViewItem {
         void*        handle = nullptr; // opaque
         std::string  name;
@@ -60,6 +70,14 @@ public:
         TransformData tr{};
         MeshKind     meshKind = MeshKind::None;
         std::string  assetId; // for DynamicGLTF
+        bool                 hasDirectionalLight = false;
+        DirectionalLightData directionalLight{};
+        bool                 hasPointLight = false;
+        PointLightData       pointLight{};
+        bool                 hasSpotLight = false;
+        SpotLightData        spotLight{};
+        bool                 hasCamera = false;
+        CameraData           camera{};
     };
     // for Save
     virtual std::vector<ObjectViewItem> EnumerateObjects() const = 0;
@@ -68,6 +86,10 @@ public:
     virtual void* CreateObject(const std::string& name) = 0;
     virtual void SetTransform(void* handle, const TransformData& t) = 0;
     virtual void SetMesh(void* handle, MeshKind kind, const std::string& assetId) = 0;
+    virtual void SetDirectionalLight(void* handle, const DirectionalLightData& data) = 0;
+    virtual void SetPointLight(void* handle, const PointLightData& data) = 0;
+    virtual void SetSpotLight(void* handle, const SpotLightData& data) = 0;
+    virtual void SetCamera(void* handle, const CameraData& data) = 0;
 };
 
 inline ECSWorldLike::~ECSWorldLike() = default;

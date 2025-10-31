@@ -8,8 +8,9 @@ cbuffer Constants
 // labeled 'ATTRIBn', where n is the attribute number.
 struct VSInput
 {
-    float3 Pos   : ATTRIB0;
-    float4 Color : ATTRIB1;
+    float3 Pos    : ATTRIB0;
+    float3 Normal : ATTRIB1; // unused
+    float2 UV     : ATTRIB2; // unused
 };
 
 struct PSInput 

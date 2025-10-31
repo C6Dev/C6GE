@@ -46,6 +46,8 @@
 // Project system
 #include "Project/Project.h"
 
+struct GLFWwindow;
+
 // Forward declarations for DiligentFX PostFX
 namespace Diligent
 {
@@ -66,6 +68,14 @@ namespace Diligent
         RefCntAutoPtr<ITextureView> m_PlayIconSRV;
         RefCntAutoPtr<ITexture>     m_PauseIconTex;
         RefCntAutoPtr<ITextureView> m_PauseIconSRV;
+        RefCntAutoPtr<ITexture>     m_MinimizeIconTex;
+        RefCntAutoPtr<ITextureView> m_MinimizeIconSRV;
+        RefCntAutoPtr<ITexture>     m_MaximizeIconTex;
+        RefCntAutoPtr<ITextureView> m_MaximizeIconSRV;
+        RefCntAutoPtr<ITexture>     m_CloseIconTex;
+        RefCntAutoPtr<ITextureView> m_CloseIconSRV;
+    RefCntAutoPtr<ITexture>     m_EditorLogoTex;
+    RefCntAutoPtr<ITextureView> m_EditorLogoSRV;
 
     public:
         // Play/pause state for editor runtime
@@ -114,11 +124,16 @@ namespace Diligent
 
         static bool IsRuntime;
 
+        void SetHostWindow(GLFWwindow* window);
+
     private:
     // Small helper to draw a cube with an explicit world transform (for ECS)
     public:
         void RenderCubeWithWorld(const float4x4& World, const float4x4& CameraViewProj, bool IsShadowPass,
                                  RESOURCE_STATE_TRANSITION_MODE TransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        // New: draw a plane static mesh with explicit world transform, using the same PSOs as the cube
+        void RenderPlaneWithWorld(const float4x4& World, const float4x4& CameraViewProj, bool IsShadowPass,
+                                  RESOURCE_STATE_TRANSITION_MODE TransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
         // ECS accessors for external object creation
         class ECS::World* GetWorld() { return m_World.get(); }
         void EnsureWorld();
@@ -131,6 +146,7 @@ namespace Diligent
     private:
     void CreateCubePSO();
     void CreatePlanePSO();
+    void CreatePlaneMeshBuffers();
     // Shadow map visualization creation removed
     void CreateShadowMap();
     void RenderShadowMap();
@@ -150,6 +166,8 @@ namespace Diligent
     // Shadow map visualization PSO removed
     RefCntAutoPtr<IBuffer>                m_CubeVertexBuffer;
     RefCntAutoPtr<IBuffer>                m_CubeIndexBuffer;
+    RefCntAutoPtr<IBuffer>                m_PlaneVertexBuffer; // static plane VB (pos,normal,uv)
+    RefCntAutoPtr<IBuffer>                m_PlaneIndexBuffer;  // static plane IB
     RefCntAutoPtr<IBuffer>                m_VSConstants;
     float                                  m_LineWidth = 1.0f;
     // Keep the source texture alive to ensure default SRV remains valid
@@ -193,6 +211,8 @@ namespace Diligent
     RefCntAutoPtr<ITexture>           m_pPostTexture;    // Post-processed color buffer (same size as framebuffer)
     RefCntAutoPtr<ITextureView>       m_pPostRTV;
     RefCntAutoPtr<ITextureView>       m_pPostSRV;
+
+    GLFWwindow* m_HostWindow = nullptr;
     RefCntAutoPtr<IPipelineState>     m_pPostGammaPSO;   // Simple gamma-correction PSO (fullscreen)
     static constexpr Uint32           kPostSRBHistory = 3;
     RefCntAutoPtr<IShaderResourceBinding> m_PostGammaSRBs[kPostSRBHistory] = {};
@@ -293,7 +313,10 @@ namespace Diligent
     float4x4       m_SecondCubeWorldMatrix;
     float4x4       m_CameraViewProjMatrix;
     float4x4       m_WorldToShadowMapUVDepthMatr;
-    float3         m_LightDirection  = normalize(float3(-0.49f, -0.60f, 0.64f));
+    // Derived each frame from ECS lights; no default light
+    float3         m_LightDirection  = float3{0,0,0};
+    float          m_DirLightIntensity = 0.0f;
+    bool           m_HasDirectionalLight = false;
     Uint32         m_ShadowMapSize   = 2048;
     TEXTURE_FORMAT m_ShadowMapFormat = TEX_FORMAT_D16_UNORM;
     // Shadow visualization removed. Use RenderShadows to enable/disable shadowing.
@@ -346,6 +369,12 @@ namespace Diligent
         // Cached camera matrices for viewport math
         float4x4       m_ViewMatrix      = float4x4::Identity();
         float4x4       m_ProjMatrix      = float4x4::Identity();
+
+        // Per-frame light arrays for raster shaders
+        struct PointLightData { float3 position; float range; float3 color; float intensity; };
+        struct SpotLightData  { float3 position; float range; float3 color; float intensity; float3 direction; float spotCos; };
+        std::vector<PointLightData> m_FramePointLights;
+        std::vector<SpotLightData>  m_FrameSpotLights;
     };
 
 } // namespace Diligent

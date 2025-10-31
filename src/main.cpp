@@ -77,6 +77,7 @@
 #include "ColorConversion.h"
 #include "../../Common/src/TexturedCube.hpp"
 #include "imgui.h"
+#include "backends/imgui_impl_glfw.h"
 #include "ImGuiUtils.hpp"
 #include "ImGuiImplDiligent.hpp"
 #include "Align.hpp"
@@ -109,6 +110,227 @@
 
 using namespace Diligent;
 
+namespace
+{
+
+struct NativeWindowWrapper
+{
+#if defined(_WIN32)
+    Win32NativeWindow win32{};
+#elif defined(__APPLE__)
+    MacOSNativeWindow mac{};
+#elif defined(__linux__)
+    LinuxNativeWindow x11{};
+#endif
+};
+
+static NativeWindowWrapper GetNativeWindow(GLFWwindow* window)
+{
+    NativeWindowWrapper native{};
+#if defined(_WIN32)
+    native.win32.hWnd = glfwGetWin32Window(window);
+#elif defined(__APPLE__)
+    native.mac.pNSView = [glfwGetCocoaWindow(window) contentView];
+#elif defined(__linux__)
+    native.x11.WindowId = glfwGetX11Window(window);
+    native.x11.pDisplay = glfwGetX11Display();
+#endif
+    return native;
+}
+
+static NativeWindowWrapper GetNativeWindow(ImGuiViewport* viewport)
+{
+    if (viewport == nullptr || viewport->PlatformHandle == nullptr)
+        return {};
+    return GetNativeWindow(static_cast<GLFWwindow*>(viewport->PlatformHandle));
+}
+
+struct DiligentViewportData
+{
+    RefCntAutoPtr<ISwapChain> SwapChain;
+};
+
+bool g_ImGuiGlfwBackendEnabled = false;
+RefCntAutoPtr<IRenderDevice> g_RenderDevice;
+RefCntAutoPtr<IDeviceContext> g_ImmediateContext;
+RefCntAutoPtr<ISwapChain> g_MainSwapChain;
+#if defined(_WIN32)
+#    if D3D11_SUPPORTED
+RefCntAutoPtr<IEngineFactoryD3D11> g_FactoryD3D11;
+#    endif
+#    if D3D12_SUPPORTED
+RefCntAutoPtr<IEngineFactoryD3D12> g_FactoryD3D12;
+#    endif
+#endif
+RENDER_DEVICE_TYPE g_DeviceType = RENDER_DEVICE_TYPE_UNDEFINED;
+ImGuiImplDiligent* g_ImGuiRenderer = nullptr;
+
+static bool InitializeDiligentViewportGlobals(const RefCntAutoPtr<IRenderDevice>& device,
+                                              const RefCntAutoPtr<IDeviceContext>& context,
+                                              const RefCntAutoPtr<ISwapChain>& swapChain,
+                                              const RefCntAutoPtr<IEngineFactory>& factory)
+{
+    g_RenderDevice = device;
+    g_ImmediateContext = context;
+    g_MainSwapChain = swapChain;
+    g_DeviceType = device ? device->GetDeviceInfo().Type : RENDER_DEVICE_TYPE_UNDEFINED;
+
+#if defined(_WIN32)
+#    if D3D11_SUPPORTED
+    g_FactoryD3D11.Release();
+#    endif
+#    if D3D12_SUPPORTED
+    g_FactoryD3D12.Release();
+#    endif
+    if (g_DeviceType == RENDER_DEVICE_TYPE_D3D11)
+    {
+#    if D3D11_SUPPORTED
+        g_FactoryD3D11 = RefCntAutoPtr<IEngineFactoryD3D11>{factory, IID_EngineFactoryD3D11};
+        return g_FactoryD3D11 != nullptr;
+#    else
+        return false;
+#    endif
+    }
+    else if (g_DeviceType == RENDER_DEVICE_TYPE_D3D12)
+    {
+#    if D3D12_SUPPORTED
+        g_FactoryD3D12 = RefCntAutoPtr<IEngineFactoryD3D12>{factory, IID_EngineFactoryD3D12};
+        return g_FactoryD3D12 != nullptr;
+#    else
+        return false;
+#    endif
+    }
+#endif
+
+    return false;
+}
+
+static void ImGui_Diligent_DestroyWindow(ImGuiViewport* viewport);
+
+static void ImGui_Diligent_CreateWindow(ImGuiViewport* viewport)
+{
+    if (!viewport)
+        return;
+    if (!g_RenderDevice || !g_ImmediateContext || !g_MainSwapChain)
+        return;
+
+    auto* data = IM_NEW(DiligentViewportData)();
+    viewport->RendererUserData = data;
+
+    SwapChainDesc desc = g_MainSwapChain->GetDesc();
+    desc.Width = static_cast<Uint32>(std::max(1.0f, viewport->Size.x));
+    desc.Height = static_cast<Uint32>(std::max(1.0f, viewport->Size.y));
+
+    bool created = false;
+#if defined(_WIN32)
+    const auto native = GetNativeWindow(viewport);
+    const FullScreenModeDesc fsDesc{};
+    if (g_DeviceType == RENDER_DEVICE_TYPE_D3D11)
+    {
+#    if D3D11_SUPPORTED
+        if (g_FactoryD3D11)
+        {
+            g_FactoryD3D11->CreateSwapChainD3D11(g_RenderDevice, g_ImmediateContext, desc, fsDesc, native.win32, &data->SwapChain);
+            created = (data->SwapChain != nullptr);
+        }
+#    endif
+    }
+    else if (g_DeviceType == RENDER_DEVICE_TYPE_D3D12)
+    {
+#    if D3D12_SUPPORTED
+        if (g_FactoryD3D12)
+        {
+            g_FactoryD3D12->CreateSwapChainD3D12(g_RenderDevice, g_ImmediateContext, desc, fsDesc, native.win32, &data->SwapChain);
+            created = (data->SwapChain != nullptr);
+        }
+#    endif
+    }
+#endif
+
+    if (!created)
+    {
+        ImGui_Diligent_DestroyWindow(viewport);
+        std::cerr << "[C6GE] Failed to create swap chain for ImGui viewport." << std::endl;
+    }
+}
+
+static void ImGui_Diligent_DestroyWindow(ImGuiViewport* viewport)
+{
+    if (viewport == nullptr)
+        return;
+    if (auto* data = static_cast<DiligentViewportData*>(viewport->RendererUserData))
+    {
+        data->SwapChain.Release();
+        IM_DELETE(data);
+    }
+    viewport->RendererUserData = nullptr;
+}
+
+static void ImGui_Diligent_SetWindowSize(ImGuiViewport* viewport, ImVec2 size)
+{
+    if (viewport == nullptr)
+        return;
+    if (auto* data = static_cast<DiligentViewportData*>(viewport->RendererUserData))
+    {
+        if (data->SwapChain)
+        {
+            data->SwapChain->Resize(static_cast<Uint32>(std::max(1.0f, size.x)),
+                                    static_cast<Uint32>(std::max(1.0f, size.y)));
+        }
+    }
+}
+
+static void ImGui_Diligent_RenderWindow(ImGuiViewport* viewport, void*)
+{
+    if (viewport == nullptr || g_ImGuiRenderer == nullptr)
+        return;
+    auto* data = static_cast<DiligentViewportData*>(viewport->RendererUserData);
+    if (!data || !data->SwapChain)
+        return;
+
+    ITextureView* rtv = data->SwapChain->GetCurrentBackBufferRTV();
+    ITextureView* dsv = data->SwapChain->GetDepthBufferDSV();
+    if (!rtv)
+        return;
+
+    ITextureView* rtvs[] = {rtv};
+    g_ImmediateContext->SetRenderTargets(1, rtvs, dsv, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    if (!(viewport->Flags & ImGuiViewportFlags_NoRendererClear))
+    {
+        const float clearColor[4] = {0.f, 0.f, 0.f, 1.f};
+        g_ImmediateContext->ClearRenderTarget(rtv, clearColor, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        if (dsv)
+        {
+            g_ImmediateContext->ClearDepthStencil(dsv, CLEAR_DEPTH_FLAG, 1.0f, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        }
+    }
+
+    g_ImGuiRenderer->RenderDrawData(g_ImmediateContext, viewport->DrawData);
+}
+
+static void ImGui_Diligent_SwapBuffers(ImGuiViewport* viewport, void*)
+{
+    if (auto* data = static_cast<DiligentViewportData*>(viewport ? viewport->RendererUserData : nullptr))
+    {
+        if (data->SwapChain)
+            data->SwapChain->Present(0);
+    }
+}
+
+static void ConfigureImGuiMultiViewport(ImGuiIO& io)
+{
+    io.BackendFlags |= ImGuiBackendFlags_RendererHasViewports;
+    ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
+    platform_io.Renderer_CreateWindow = ImGui_Diligent_CreateWindow;
+    platform_io.Renderer_DestroyWindow = ImGui_Diligent_DestroyWindow;
+    platform_io.Renderer_SetWindowSize = ImGui_Diligent_SetWindowSize;
+    platform_io.Renderer_RenderWindow = ImGui_Diligent_RenderWindow;
+    platform_io.Renderer_SwapBuffers = ImGui_Diligent_SwapBuffers;
+}
+
+} // namespace
+
 // Windows-only GLFW callbacks that forward events into Diligent InputControllerWin32
 #if defined(_WIN32)
 static UINT MapGLFWKeyToVK(int key)
@@ -138,48 +360,47 @@ static UINT MapGLFWKeyToVK(int key)
 
 static void GLFWKeyCallback(GLFWwindow* w, int key, int scancode, int action, int mods)
 {
-    // Handle ImGui input using modern API
     ImGuiIO& io = ImGui::GetIO();
-    
-    // Update modifier keys
-    io.AddKeyEvent(ImGuiMod_Ctrl, (mods & GLFW_MOD_CONTROL) != 0);
-    io.AddKeyEvent(ImGuiMod_Shift, (mods & GLFW_MOD_SHIFT) != 0);
-    io.AddKeyEvent(ImGuiMod_Alt, (mods & GLFW_MOD_ALT) != 0);
-    io.AddKeyEvent(ImGuiMod_Super, (mods & GLFW_MOD_SUPER) != 0);
-    
-    // Convert GLFW key to ImGui key
-    ImGuiKey imgui_key = ImGuiKey_None;
-    switch (key)
+    if (!g_ImGuiGlfwBackendEnabled)
     {
-        case GLFW_KEY_TAB: imgui_key = ImGuiKey_Tab; break;
-        case GLFW_KEY_LEFT: imgui_key = ImGuiKey_LeftArrow; break;
-        case GLFW_KEY_RIGHT: imgui_key = ImGuiKey_RightArrow; break;
-        case GLFW_KEY_UP: imgui_key = ImGuiKey_UpArrow; break;
-        case GLFW_KEY_DOWN: imgui_key = ImGuiKey_DownArrow; break;
-        case GLFW_KEY_PAGE_UP: imgui_key = ImGuiKey_PageUp; break;
-        case GLFW_KEY_PAGE_DOWN: imgui_key = ImGuiKey_PageDown; break;
-        case GLFW_KEY_HOME: imgui_key = ImGuiKey_Home; break;
-        case GLFW_KEY_END: imgui_key = ImGuiKey_End; break;
-        case GLFW_KEY_INSERT: imgui_key = ImGuiKey_Insert; break;
-        case GLFW_KEY_DELETE: imgui_key = ImGuiKey_Delete; break;
-        case GLFW_KEY_BACKSPACE: imgui_key = ImGuiKey_Backspace; break;
-        case GLFW_KEY_SPACE: imgui_key = ImGuiKey_Space; break;
-        case GLFW_KEY_ENTER: imgui_key = ImGuiKey_Enter; break;
-        case GLFW_KEY_ESCAPE: imgui_key = ImGuiKey_Escape; break;
-        case GLFW_KEY_A: imgui_key = ImGuiKey_A; break;
-        case GLFW_KEY_C: imgui_key = ImGuiKey_C; break;
-        case GLFW_KEY_V: imgui_key = ImGuiKey_V; break;
-        case GLFW_KEY_X: imgui_key = ImGuiKey_X; break;
-        case GLFW_KEY_Y: imgui_key = ImGuiKey_Y; break;
-        case GLFW_KEY_Z: imgui_key = ImGuiKey_Z; break;
-        default: break;
+        io.AddKeyEvent(ImGuiMod_Ctrl, (mods & GLFW_MOD_CONTROL) != 0);
+        io.AddKeyEvent(ImGuiMod_Shift, (mods & GLFW_MOD_SHIFT) != 0);
+        io.AddKeyEvent(ImGuiMod_Alt, (mods & GLFW_MOD_ALT) != 0);
+        io.AddKeyEvent(ImGuiMod_Super, (mods & GLFW_MOD_SUPER) != 0);
+
+        ImGuiKey imgui_key = ImGuiKey_None;
+        switch (key)
+        {
+            case GLFW_KEY_TAB: imgui_key = ImGuiKey_Tab; break;
+            case GLFW_KEY_LEFT: imgui_key = ImGuiKey_LeftArrow; break;
+            case GLFW_KEY_RIGHT: imgui_key = ImGuiKey_RightArrow; break;
+            case GLFW_KEY_UP: imgui_key = ImGuiKey_UpArrow; break;
+            case GLFW_KEY_DOWN: imgui_key = ImGuiKey_DownArrow; break;
+            case GLFW_KEY_PAGE_UP: imgui_key = ImGuiKey_PageUp; break;
+            case GLFW_KEY_PAGE_DOWN: imgui_key = ImGuiKey_PageDown; break;
+            case GLFW_KEY_HOME: imgui_key = ImGuiKey_Home; break;
+            case GLFW_KEY_END: imgui_key = ImGuiKey_End; break;
+            case GLFW_KEY_INSERT: imgui_key = ImGuiKey_Insert; break;
+            case GLFW_KEY_DELETE: imgui_key = ImGuiKey_Delete; break;
+            case GLFW_KEY_BACKSPACE: imgui_key = ImGuiKey_Backspace; break;
+            case GLFW_KEY_SPACE: imgui_key = ImGuiKey_Space; break;
+            case GLFW_KEY_ENTER: imgui_key = ImGuiKey_Enter; break;
+            case GLFW_KEY_ESCAPE: imgui_key = ImGuiKey_Escape; break;
+            case GLFW_KEY_A: imgui_key = ImGuiKey_A; break;
+            case GLFW_KEY_C: imgui_key = ImGuiKey_C; break;
+            case GLFW_KEY_V: imgui_key = ImGuiKey_V; break;
+            case GLFW_KEY_X: imgui_key = ImGuiKey_X; break;
+            case GLFW_KEY_Y: imgui_key = ImGuiKey_Y; break;
+            case GLFW_KEY_Z: imgui_key = ImGuiKey_Z; break;
+            default: break;
+        }
+
+        if (imgui_key != ImGuiKey_None)
+        {
+            io.AddKeyEvent(imgui_key, (action == GLFW_PRESS || action == GLFW_REPEAT));
+        }
     }
-    
-    if (imgui_key != ImGuiKey_None)
-    {
-        io.AddKeyEvent(imgui_key, (action == GLFW_PRESS || action == GLFW_REPEAT));
-    }
-    
+
     // If ImGui wants keyboard, don't forward to the app
     if (io.WantCaptureKeyboard)
         return;
@@ -210,14 +431,15 @@ static void GLFWKeyCallback(GLFWwindow* w, int key, int scancode, int action, in
 
 static void GLFWMouseButtonCallback(GLFWwindow* w, int button, int action, int mods)
 {
-    // Handle ImGui mouse input
     ImGuiIO& io = ImGui::GetIO();
-    
-    if (button >= 0 && button < ImGuiMouseButton_COUNT)
+    if (!g_ImGuiGlfwBackendEnabled)
     {
-        io.AddMouseButtonEvent(button, action == GLFW_PRESS);
+        if (button >= 0 && button < ImGuiMouseButton_COUNT)
+        {
+            io.AddMouseButtonEvent(button, action == GLFW_PRESS);
+        }
     }
-    
+
     if (io.WantCaptureMouse)
         return;
 
@@ -251,10 +473,12 @@ static void GLFWMouseButtonCallback(GLFWwindow* w, int button, int action, int m
 
 static void GLFWCursorPosCallback(GLFWwindow* w, double xpos, double ypos)
 {
-    // Update ImGui mouse position
     ImGuiIO& io = ImGui::GetIO();
-    io.AddMousePosEvent((float)xpos, (float)ypos);
-    
+    if (!g_ImGuiGlfwBackendEnabled)
+    {
+        io.AddMousePosEvent(static_cast<float>(xpos), static_cast<float>(ypos));
+    }
+
     if (io.WantCaptureMouse)
         return;
 
@@ -266,10 +490,12 @@ static void GLFWCursorPosCallback(GLFWwindow* w, double xpos, double ypos)
 
 static void GLFWScrollCallback(GLFWwindow* w, double xoffset, double yoffset)
 {
-    // Handle ImGui scroll input
     ImGuiIO& io = ImGui::GetIO();
-    io.AddMouseWheelEvent((float)xoffset, (float)yoffset);
-    
+    if (!g_ImGuiGlfwBackendEnabled)
+    {
+        io.AddMouseWheelEvent(static_cast<float>(xoffset), static_cast<float>(yoffset));
+    }
+
     if (io.WantCaptureMouse)
         return;
 
@@ -290,7 +516,10 @@ static void GLFWScrollCallback(GLFWwindow* w, double xoffset, double yoffset)
 static void GLFWCharCallback(GLFWwindow* w, unsigned int c)
 {
     ImGuiIO& io = ImGui::GetIO();
-    io.AddInputCharacter(c);
+    if (!g_ImGuiGlfwBackendEnabled)
+    {
+        io.AddInputCharacter(c);
+    }
 }
 #endif
 
@@ -308,46 +537,50 @@ static void GLFWCharCallbackLinux(GLFWwindow* w, unsigned int c)
 static void GLFWKeyCallbackMac(GLFWwindow* w, int key, int scancode, int action, int mods)
 {
     ImGuiIO& io = ImGui::GetIO();
-    // Update modifier keys
-    io.AddKeyEvent(ImGuiMod_Ctrl, (mods & GLFW_MOD_CONTROL) != 0);
-    io.AddKeyEvent(ImGuiMod_Shift, (mods & GLFW_MOD_SHIFT) != 0);
-    io.AddKeyEvent(ImGuiMod_Alt, (mods & GLFW_MOD_ALT) != 0);
-    io.AddKeyEvent(ImGuiMod_Super, (mods & GLFW_MOD_SUPER) != 0);
+    if (!g_ImGuiGlfwBackendEnabled)
+    {
+        io.AddKeyEvent(ImGuiMod_Ctrl, (mods & GLFW_MOD_CONTROL) != 0);
+        io.AddKeyEvent(ImGuiMod_Shift, (mods & GLFW_MOD_SHIFT) != 0);
+        io.AddKeyEvent(ImGuiMod_Alt, (mods & GLFW_MOD_ALT) != 0);
+        io.AddKeyEvent(ImGuiMod_Super, (mods & GLFW_MOD_SUPER) != 0);
 
-    // Convert GLFW key to ImGui key
-    ImGuiKey imgui_key = ImGuiKey_None;
-    switch (key)
-    {
-        case GLFW_KEY_TAB: imgui_key = ImGuiKey_Tab; break;
-        case GLFW_KEY_LEFT: imgui_key = ImGuiKey_LeftArrow; break;
-        case GLFW_KEY_RIGHT: imgui_key = ImGuiKey_RightArrow; break;
-        case GLFW_KEY_UP: imgui_key = ImGuiKey_UpArrow; break;
-        case GLFW_KEY_DOWN: imgui_key = ImGuiKey_DownArrow; break;
-        case GLFW_KEY_PAGE_UP: imgui_key = ImGuiKey_PageUp; break;
-        case GLFW_KEY_PAGE_DOWN: imgui_key = ImGuiKey_PageDown; break;
-        case GLFW_KEY_HOME: imgui_key = ImGuiKey_Home; break;
-        case GLFW_KEY_END: imgui_key = ImGuiKey_End; break;
-        case GLFW_KEY_INSERT: imgui_key = ImGuiKey_Insert; break;
-        case GLFW_KEY_DELETE: imgui_key = ImGuiKey_Delete; break;
-        case GLFW_KEY_BACKSPACE: imgui_key = ImGuiKey_Backspace; break;
-        case GLFW_KEY_SPACE: imgui_key = ImGuiKey_Space; break;
-        case GLFW_KEY_ENTER: imgui_key = ImGuiKey_Enter; break;
-        case GLFW_KEY_ESCAPE: imgui_key = ImGuiKey_Escape; break;
-        case GLFW_KEY_A: imgui_key = ImGuiKey_A; break;
-        case GLFW_KEY_C: imgui_key = ImGuiKey_C; break;
-        case GLFW_KEY_V: imgui_key = ImGuiKey_V; break;
-        case GLFW_KEY_X: imgui_key = ImGuiKey_X; break;
-        case GLFW_KEY_Y: imgui_key = ImGuiKey_Y; break;
-        case GLFW_KEY_Z: imgui_key = ImGuiKey_Z; break;
-        default: break;
-    }
-    if (imgui_key != ImGuiKey_None)
-    {
-        io.AddKeyEvent(imgui_key, (action == GLFW_PRESS || action == GLFW_REPEAT));
+        ImGuiKey imgui_key = ImGuiKey_None;
+        switch (key)
+        {
+            case GLFW_KEY_TAB: imgui_key = ImGuiKey_Tab; break;
+            case GLFW_KEY_LEFT: imgui_key = ImGuiKey_LeftArrow; break;
+            case GLFW_KEY_RIGHT: imgui_key = ImGuiKey_RightArrow; break;
+            case GLFW_KEY_UP: imgui_key = ImGuiKey_UpArrow; break;
+            case GLFW_KEY_DOWN: imgui_key = ImGuiKey_DownArrow; break;
+            case GLFW_KEY_PAGE_UP: imgui_key = ImGuiKey_PageUp; break;
+            case GLFW_KEY_PAGE_DOWN: imgui_key = ImGuiKey_PageDown; break;
+            case GLFW_KEY_HOME: imgui_key = ImGuiKey_Home; break;
+            case GLFW_KEY_END: imgui_key = ImGuiKey_End; break;
+            case GLFW_KEY_INSERT: imgui_key = ImGuiKey_Insert; break;
+            case GLFW_KEY_DELETE: imgui_key = ImGuiKey_Delete; break;
+            case GLFW_KEY_BACKSPACE: imgui_key = ImGuiKey_Backspace; break;
+            case GLFW_KEY_SPACE: imgui_key = ImGuiKey_Space; break;
+            case GLFW_KEY_ENTER: imgui_key = ImGuiKey_Enter; break;
+            case GLFW_KEY_ESCAPE: imgui_key = ImGuiKey_Escape; break;
+            case GLFW_KEY_A: imgui_key = ImGuiKey_A; break;
+            case GLFW_KEY_C: imgui_key = ImGuiKey_C; break;
+            case GLFW_KEY_V: imgui_key = ImGuiKey_V; break;
+            case GLFW_KEY_X: imgui_key = ImGuiKey_X; break;
+            case GLFW_KEY_Y: imgui_key = ImGuiKey_Y; break;
+            case GLFW_KEY_Z: imgui_key = ImGuiKey_Z; break;
+            default: break;
+        }
+        if (imgui_key != ImGuiKey_None)
+        {
+            io.AddKeyEvent(imgui_key, (action == GLFW_PRESS || action == GLFW_REPEAT));
+        }
     }
 
     // If ImGui wants keyboard, don't forward to the app
-    if (io.WantCaptureKeyboard)
+    if (!g_ImGuiGlfwBackendEnabled)
+    {
+        io.AddInputCharacter(c);
+    }
         return;
 
     auto* samplePtr = static_cast<SampleBase*>(glfwGetWindowUserPointer(w));
@@ -370,9 +603,10 @@ static void GLFWKeyCallbackMac(GLFWwindow* w, int key, int scancode, int action,
 static void GLFWMouseButtonCallbackMac(GLFWwindow* w, int button, int action, int mods)
 {
     ImGuiIO& io = ImGui::GetIO();
-    if (button >= 0 && button < ImGuiMouseButton_COUNT)
+    if (!g_ImGuiGlfwBackendEnabled)
     {
-        io.AddMouseButtonEvent(button, action == GLFW_PRESS);
+        if (button >= 0 && button < ImGuiMouseButton_COUNT)
+            io.AddMouseButtonEvent(button, action == GLFW_PRESS);
     }
     if (io.WantCaptureMouse)
         return;
@@ -402,7 +636,10 @@ static void GLFWMouseButtonCallbackMac(GLFWwindow* w, int button, int action, in
 static void GLFWCursorPosCallbackMac(GLFWwindow* w, double xpos, double ypos)
 {
     ImGuiIO& io = ImGui::GetIO();
-    io.AddMousePosEvent((float)xpos, (float)ypos);
+    if (!g_ImGuiGlfwBackendEnabled)
+    {
+        io.AddMousePosEvent(static_cast<float>(xpos), static_cast<float>(ypos));
+    }
     if (io.WantCaptureMouse)
         return;
 
@@ -417,7 +654,10 @@ static void GLFWCursorPosCallbackMac(GLFWwindow* w, double xpos, double ypos)
 static void GLFWScrollCallbackMac(GLFWwindow* w, double xoffset, double yoffset)
 {
     ImGuiIO& io = ImGui::GetIO();
-    io.AddMouseWheelEvent((float)xoffset, (float)yoffset);
+    if (!g_ImGuiGlfwBackendEnabled)
+    {
+        io.AddMouseWheelEvent(static_cast<float>(xoffset), static_cast<float>(yoffset));
+    }
     if (io.WantCaptureMouse)
         return;
 
@@ -523,44 +763,44 @@ static void GLFWKeyCallbackLinux(GLFWwindow* w, int key, int scancode, int actio
 {
     // Handle ImGui input using modern API
     ImGuiIO& io = ImGui::GetIO();
-    
-    // Update modifier keys
-    io.AddKeyEvent(ImGuiMod_Ctrl, (mods & GLFW_MOD_CONTROL) != 0);
-    io.AddKeyEvent(ImGuiMod_Shift, (mods & GLFW_MOD_SHIFT) != 0);
-    io.AddKeyEvent(ImGuiMod_Alt, (mods & GLFW_MOD_ALT) != 0);
-    io.AddKeyEvent(ImGuiMod_Super, (mods & GLFW_MOD_SUPER) != 0);
-    
-    // Convert GLFW key to ImGui key
-    ImGuiKey imgui_key = ImGuiKey_None;
-    switch (key)
+    if (!g_ImGuiGlfwBackendEnabled)
     {
-        case GLFW_KEY_TAB: imgui_key = ImGuiKey_Tab; break;
-        case GLFW_KEY_LEFT: imgui_key = ImGuiKey_LeftArrow; break;
-        case GLFW_KEY_RIGHT: imgui_key = ImGuiKey_RightArrow; break;
-        case GLFW_KEY_UP: imgui_key = ImGuiKey_UpArrow; break;
-        case GLFW_KEY_DOWN: imgui_key = ImGuiKey_DownArrow; break;
-        case GLFW_KEY_PAGE_UP: imgui_key = ImGuiKey_PageUp; break;
-        case GLFW_KEY_PAGE_DOWN: imgui_key = ImGuiKey_PageDown; break;
-        case GLFW_KEY_HOME: imgui_key = ImGuiKey_Home; break;
-        case GLFW_KEY_END: imgui_key = ImGuiKey_End; break;
-        case GLFW_KEY_INSERT: imgui_key = ImGuiKey_Insert; break;
-        case GLFW_KEY_DELETE: imgui_key = ImGuiKey_Delete; break;
-        case GLFW_KEY_BACKSPACE: imgui_key = ImGuiKey_Backspace; break;
-        case GLFW_KEY_SPACE: imgui_key = ImGuiKey_Space; break;
-        case GLFW_KEY_ENTER: imgui_key = ImGuiKey_Enter; break;
-        case GLFW_KEY_ESCAPE: imgui_key = ImGuiKey_Escape; break;
-        case GLFW_KEY_A: imgui_key = ImGuiKey_A; break;
-        case GLFW_KEY_C: imgui_key = ImGuiKey_C; break;
-        case GLFW_KEY_V: imgui_key = ImGuiKey_V; break;
-        case GLFW_KEY_X: imgui_key = ImGuiKey_X; break;
-        case GLFW_KEY_Y: imgui_key = ImGuiKey_Y; break;
-        case GLFW_KEY_Z: imgui_key = ImGuiKey_Z; break;
-        default: break;
-    }
-    
-    if (imgui_key != ImGuiKey_None)
-    {
-        io.AddKeyEvent(imgui_key, (action == GLFW_PRESS || action == GLFW_REPEAT));
+        io.AddKeyEvent(ImGuiMod_Ctrl, (mods & GLFW_MOD_CONTROL) != 0);
+        io.AddKeyEvent(ImGuiMod_Shift, (mods & GLFW_MOD_SHIFT) != 0);
+        io.AddKeyEvent(ImGuiMod_Alt, (mods & GLFW_MOD_ALT) != 0);
+        io.AddKeyEvent(ImGuiMod_Super, (mods & GLFW_MOD_SUPER) != 0);
+
+        ImGuiKey imgui_key = ImGuiKey_None;
+        switch (key)
+        {
+            case GLFW_KEY_TAB: imgui_key = ImGuiKey_Tab; break;
+            case GLFW_KEY_LEFT: imgui_key = ImGuiKey_LeftArrow; break;
+            case GLFW_KEY_RIGHT: imgui_key = ImGuiKey_RightArrow; break;
+            case GLFW_KEY_UP: imgui_key = ImGuiKey_UpArrow; break;
+            case GLFW_KEY_DOWN: imgui_key = ImGuiKey_DownArrow; break;
+            case GLFW_KEY_PAGE_UP: imgui_key = ImGuiKey_PageUp; break;
+            case GLFW_KEY_PAGE_DOWN: imgui_key = ImGuiKey_PageDown; break;
+            case GLFW_KEY_HOME: imgui_key = ImGuiKey_Home; break;
+            case GLFW_KEY_END: imgui_key = ImGuiKey_End; break;
+            case GLFW_KEY_INSERT: imgui_key = ImGuiKey_Insert; break;
+            case GLFW_KEY_DELETE: imgui_key = ImGuiKey_Delete; break;
+            case GLFW_KEY_BACKSPACE: imgui_key = ImGuiKey_Backspace; break;
+            case GLFW_KEY_SPACE: imgui_key = ImGuiKey_Space; break;
+            case GLFW_KEY_ENTER: imgui_key = ImGuiKey_Enter; break;
+            case GLFW_KEY_ESCAPE: imgui_key = ImGuiKey_Escape; break;
+            case GLFW_KEY_A: imgui_key = ImGuiKey_A; break;
+            case GLFW_KEY_C: imgui_key = ImGuiKey_C; break;
+            case GLFW_KEY_V: imgui_key = ImGuiKey_V; break;
+            case GLFW_KEY_X: imgui_key = ImGuiKey_X; break;
+            case GLFW_KEY_Y: imgui_key = ImGuiKey_Y; break;
+            case GLFW_KEY_Z: imgui_key = ImGuiKey_Z; break;
+            default: break;
+        }
+
+        if (imgui_key != ImGuiKey_None)
+        {
+            io.AddKeyEvent(imgui_key, (action == GLFW_PRESS || action == GLFW_REPEAT));
+        }
     }
     
     // If ImGui wants keyboard, don't forward to the app
@@ -584,10 +824,10 @@ static void GLFWMouseButtonCallbackLinux(GLFWwindow* w, int button, int action, 
 {
     // Handle ImGui mouse input
     ImGuiIO& io = ImGui::GetIO();
-    
-    if (button >= 0 && button < ImGuiMouseButton_COUNT)
+    if (!g_ImGuiGlfwBackendEnabled)
     {
-        io.AddMouseButtonEvent(button, action == GLFW_PRESS);
+        if (button >= 0 && button < ImGuiMouseButton_COUNT)
+            io.AddMouseButtonEvent(button, action == GLFW_PRESS);
     }
     
     if (io.WantCaptureMouse)
@@ -617,7 +857,10 @@ static void GLFWCursorPosCallbackLinux(GLFWwindow* w, double xpos, double ypos)
 {
     // Update ImGui mouse position
     ImGuiIO& io = ImGui::GetIO();
-    io.AddMousePosEvent((float)xpos, (float)ypos);
+    if (!g_ImGuiGlfwBackendEnabled)
+    {
+        io.AddMousePosEvent(static_cast<float>(xpos), static_cast<float>(ypos));
+    }
     
     if (io.WantCaptureMouse)
         return;
@@ -634,7 +877,10 @@ static void GLFWScrollCallbackLinux(GLFWwindow* w, double xoffset, double yoffse
 {
     // Handle ImGui scroll input
     ImGuiIO& io = ImGui::GetIO();
-    io.AddMouseWheelEvent((float)xoffset, (float)yoffset);
+    if (!g_ImGuiGlfwBackendEnabled)
+    {
+        io.AddMouseWheelEvent(static_cast<float>(xoffset), static_cast<float>(yoffset));
+    }
     
     if (io.WantCaptureMouse)
         return;
@@ -666,32 +912,7 @@ bool InitializeDiligentEngine(
     swapChainDesc.DepthBufferFormat = TEX_FORMAT_D32_FLOAT;
 
 
-    // Helper to get native window for current platform
-    struct NativeWindow
-{
-#if defined(_WIN32)
-        Win32NativeWindow win32{};
-#elif defined(__APPLE__)
-        MacOSNativeWindow mac{};
-#elif defined(__linux__)
-        LinuxNativeWindow x11{}; // Renamed to avoid potential macro conflict with 'linux'
-#endif
-    };
-
-    auto GetNativeWindow = [&](GLFWwindow* w) -> NativeWindow {
-        NativeWindow nw{};
-#if defined(_WIN32)
-        nw.win32.hWnd = glfwGetWin32Window(w);
-#elif defined(__APPLE__)
-        nw.mac.pNSView = [glfwGetCocoaWindow(w) contentView];
-#elif defined(__linux__)
-        nw.x11.WindowId = glfwGetX11Window(w);
-        nw.x11.pDisplay = glfwGetX11Display();
-#endif
-        return nw;
-    };
-
-    NativeWindow nativeWindow = GetNativeWindow(window);
+    NativeWindowWrapper nativeWindow = GetNativeWindow(window);
 
 #if defined(_WIN32)
     // Try D3D12
@@ -796,6 +1017,7 @@ int main()
     }
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
     GLFWwindow* window = glfwCreateWindow(800, 600, "C6GE 2026.1", nullptr, nullptr);
     if (!window)
     {
@@ -837,7 +1059,6 @@ int main()
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; // Enable keyboard navigation
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;     // Enable docking
-    // Note: ViewportsEnable disabled due to compatibility issues with DiligentEngine
     ImGui::StyleColorsDark();
 
     // --- DPI/UI scaling: Make UI bigger ---
@@ -900,6 +1121,13 @@ int main()
         return -1;
     }
 
+    g_ImGuiRenderer = imGuiImpl.get();
+    const bool multiViewportSupported = InitializeDiligentViewportGlobals(device, immediateContext, swapChain, factory);
+    if (!multiViewportSupported)
+    {
+        std::cout << "[C6GE] ImGui multi-viewport not available for current backend; windows remain docked." << std::endl;
+    }
+
     // -------------------
     // Initialize sample
     // -------------------
@@ -918,24 +1146,8 @@ int main()
     swapChain->Resize(fbW, fbH);
     sample->WindowResize(fbW, fbH);
 
-    // Create scene objects via ECS API
-    {
-        auto* render = static_cast<Diligent::C6GERender*>(sample);
-        render->EnsureWorld();
-        auto* world = render->GetWorld();
-        using Diligent::ECS::StaticMesh;
-        using Diligent::ECS::Transform;
-
-        // CreateObject("ObjectName")
-        auto cube = world->CreateObject("ObjectName");
-        // ObjectName.AddComponent<StaticMesh>(C6GE.Models.CubeMesh);
-        cube.AddComponent<StaticMesh>(StaticMesh{StaticMesh::MeshType::Cube});
-        // ObjectName.AddComponent<Transform>(0, 0, 0);
-        cube.AddComponent<Transform>(Transform{ {0,0,0}, {0,0,0}, {1,1,1} });
-        // ObjectName.Transform = GetComponent<Transform>(); then adjust position
-        auto& tr = cube.GetComponent<Transform>();
-        tr.position += Diligent::float3{0.f, 0.f, 0.f};
-    }
+    auto* renderSample = static_cast<Diligent::C6GERender*>(sample);
+    renderSample->SetHostWindow(window);
 
     // Forward GLFW events to Diligent InputController. We set the sample as
     // the user pointer so callbacks can access the InputController instance.
@@ -963,6 +1175,17 @@ int main()
     glfwSetCursorPosCallback(window, GLFWCursorPosCallbackLinux);
     glfwSetScrollCallback(window, GLFWScrollCallbackLinux);
 #endif
+
+    if (multiViewportSupported)
+    {
+        if (!g_ImGuiGlfwBackendEnabled)
+        {
+            ImGui_ImplGlfw_InitForOther(window, true);
+            g_ImGuiGlfwBackendEnabled = true;
+        }
+        io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+        ConfigureImGuiMultiViewport(io);
+    }
 
 EditorTheme::SetupImGuiStyle();
     
@@ -1000,6 +1223,9 @@ EditorTheme::SetupImGuiStyle();
         double elapsed = currTime - lastTime;
         lastTime = currTime;
         
+    if (g_ImGuiGlfwBackendEnabled)
+        ImGui_ImplGlfw_NewFrame();
+
     // Set DisplaySize and scale for Retina/HiDPI
 // Logical size = window coordinates (points)
 io.DisplaySize = ImVec2((float)windowW, (float)windowH);
@@ -1014,19 +1240,16 @@ io.DisplaySize = ImVec2((float)windowW, (float)windowH);
 // Tell backend the logical window size (matches DisplaySize)
 imGuiImpl->NewFrame(windowW, windowH, scDesc.PreTransform);
 
+    if (renderSample != nullptr)
+        renderSample->UpdateViewportUI();
 
     // Build UI, pass elapsed time so camera receives proper dt
     sample->Update(currTime, elapsed, true);
-    
-    // Cast sample to C6GERender to access viewport UI
-    auto* render = static_cast<Diligent::C6GERender*>(sample);
-    render->UpdateViewportUI();
 
         // First render the scene to the framebuffer
         sample->Render();
 
         // Then render ImGui to the swap chain
-        ImGui::Render();
         ITextureView* pRTV = swapChain->GetCurrentBackBufferRTV();
         ITextureView* pDSV = swapChain->GetDepthBufferDSV();
         
@@ -1038,12 +1261,41 @@ imGuiImpl->NewFrame(windowW, windowH, scDesc.PreTransform);
         
         imGuiImpl->Render(immediateContext);
 
+        if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
+        {
+            ImGui::UpdatePlatformWindows();
+            ImGui::RenderPlatformWindowsDefault();
+
+            // Rebind main render target for subsequent operations
+            pRTV = swapChain->GetCurrentBackBufferRTV();
+            pDSV = swapChain->GetDepthBufferDSV();
+            ITextureView* rtvs[] = {pRTV};
+            immediateContext->SetRenderTargets(1, rtvs, pDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        }
+
         swapChain->Present(enableVsync ? 1 : 0);
     }
 
     // -------------------
     // Cleanup
     // -------------------
+    if (g_ImGuiGlfwBackendEnabled)
+    {
+        ImGui_ImplGlfw_Shutdown();
+        g_ImGuiGlfwBackendEnabled = false;
+    }
+    g_ImGuiRenderer = nullptr;
+    g_RenderDevice.Release();
+    g_ImmediateContext.Release();
+    g_MainSwapChain.Release();
+#if defined(_WIN32)
+#    if D3D11_SUPPORTED
+    g_FactoryD3D11.Release();
+#    endif
+#    if D3D12_SUPPORTED
+    g_FactoryD3D12.Release();
+#    endif
+#endif
     // Tear down ImGui backend first to ensure it no longer references engine views
     imGuiImpl.reset();
     // Then destroy the sample (releases textures/views)

@@ -2,6 +2,7 @@
 #include <fstream>
 #include <sstream>
 #include <regex>
+#include <cctype>
 
 #include "Runtime/ECS/World.h"
 #include "Runtime/ECS/Components.h"
@@ -257,6 +258,20 @@ namespace {
         size_t r = s.find(']', pos); if (r == string::npos) return false; pos = r+1;
         return true;
     }
+    static bool TryReadFloat(const string& s, size_t& pos, float& out)
+    {
+        size_t start = pos;
+        while (start < s.size() && isspace(static_cast<unsigned char>(s[start])))
+            ++start;
+        size_t end = start;
+        while (end < s.size() && (isdigit(static_cast<unsigned char>(s[end])) || s[end]=='-' || s[end]=='+' || s[end]=='.' || s[end]=='e' || s[end]=='E'))
+            ++end;
+        if (end == start)
+            return false;
+        out = static_cast<float>(atof(s.substr(start, end - start).c_str()));
+        pos = end;
+        return true;
+    }
 }
 
 // Concrete adapter around ECS::World to satisfy ECSWorldLike
@@ -294,6 +309,43 @@ public:
             reg.emplace_or_replace<ECS::Mesh>(e, m);
         }
     }
+    void SetDirectionalLight(void* handle, const DirectionalLightData& data) override {
+        auto e = static_cast<entt::entity>(reinterpret_cast<uintptr_t>(handle));
+        auto& reg = W.Registry();
+        ECS::DirectionalLight l;
+        l.direction = float3{data.direction[0], data.direction[1], data.direction[2]};
+        l.intensity = data.intensity;
+        reg.emplace_or_replace<ECS::DirectionalLight>(e, l);
+    }
+    void SetPointLight(void* handle, const PointLightData& data) override {
+        auto e = static_cast<entt::entity>(reinterpret_cast<uintptr_t>(handle));
+        auto& reg = W.Registry();
+        ECS::PointLight l;
+        l.color     = float3{data.color[0], data.color[1], data.color[2]};
+        l.intensity = data.intensity;
+        l.range     = data.range;
+        reg.emplace_or_replace<ECS::PointLight>(e, l);
+    }
+    void SetSpotLight(void* handle, const SpotLightData& data) override {
+        auto e = static_cast<entt::entity>(reinterpret_cast<uintptr_t>(handle));
+        auto& reg = W.Registry();
+        ECS::SpotLight l;
+        l.direction    = float3{data.direction[0], data.direction[1], data.direction[2]};
+        l.angleDegrees = data.angleDegrees;
+        l.color        = float3{data.color[0], data.color[1], data.color[2]};
+        l.intensity    = data.intensity;
+        l.range        = data.range;
+        reg.emplace_or_replace<ECS::SpotLight>(e, l);
+    }
+    void SetCamera(void* handle, const CameraData& data) override {
+        auto e = static_cast<entt::entity>(reinterpret_cast<uintptr_t>(handle));
+        auto& reg = W.Registry();
+        ECS::Camera cam;
+        cam.fovYRadians = data.fovYRadians;
+        cam.nearZ       = data.nearZ;
+        cam.farZ        = data.farZ;
+        reg.emplace_or_replace<ECS::Camera>(e, cam);
+    }
     vector<ObjectViewItem> EnumerateObjects() const override {
         vector<ObjectViewItem> out;
         auto& reg = W.Registry();
@@ -320,6 +372,43 @@ public:
                     it.meshKind = MeshKind::DynamicGLTF; it.assetId = m.assetId;
                 }
             }
+            it.hasDirectionalLight = reg.any_of<ECS::DirectionalLight>(e);
+            if (it.hasDirectionalLight) {
+                const auto& l = reg.get<ECS::DirectionalLight>(e);
+                it.directionalLight.direction[0] = l.direction.x;
+                it.directionalLight.direction[1] = l.direction.y;
+                it.directionalLight.direction[2] = l.direction.z;
+                it.directionalLight.intensity    = l.intensity;
+            }
+            it.hasPointLight = reg.any_of<ECS::PointLight>(e);
+            if (it.hasPointLight) {
+                const auto& l = reg.get<ECS::PointLight>(e);
+                it.pointLight.color[0] = l.color.x;
+                it.pointLight.color[1] = l.color.y;
+                it.pointLight.color[2] = l.color.z;
+                it.pointLight.intensity = l.intensity;
+                it.pointLight.range     = l.range;
+            }
+            it.hasSpotLight = reg.any_of<ECS::SpotLight>(e);
+            if (it.hasSpotLight) {
+                const auto& l = reg.get<ECS::SpotLight>(e);
+                it.spotLight.direction[0] = l.direction.x;
+                it.spotLight.direction[1] = l.direction.y;
+                it.spotLight.direction[2] = l.direction.z;
+                it.spotLight.color[0]     = l.color.x;
+                it.spotLight.color[1]     = l.color.y;
+                it.spotLight.color[2]     = l.color.z;
+                it.spotLight.intensity    = l.intensity;
+                it.spotLight.range        = l.range;
+                it.spotLight.angleDegrees = l.angleDegrees;
+            }
+            it.hasCamera = reg.any_of<ECS::Camera>(e);
+            if (it.hasCamera) {
+                const auto& cam = reg.get<ECS::Camera>(e);
+                it.camera.fovYRadians = cam.fovYRadians;
+                it.camera.nearZ       = cam.nearZ;
+                it.camera.farZ        = cam.farZ;
+            }
             out.push_back(std::move(it));
         }
         return out;
@@ -336,24 +425,79 @@ bool WorldIO::Save(const fs::path& path, ECSWorldLike& world)
     for (size_t i=0;i<items.size();++i) {
         const auto& it = items[i];
         o << "      {\n";
-        o << "        \"name\": \"" << JsonEscape(it.name) << "\",\n";
+        std::vector<std::string> props;
+        {
+            std::ostringstream nameProp;
+            nameProp << "        \"name\": \"" << JsonEscape(it.name) << "\"";
+            props.push_back(nameProp.str());
+        }
         if (it.hasTransform) {
-            o << "        \"transform\": {\n";
-            o << "          \"position\": [" << it.tr.position[0] << ", " << it.tr.position[1] << ", " << it.tr.position[2] << "],\n";
-            o << "          \"rotationEuler\": [" << it.tr.rotationEuler[0] << ", " << it.tr.rotationEuler[1] << ", " << it.tr.rotationEuler[2] << "],\n";
-            o << "          \"scale\": [" << it.tr.scale[0] << ", " << it.tr.scale[1] << ", " << it.tr.scale[2] << "]\n";
-            o << "        },\n";
+            std::ostringstream trProp;
+            trProp << "        \"transform\": {\n";
+            trProp << "          \"position\": [" << it.tr.position[0] << ", " << it.tr.position[1] << ", " << it.tr.position[2] << "],\n";
+            trProp << "          \"rotationEuler\": [" << it.tr.rotationEuler[0] << ", " << it.tr.rotationEuler[1] << ", " << it.tr.rotationEuler[2] << "],\n";
+            trProp << "          \"scale\": [" << it.tr.scale[0] << ", " << it.tr.scale[1] << ", " << it.tr.scale[2] << "]\n";
+            trProp << "        }";
+            props.push_back(trProp.str());
         }
-        // Mesh
-        o << "        \"mesh\": {";
-        if (it.meshKind == ECSWorldLike::MeshKind::StaticCube) {
-            o << "\"kind\": \"Static\", \"staticType\": \"Cube\"";
-        } else if (it.meshKind == ECSWorldLike::MeshKind::DynamicGLTF) {
-            o << "\"kind\": \"Dynamic\", \"assetId\": \"" << JsonEscape(it.assetId) << "\"";
-        } else {
-            o << "\"kind\": \"None\"";
+        {
+            std::ostringstream meshProp;
+            meshProp << "        \"mesh\": {";
+            if (it.meshKind == ECSWorldLike::MeshKind::StaticCube) {
+                meshProp << "\"kind\": \"Static\", \"staticType\": \"Cube\"";
+            } else if (it.meshKind == ECSWorldLike::MeshKind::DynamicGLTF) {
+                meshProp << "\"kind\": \"Dynamic\", \"assetId\": \"" << JsonEscape(it.assetId) << "\"";
+            } else {
+                meshProp << "\"kind\": \"None\"";
+            }
+            meshProp << "}";
+            props.push_back(meshProp.str());
         }
-        o << "}\n";
+        if (it.hasDirectionalLight) {
+            std::ostringstream dlProp;
+            dlProp << "        \"directionalLight\": {\n";
+            dlProp << "          \"direction\": [" << it.directionalLight.direction[0] << ", " << it.directionalLight.direction[1] << ", " << it.directionalLight.direction[2] << "],\n";
+            dlProp << "          \"intensity\": " << it.directionalLight.intensity << "\n";
+            dlProp << "        }";
+            props.push_back(dlProp.str());
+        }
+        if (it.hasPointLight) {
+            std::ostringstream plProp;
+            plProp << "        \"pointLight\": {\n";
+            plProp << "          \"color\": [" << it.pointLight.color[0] << ", " << it.pointLight.color[1] << ", " << it.pointLight.color[2] << "],\n";
+            plProp << "          \"intensity\": " << it.pointLight.intensity << ",\n";
+            plProp << "          \"range\": " << it.pointLight.range << "\n";
+            plProp << "        }";
+            props.push_back(plProp.str());
+        }
+        if (it.hasSpotLight) {
+            std::ostringstream slProp;
+            slProp << "        \"spotLight\": {\n";
+            slProp << "          \"direction\": [" << it.spotLight.direction[0] << ", " << it.spotLight.direction[1] << ", " << it.spotLight.direction[2] << "],\n";
+            slProp << "          \"color\": [" << it.spotLight.color[0] << ", " << it.spotLight.color[1] << ", " << it.spotLight.color[2] << "],\n";
+            slProp << "          \"intensity\": " << it.spotLight.intensity << ",\n";
+            slProp << "          \"range\": " << it.spotLight.range << ",\n";
+            slProp << "          \"angleDegrees\": " << it.spotLight.angleDegrees << "\n";
+            slProp << "        }";
+            props.push_back(slProp.str());
+        }
+        if (it.hasCamera) {
+            std::ostringstream camProp;
+            camProp << "        \"camera\": {\n";
+            camProp << "          \"fovYRadians\": " << it.camera.fovYRadians << ",\n";
+            camProp << "          \"nearZ\": " << it.camera.nearZ << ",\n";
+            camProp << "          \"farZ\": " << it.camera.farZ << "\n";
+            camProp << "        }";
+            props.push_back(camProp.str());
+        }
+
+        for (size_t p = 0; p < props.size(); ++p) {
+            o << props[p];
+            if (p + 1 < props.size())
+                o << ",\n";
+            else
+                o << "\n";
+        }
         o << "      }" << (i+1<items.size()? ",":"") << "\n";
     }
     o << "    ]\n  }\n}\n";
@@ -377,16 +521,33 @@ bool WorldIO::Load(const fs::path& path, ECSWorldLike& world)
         if (endList != string::npos && (nextBrace == string::npos || endList < nextBrace))
             break; // end of array
         if (nextBrace == string::npos) break;
-        pos = nextBrace+1;
+        size_t objStart = nextBrace + 1;
+        size_t scanPos = objStart;
+        int braceDepth = 1;
+        while (scanPos < s.size() && braceDepth > 0)
+        {
+            char ch = s[scanPos];
+            if (ch == '{')
+                ++braceDepth;
+            else if (ch == '}')
+                --braceDepth;
+            ++scanPos;
+        }
+        if (braceDepth != 0)
+            break;
+
+        size_t objEnd = scanPos - 1; // position of closing '}'
+        string objStr = s.substr(objStart, objEnd - objStart);
+        pos = scanPos;
+
         // parse one object
         string name;
         ECSWorldLike::TransformData t{}; bool hasTr=false;
-        ECSWorldLike::MeshKind mk = ECSWorldLike::MeshKind::None; string assetId;
-
-        // naive scan between braces until matching '}'
-        size_t objEnd = s.find('}', pos);
-        if (objEnd == string::npos) break;
-        string objStr = s.substr(pos, objEnd-pos);
+    ECSWorldLike::MeshKind mk = ECSWorldLike::MeshKind::None; string assetId;
+    ECSWorldLike::DirectionalLightData dirLight{}; bool hasDirLight = false;
+    ECSWorldLike::PointLightData pointLight{}; bool hasPointLight = false;
+    ECSWorldLike::SpotLightData spotLight{}; bool hasSpotLight = false;
+    ECSWorldLike::CameraData camera{}; bool hasCamera = false;
 
         // name
         size_t p2 = 0;
@@ -421,14 +582,96 @@ bool WorldIO::Load(const fs::path& path, ECSWorldLike& world)
             }
         }
 
+        size_t pdl = objStr.find("\"directionalLight\"");
+        if (pdl != string::npos) {
+            size_t p = pdl;
+            if (TryFindNext(objStr, p, "\"direction\"")) {
+                TryFindNext(objStr, p, ":");
+                TryReadFloatArray3(objStr, p, dirLight.direction);
+            }
+            if (TryFindNext(objStr, p, "\"intensity\"")) {
+                TryFindNext(objStr, p, ":");
+                TryReadFloat(objStr, p, dirLight.intensity);
+            }
+            hasDirLight = true;
+        }
+
+        size_t ppl = objStr.find("\"pointLight\"");
+        if (ppl != string::npos) {
+            size_t p = ppl;
+            if (TryFindNext(objStr, p, "\"color\"")) {
+                TryFindNext(objStr, p, ":");
+                TryReadFloatArray3(objStr, p, pointLight.color);
+            }
+            if (TryFindNext(objStr, p, "\"intensity\"")) {
+                TryFindNext(objStr, p, ":");
+                TryReadFloat(objStr, p, pointLight.intensity);
+            }
+            if (TryFindNext(objStr, p, "\"range\"")) {
+                TryFindNext(objStr, p, ":");
+                TryReadFloat(objStr, p, pointLight.range);
+            }
+            hasPointLight = true;
+        }
+
+        size_t psl = objStr.find("\"spotLight\"");
+        if (psl != string::npos) {
+            size_t p = psl;
+            if (TryFindNext(objStr, p, "\"direction\"")) {
+                TryFindNext(objStr, p, ":");
+                TryReadFloatArray3(objStr, p, spotLight.direction);
+            }
+            if (TryFindNext(objStr, p, "\"color\"")) {
+                TryFindNext(objStr, p, ":");
+                TryReadFloatArray3(objStr, p, spotLight.color);
+            }
+            if (TryFindNext(objStr, p, "\"intensity\"")) {
+                TryFindNext(objStr, p, ":");
+                TryReadFloat(objStr, p, spotLight.intensity);
+            }
+            if (TryFindNext(objStr, p, "\"range\"")) {
+                TryFindNext(objStr, p, ":");
+                TryReadFloat(objStr, p, spotLight.range);
+            }
+            if (TryFindNext(objStr, p, "\"angleDegrees\"")) {
+                TryFindNext(objStr, p, ":");
+                TryReadFloat(objStr, p, spotLight.angleDegrees);
+            }
+            hasSpotLight = true;
+        }
+
+        size_t pcam = objStr.find("\"camera\"");
+        if (pcam != string::npos) {
+            size_t p = pcam;
+            if (TryFindNext(objStr, p, "\"fovYRadians\"")) {
+                TryFindNext(objStr, p, ":");
+                TryReadFloat(objStr, p, camera.fovYRadians);
+            }
+            if (TryFindNext(objStr, p, "\"nearZ\"")) {
+                TryFindNext(objStr, p, ":");
+                TryReadFloat(objStr, p, camera.nearZ);
+            }
+            if (TryFindNext(objStr, p, "\"farZ\"")) {
+                TryFindNext(objStr, p, ":");
+                TryReadFloat(objStr, p, camera.farZ);
+            }
+            hasCamera = true;
+        }
+
         // Create entity
         void* h = world.CreateObject(name.empty()? string("Object"):name);
         if (hasTr) world.SetTransform(h, t);
         if (mk != ECSWorldLike::MeshKind::None) world.SetMesh(h, mk, assetId);
+        if (hasDirLight) world.SetDirectionalLight(h, dirLight);
+        if (hasPointLight) world.SetPointLight(h, pointLight);
+        if (hasSpotLight) world.SetSpotLight(h, spotLight);
+        if (hasCamera) world.SetCamera(h, camera);
 
-        pos = objEnd+1;
-        // skip comma
-        if (pos < s.size() && s[pos] == ',') ++pos;
+        // skip trailing commas and whitespace
+        while (pos < s.size() && isspace(static_cast<unsigned char>(s[pos])))
+            ++pos;
+        if (pos < s.size() && s[pos] == ',')
+            ++pos;
     }
     return true;
 }

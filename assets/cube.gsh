@@ -1,15 +1,17 @@
 struct GSInput
 {
-    float4 Pos    : SV_POSITION;
-    float3 Normal : NORMAL;
-    float2 UV     : TEXCOORD0;
+    float4 Pos      : SV_POSITION;
+    float3 Normal   : NORMAL;
+    float2 UV       : TEXCOORD0;
+    float3 WorldPos : TEXCOORD1;
 };
 
 struct GSOutput
 {
-    float4 Pos    : SV_POSITION;
-    float3 Normal : NORMAL;
-    float2 UV     : TEXCOORD0;
+    float4 Pos      : SV_POSITION;
+    float3 Normal   : NORMAL;
+    float2 UV       : TEXCOORD0;
+    float3 WorldPos : TEXCOORD1;
 };
 
 [maxvertexcount(3)]
@@ -19,9 +21,10 @@ void main(triangle GSInput input[3], inout TriangleStream<GSOutput> OutputStream
     
     for(int i = 0; i < 3; ++i)
     {
-        output.Pos    = input[i].Pos;
-        output.Normal = input[i].Normal;
-        output.UV     = input[i].UV;
+        output.Pos      = input[i].Pos;
+        output.Normal   = input[i].Normal;
+        output.UV       = input[i].UV;
+        output.WorldPos = input[i].WorldPos;
         OutputStream.Append(output);
     }
 }
