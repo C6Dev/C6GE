@@ -33,6 +33,9 @@ namespace Diligent::RenderInternals
         float4x4 g_NormalTranform;
         float4   g_DirLight;
         float4   g_Ambient;
+        float4   g_CameraPos;
+        float4   g_FogColorDensity;
+        float4   g_FogParams;
         Uint32   g_NumPointLights;
         Uint32   g_NumSpotLights;
         float2   _pad0;
@@ -43,7 +46,8 @@ namespace Diligent::RenderInternals
     struct RTConstantsCPU
     {
         float4x4 InvViewProj;
-        float4   ViewSize_Plane;
+        float4   ViewSize_PlaneCenter;
+        float4   PlaneParams;
         float4   LightDir_Shadow;
         float4   ShadowSoftParams;
     };

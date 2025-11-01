@@ -63,6 +63,27 @@ public:
         float angleDegrees{30.0f};
     };
     struct CameraData { float fovYRadians{0.785398163f}; float nearZ{0.1f}; float farZ{100.0f}; };
+    struct SkyData {
+        bool        enabled{true};
+        std::string environmentPath;
+        float       intensity{1.0f};
+        float       exposure{1.0f};
+        float       rotationDegrees{0.0f};
+        bool        showBackground{true};
+    };
+    struct FogData {
+        bool  enabled{false};
+        float color[3]{0.6f, 0.7f, 0.8f};
+        float density{0.02f};
+        float startDistance{20.0f};
+        float maxDistance{150.0f};
+        float heightFalloff{0.01f};
+    };
+    struct SkyLightData {
+        bool  enabled{true};
+        float color[3]{0.25f, 0.28f, 0.32f};
+        float intensity{1.0f};
+    };
     struct ObjectViewItem {
         void*        handle = nullptr; // opaque
         std::string  name;
@@ -78,6 +99,12 @@ public:
         SpotLightData        spotLight{};
         bool                 hasCamera = false;
         CameraData           camera{};
+        bool                 hasSky = false;
+        SkyData              sky{};
+        bool                 hasFog = false;
+        FogData              fog{};
+        bool                 hasSkyLight = false;
+        SkyLightData         skyLight{};
     };
     // for Save
     virtual std::vector<ObjectViewItem> EnumerateObjects() const = 0;
@@ -90,6 +117,9 @@ public:
     virtual void SetPointLight(void* handle, const PointLightData& data) = 0;
     virtual void SetSpotLight(void* handle, const SpotLightData& data) = 0;
     virtual void SetCamera(void* handle, const CameraData& data) = 0;
+    virtual void SetSky(void* handle, const SkyData& data) = 0;
+    virtual void SetFog(void* handle, const FogData& data) = 0;
+    virtual void SetSkyLight(void* handle, const SkyLightData& data) = 0;
 };
 
 inline ECSWorldLike::~ECSWorldLike() = default;

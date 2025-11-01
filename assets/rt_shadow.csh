@@ -1,15 +1,21 @@
 cbuffer RTConstants
 {
     float4x4 g_InvViewProj;
-    float2   g_ViewportSize; // (width, height)
-    float    g_PlaneY;       // -2.0
-    float    g_PlaneExtent;  // 5.0
-    float3   g_LightDir;     // same as CPU m_LightDirection (pointing from light to scene)
-    float    g_ShadowStrength; // e.g., 0.5
-    float    g_LightAngularRadius; // radians, e.g., 0.05 (~2.9 deg)
-    float    g_SoftShadowSampleCount; // N samples (as float, cast to int)
-    float2   g_Padding_RT;
+    float4   g_ViewSize_PlaneCenter; // (width, height, planeCenterX, planeCenterZ)
+    float4   g_PlaneParams;          // (planeY, extentX, extentZ, planeEnabled)
+    float4   g_LightDir_Shadow;      // (lightDir.xyz, shadowStrength)
+    float4   g_ShadowSoftParams;     // (angularRadius, sampleCount, unused, unused)
 };
+
+#define g_ViewportSize              g_ViewSize_PlaneCenter.xy
+#define g_PlaneCenter               g_ViewSize_PlaneCenter.zw
+#define g_PlaneY                    g_PlaneParams.x
+#define g_PlaneExtents              g_PlaneParams.yz
+#define g_PlaneEnabled              g_PlaneParams.w
+#define g_LightDir                  g_LightDir_Shadow.xyz
+#define g_ShadowStrength            g_LightDir_Shadow.w
+#define g_LightAngularRadius        g_ShadowSoftParams.x
+#define g_SoftShadowSampleCount     g_ShadowSoftParams.y
 
 RWTexture2D<float4> g_RTOutputUAV;
 RaytracingAccelerationStructure g_TLAS;
@@ -54,17 +60,24 @@ void main(uint3 DTid : SV_DispatchThreadID)
     float3 orig      = worldNear;
 
     // Ray-plane intersection with plane y = g_PlaneY
-    float denom = dir.y;
-    bool denomOK = abs(denom) > 1e-6;
-    float t_plane = denomOK ? (g_PlaneY - orig.y) / denom : -1.0;
-    bool planeHit = denomOK && t_plane > 0.0;
-    float3 hitPos = orig + dir * t_plane;
+    bool planeHit = false;
+    float  t_plane = -1.0;
+    float3 hitPos = float3(0.0, 0.0, 0.0);
+    if (g_PlaneEnabled > 0.5 && all(g_PlaneExtents > float2(0.0, 0.0)))
+    {
+        float denom = dir.y;
+        bool denomOK = abs(denom) > 1e-6;
+        t_plane = denomOK ? (g_PlaneY - orig.y) / denom : -1.0;
+        planeHit = denomOK && t_plane > 0.0;
+        hitPos = orig + dir * t_plane;
 
-    // Check within plane extent
-    planeHit = planeHit && abs(hitPos.x) <= g_PlaneExtent && abs(hitPos.z) <= g_PlaneExtent;
+        // Check within plane extents around plane center
+        float2 localXZ = hitPos.xz - g_PlaneCenter;
+        planeHit = planeHit && abs(localXZ.x) <= g_PlaneExtents.x && abs(localXZ.y) <= g_PlaneExtents.y;
+    }
 
     float shadowFactor = 1.0;
-    float3 reflectionColor = 0.0.xxx;
+    float3 reflectionColor = float3(0.0, 0.0, 0.0);
 
     if (planeHit)
     {
@@ -90,48 +103,56 @@ void main(uint3 DTid : SV_DispatchThreadID)
         {
             // Soft shadow: sample multiple rays within an angular radius around L
             float3 N = float3(0.0, 1.0, 0.0);
-            float3 L = normalize(-g_LightDir); // incoming light direction used in raster path
-
-            // Build basis around L for cone sampling
-            float3 U, V;
-            BuildBasis(L, U, V);
-            float tanTheta = tan(saturate(g_LightAngularRadius));
-
-            // Determine sample count
-            int Nsamples = max(1, (int)round(g_SoftShadowSampleCount));
-            float seed = Hash12(pix);
-            float occludedCount = 0.0;
-            // Golden-angle spiral sampling on unit disk
-            const float GOLDEN_ANGLE = 2.39996323;
-            for (int i = 0; i < Nsamples; ++i)
+            const float lightLenSq = dot(g_LightDir, g_LightDir);
+            if (lightLenSq > 1e-6)
             {
-                float t = (i + 0.5) / Nsamples;
-                float r = sqrt(t);
-                float a = (i * GOLDEN_ANGLE) + seed * 6.2831853; // rotate per pixel
-                float2 d = r * float2(cos(a), sin(a));
+                float3 L = normalize(-g_LightDir); // incoming light direction used in raster path
 
-                // Offset light direction within cone using tangent plane U,V
-                float3 dL = normalize(L + (U * d.x + V * d.y) * tanTheta);
+                // Build basis around L for cone sampling
+                float3 U, V;
+                BuildBasis(L, U, V);
+                float tanTheta = tan(saturate(g_LightAngularRadius));
 
-                RayDesc shadow;
-                shadow.Origin = hitPos + N * 1e-3;
-                shadow.Direction = dL;
-                shadow.TMin = 0.0;
-                shadow.TMax = 1e20;
+                // Determine sample count
+                int Nsamples = max(1, (int)round(g_SoftShadowSampleCount));
+                float seed = Hash12(pix);
+                float occludedCount = 0.0;
+                // Golden-angle spiral sampling on unit disk
+                const float GOLDEN_ANGLE = 2.39996323;
+                for (int i = 0; i < Nsamples; ++i)
+                {
+                    float t = (i + 0.5) / Nsamples;
+                    float r = sqrt(t);
+                    float a = (i * GOLDEN_ANGLE) + seed * 6.2831853; // rotate per pixel
+                    float2 d = r * float2(cos(a), sin(a));
 
-                RayQuery<RAY_FLAG_NONE> rq;
-                rq.TraceRayInline(
-                    g_TLAS,
-                    RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
-                    0xFF,
-                    shadow
-                );
-                while (rq.Proceed()) { }
-                bool occluded = (rq.CommittedStatus() == COMMITTED_TRIANGLE_HIT);
-                occludedCount += occluded ? 1.0 : 0.0;
+                    // Offset light direction within cone using tangent plane U,V
+                    float3 dL = normalize(L + (U * d.x + V * d.y) * tanTheta);
+
+                    RayDesc shadow;
+                    shadow.Origin = hitPos + N * 1e-3;
+                    shadow.Direction = dL;
+                    shadow.TMin = 0.0;
+                    shadow.TMax = 1e20;
+
+                    RayQuery<RAY_FLAG_NONE> rq;
+                    rq.TraceRayInline(
+                        g_TLAS,
+                        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
+                        0xFF,
+                        shadow
+                    );
+                    while (rq.Proceed()) { }
+                    bool occluded = (rq.CommittedStatus() == COMMITTED_TRIANGLE_HIT);
+                    occludedCount += occluded ? 1.0 : 0.0;
+                }
+                float occ = occludedCount / Nsamples;
+                shadowFactor = lerp(1.0, g_ShadowStrength, occ);
             }
-            float occ = occludedCount / Nsamples;
-            shadowFactor = lerp(1.0, g_ShadowStrength, occ);
+            else
+            {
+                shadowFactor = 1.0;
+            }
 
             // Simple planar reflection: reflect view ray off the plane and test scene hit
             float3 R = reflect(dir, N);

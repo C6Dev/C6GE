@@ -71,6 +71,7 @@ C6GERender::~C6GERender()
     release_view("m_pMSDepthDSV", m_pMSDepthDSV);
     release_view("m_pMSColorRTV", m_pMSColorRTV);
     release_view("m_pFramebufferDSV", m_pFramebufferDSV);
+    release_view("m_pFramebufferDepthSRV", m_pFramebufferDepthSRV);
     release_view("m_pFramebufferRTV", m_pFramebufferRTV);
     release_view("m_pFramebufferSRV", m_pFramebufferSRV);
 
@@ -402,6 +403,10 @@ void C6GERender::Initialize(const SampleInitInfo& InitInfo)
 
     EnsureWorld();
 
+    EnsureGLTFRenderer();
+    EnsureEnvMapRenderer();
+    LoadDefaultEnvironmentMap();
+
     try
     {
         m_Project = std::make_unique<ProjectSystem::ProjectManager>();
@@ -516,6 +521,42 @@ void C6GERender::Initialize(const SampleInitInfo& InitInfo)
                         cam.farZ        = data.farZ;
                         reg.emplace_or_replace<ECS::Camera>(e, cam);
                     }
+                    void SetSky(void* handle, const ProjectSystem::ECSWorldLike::SkyData& data) override
+                    {
+                        auto e   = static_cast<entt::entity>(reinterpret_cast<uintptr_t>(handle));
+                        auto& reg = W.Registry();
+                        ECS::Sky sky;
+                        sky.enabled         = data.enabled;
+                        sky.environmentPath = data.environmentPath;
+                        sky.intensity       = data.intensity;
+                        sky.exposure        = data.exposure;
+                        sky.rotationDegrees = data.rotationDegrees;
+                        sky.showBackground  = data.showBackground;
+                        reg.emplace_or_replace<ECS::Sky>(e, sky);
+                    }
+                    void SetFog(void* handle, const ProjectSystem::ECSWorldLike::FogData& data) override
+                    {
+                        auto e   = static_cast<entt::entity>(reinterpret_cast<uintptr_t>(handle));
+                        auto& reg = W.Registry();
+                        ECS::Fog fog;
+                        fog.enabled       = data.enabled;
+                        fog.color         = float3{data.color[0], data.color[1], data.color[2]};
+                        fog.density       = data.density;
+                        fog.startDistance = data.startDistance;
+                        fog.maxDistance   = data.maxDistance;
+                        fog.heightFalloff = data.heightFalloff;
+                        reg.emplace_or_replace<ECS::Fog>(e, fog);
+                    }
+                    void SetSkyLight(void* handle, const ProjectSystem::ECSWorldLike::SkyLightData& data) override
+                    {
+                        auto e   = static_cast<entt::entity>(reinterpret_cast<uintptr_t>(handle));
+                        auto& reg = W.Registry();
+                        ECS::SkyLight skyLight;
+                        skyLight.enabled   = data.enabled;
+                        skyLight.color     = float3{data.color[0], data.color[1], data.color[2]};
+                        skyLight.intensity = data.intensity;
+                        reg.emplace_or_replace<ECS::SkyLight>(e, skyLight);
+                    }
                     std::vector<ProjectSystem::ECSWorldLike::ObjectViewItem> EnumerateObjects() const override
                     {
                         std::vector<ProjectSystem::ECSWorldLike::ObjectViewItem> out;
@@ -535,6 +576,8 @@ void C6GERender::Initialize(const SampleInitInfo& InitInfo)
 void C6GERender::Update(double CurrTime, double ElapsedTime, bool DoUpdateUI)
 {
     SampleBase::Update(CurrTime, ElapsedTime, DoUpdateUI);
+
+    m_LastFrameElapsedTime = ElapsedTime;
 
     if (!IsPlaying())
         return;
@@ -573,6 +616,7 @@ void C6GERender::WindowResize(Uint32 Width, Uint32 Height)
     const auto& scDesc = m_pSwapChain->GetDesc();
     Uint32 targetW     = scDesc.Width;
     Uint32 targetH     = scDesc.Height;
+
 
     if (targetW != m_FramebufferWidth || targetH != m_FramebufferHeight)
     {

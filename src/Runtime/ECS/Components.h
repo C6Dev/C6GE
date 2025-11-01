@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
+
 #include "AdvancedMath.hpp"
 
 namespace Diligent { namespace ECS {
@@ -41,8 +43,7 @@ struct Mesh {
 
 // Simple directional light tag; could be extended to per-entity
 struct DirectionalLight {
-    // Aim slightly backward by default so the scene is lit from above and behind the camera
-    Diligent::float3 direction { -0.35f, -0.80f, -0.48f };
+    Diligent::float3 direction { -0.49f, -0.60f, 0.64f };
     float intensity {1.0f};
 };
 
@@ -67,6 +68,33 @@ struct Camera {
     float fovYRadians { Diligent::PI_F / 4.0f };
     float nearZ { 0.1f };
     float farZ  { 100.0f };
+};
+
+// Image-based sky parameters (uses HDR environment maps for lighting)
+struct Sky {
+    bool        enabled { true };
+    std::string environmentPath;
+    float       intensity { 1.0f };
+    float       exposure  { 1.0f };
+    float       rotationDegrees { 0.0f };
+    bool        showBackground { true };
+};
+
+// Simple exponential height fog
+struct Fog {
+    bool             enabled { false };
+    Diligent::float3 color { 0.6f, 0.7f, 0.8f };
+    float            density { 0.02f };
+    float            startDistance { 20.0f };
+    float            maxDistance { 150.0f };
+    float            heightFalloff { 0.01f };
+};
+
+// Ambient sky light contribution
+struct SkyLight {
+    Diligent::float3 color { 0.25f, 0.28f, 0.32f };
+    float            intensity { 1.0f };
+    bool             enabled { true };
 };
 
 }} // namespace Diligent::ECS

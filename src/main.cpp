@@ -80,6 +80,7 @@
 #include "backends/imgui_impl_glfw.h"
 #include "ImGuiUtils.hpp"
 #include "ImGuiImplDiligent.hpp"
+#include "ImGuiDiligentRenderer.hpp"
 #include "Align.hpp"
 #include "FirstPersonCamera.hpp"
 #include "FastRand.hpp"
@@ -150,6 +151,14 @@ struct DiligentViewportData
     RefCntAutoPtr<ISwapChain> SwapChain;
 };
 
+class ImGuiImplDiligentEx : public ImGuiImplDiligent
+{
+public:
+    using ImGuiImplDiligent::ImGuiImplDiligent;
+
+    ImGuiDiligentRenderer* GetRenderer() const noexcept { return m_pRenderer.get(); }
+};
+
 bool g_ImGuiGlfwBackendEnabled = false;
 RefCntAutoPtr<IRenderDevice> g_RenderDevice;
 RefCntAutoPtr<IDeviceContext> g_ImmediateContext;
@@ -163,7 +172,8 @@ RefCntAutoPtr<IEngineFactoryD3D12> g_FactoryD3D12;
 #    endif
 #endif
 RENDER_DEVICE_TYPE g_DeviceType = RENDER_DEVICE_TYPE_UNDEFINED;
-ImGuiImplDiligent* g_ImGuiRenderer = nullptr;
+ImGuiImplDiligentEx* g_ImGuiRenderer = nullptr;
+ImGuiDiligentRenderer* g_ImGuiRendererCore = nullptr;
 
 static bool InitializeDiligentViewportGlobals(const RefCntAutoPtr<IRenderDevice>& device,
                                               const RefCntAutoPtr<IDeviceContext>& context,
@@ -280,9 +290,12 @@ static void ImGui_Diligent_SetWindowSize(ImGuiViewport* viewport, ImVec2 size)
     }
 }
 
-static void ImGui_Diligent_RenderWindow(ImGuiViewport* viewport, void*)
+static void ImGui_Diligent_RenderWindow(ImGuiViewport* viewport, void* renderer_arg)
 {
-    if (viewport == nullptr || g_ImGuiRenderer == nullptr)
+    if (viewport == nullptr)
+        return;
+    auto* renderer = static_cast<ImGuiDiligentRenderer*>(renderer_arg ? renderer_arg : g_ImGuiRendererCore);
+    if (renderer == nullptr)
         return;
     auto* data = static_cast<DiligentViewportData*>(viewport->RendererUserData);
     if (!data || !data->SwapChain)
@@ -306,7 +319,7 @@ static void ImGui_Diligent_RenderWindow(ImGuiViewport* viewport, void*)
         }
     }
 
-    g_ImGuiRenderer->RenderDrawData(g_ImmediateContext, viewport->DrawData);
+    renderer->RenderDrawData(g_ImmediateContext, viewport->DrawData);
 }
 
 static void ImGui_Diligent_SwapBuffers(ImGuiViewport* viewport, void*)
@@ -1100,11 +1113,11 @@ int main()
     // Rebuild font atlas
 
     // Initialize ImGui Diligent backend (DiligentEngine handles GLFW integration internally)
-    std::unique_ptr<ImGuiImplDiligent> imGuiImpl;
+    std::unique_ptr<ImGuiImplDiligentEx> imGuiImpl;
     try
     {
         ImGuiDiligentCreateInfo imGuiCI(device, swapChain->GetDesc());
-        imGuiImpl = std::make_unique<ImGuiImplDiligent>(imGuiCI);
+    imGuiImpl = std::make_unique<ImGuiImplDiligentEx>(imGuiCI);
     }
     catch (const std::exception& e)
     {
@@ -1122,6 +1135,7 @@ int main()
     }
 
     g_ImGuiRenderer = imGuiImpl.get();
+    g_ImGuiRendererCore = g_ImGuiRenderer ? g_ImGuiRenderer->GetRenderer() : nullptr;
     const bool multiViewportSupported = InitializeDiligentViewportGlobals(device, immediateContext, swapChain, factory);
     if (!multiViewportSupported)
     {
@@ -1264,7 +1278,7 @@ imGuiImpl->NewFrame(windowW, windowH, scDesc.PreTransform);
         if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
         {
             ImGui::UpdatePlatformWindows();
-            ImGui::RenderPlatformWindowsDefault();
+            ImGui::RenderPlatformWindowsDefault(nullptr, g_ImGuiRendererCore);
 
             // Rebind main render target for subsequent operations
             pRTV = swapChain->GetCurrentBackBufferRTV();
@@ -1285,6 +1299,7 @@ imGuiImpl->NewFrame(windowW, windowH, scDesc.PreTransform);
         g_ImGuiGlfwBackendEnabled = false;
     }
     g_ImGuiRenderer = nullptr;
+    g_ImGuiRendererCore = nullptr;
     g_RenderDevice.Release();
     g_ImmediateContext.Release();
     g_MainSwapChain.Release();

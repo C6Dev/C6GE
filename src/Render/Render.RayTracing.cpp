@@ -77,13 +77,22 @@ void C6GERender::RenderRayTracingPath()
     {
         // Update constants
         RTConstantsCPU c{};
-        c.InvViewProj = m_CameraViewProjMatrix.Inverse();
-        c.ViewSize_Plane = float4{static_cast<float>(w), static_cast<float>(h), -2.0f, 5.0f};
-        c.LightDir_Shadow = float4{m_LightDirection.x, m_LightDirection.y, m_LightDirection.z, 0.6f};
+    c.InvViewProj = m_CameraViewProjMatrix.Inverse();
+
+    const auto planeInfo = ComputeGroundPlaneInfo();
+    c.ViewSize_PlaneCenter = float4{static_cast<float>(w), static_cast<float>(h),
+                    planeInfo.Center.x, planeInfo.Center.z};
+    const float planeEnabled = planeInfo.Present ? 1.0f : 0.0f;
+    const float planeY       = planeInfo.Present ? planeInfo.Center.y : 0.0f;
+    const float extentX      = planeInfo.Present ? planeInfo.Extents.x : 0.0f;
+    const float extentZ      = planeInfo.Present ? planeInfo.Extents.y : 0.0f;
+    c.PlaneParams            = float4{planeY, extentX, extentZ, planeEnabled};
+
+    c.LightDir_Shadow = float4{m_LightDirection.x, m_LightDirection.y, m_LightDirection.z, 0.6f};
         // Soft shadow params: angular radius (radians), sample count (from UI)
         float AngularRadius = m_SoftShadowsEnabled ? m_SoftShadowAngularRad : 0.0f;
         float SampleCount   = m_SoftShadowsEnabled ? static_cast<float>(std::max(1, m_SoftShadowSamples)) : 1.0f;
-        c.ShadowSoftParams = float4{AngularRadius, SampleCount, 0.0f, 0.0f};
+    c.ShadowSoftParams = float4{AngularRadius, SampleCount, 0.0f, 0.0f};
         {
             MapHelper<RTConstantsCPU> M(m_pImmediateContext, m_RTConstants, MAP_WRITE, MAP_FLAG_DISCARD);
             *M = c;
@@ -488,13 +497,11 @@ void C6GERender::CreateRayTracingAS()
     {
         // Create a tiny static plane mesh: y = -2, extent = 5
         struct Pos3 { float x, y, z; };
-        const float PlaneY = -2.0f;
-        const float Ext    =  5.0f;
         const Pos3 PlaneVerts[4] = {
-            {-Ext, PlaneY, -Ext},
-            {-Ext, PlaneY,  Ext},
-            { Ext, PlaneY, -Ext},
-            { Ext, PlaneY,  Ext}
+            {-1.0f, 0.0f, -1.0f},
+            {-1.0f, 0.0f,  1.0f},
+            { 1.0f, 0.0f, -1.0f},
+            { 1.0f, 0.0f,  1.0f}
         };
         const Uint32 PlaneIndices[6] = { 0,1,2, 2,1,3 };
 
@@ -616,7 +623,9 @@ void C6GERender::CreateRayTracingAS()
     std::vector<std::string>           InstanceNames; // keep storage for names while building
     Instances.reserve(16);
     InstanceNames.reserve(16);
-    // Plane (static)
+
+    const auto planeInfo = ComputeGroundPlaneInfo();
+    if (planeInfo.Present && m_pBLAS_Plane)
     {
         TLASBuildInstanceData inst{};
         InstanceNames.emplace_back("Plane");
@@ -624,17 +633,17 @@ void C6GERender::CreateRayTracingAS()
         inst.pBLAS        = m_pBLAS_Plane;
         inst.Mask         = 0xFF;
         inst.CustomId     = 0;
-        float4x4 I = float4x4::Identity();
-        inst.Transform.SetRotation(I.Data(), 4);
-        inst.Transform.SetTranslation(0.f, 0.f, 0.f);
+        const float4x4& W = planeInfo.World;
+        inst.Transform.SetRotation(W.Data(), 4);
+        inst.Transform.SetTranslation(W.m30, W.m31, W.m32);
         Instances.push_back(inst);
     }
     // ECS cubes and glTF
     if (m_World)
     {
         auto& reg = m_World->Registry();
-        auto view = reg.view<ECS::Transform, ECS::StaticMesh>();
-        Uint32 cid = 1;
+    auto view = reg.view<ECS::Transform, ECS::StaticMesh>();
+    Uint32 cid = 1;
         for (auto e : view)
         {
             const auto& sm = view.get<ECS::StaticMesh>(e);
@@ -728,8 +737,8 @@ void C6GERender::UpdateTLAS()
     std::vector<std::string>           InstanceNames; // keep storage for names while building
     Instances.reserve(16);
     InstanceNames.reserve(16);
-    // Plane instance (static)
-    if (m_pBLAS_Plane)
+    const auto planeInfo = ComputeGroundPlaneInfo();
+    if (planeInfo.Present && m_pBLAS_Plane)
     {
         TLASBuildInstanceData inst{};
         InstanceNames.emplace_back("Plane");
@@ -737,17 +746,17 @@ void C6GERender::UpdateTLAS()
         inst.pBLAS        = m_pBLAS_Plane;
         inst.Mask         = 0xFF;
         inst.CustomId     = 0;
-        float4x4 I = float4x4::Identity();
-        inst.Transform.SetRotation(I.Data(), 4);
-        inst.Transform.SetTranslation(0.f, 0.f, 0.f);
+        const float4x4& W = planeInfo.World;
+        inst.Transform.SetRotation(W.Data(), 4);
+        inst.Transform.SetTranslation(W.m30, W.m31, W.m32);
         Instances.push_back(inst);
     }
     // ECS cubes and glTF
     if (m_World)
     {
         auto& reg = m_World->Registry();
-        auto view = reg.view<ECS::Transform, ECS::StaticMesh>();
-        Uint32 cid = 1;
+    auto view = reg.view<ECS::Transform, ECS::StaticMesh>();
+    Uint32 cid = 1;
         for (auto e : view)
         {
             const auto& sm = view.get<ECS::StaticMesh>(e);

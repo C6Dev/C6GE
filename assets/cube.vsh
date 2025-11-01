@@ -25,6 +25,9 @@ cbuffer Constants
     float4   g_DirLight;
     // Ambient color (rgb), a unused
     float4   g_Ambient;
+    float4   g_CameraPos;
+    float4   g_FogColorDensity;
+    float4   g_FogParams;
 
     // Light counts and padding
     uint     g_NumPointLights;

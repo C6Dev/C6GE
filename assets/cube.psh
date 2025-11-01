@@ -25,6 +25,9 @@ cbuffer Constants
 
     float4   g_DirLight;   // xyz = direction, w = intensity
     float4   g_Ambient;    // rgb ambient
+    float4   g_CameraPos;  // xyz camera position
+    float4   g_FogColorDensity; // rgb fog color, a = density
+    float4   g_FogParams;       // x = start, y = end, z = height falloff, w = enable flag
 
     uint     g_NumPointLights;
     uint     g_NumSpotLights;
@@ -111,7 +114,24 @@ void main(in  PSInput  PSIn,
     lighting += ApplySpot(N, P);
     lighting += g_Ambient.rgb; // ambient is zeroed on CPU to ensure black scene by default
 
-    PSOut.Color = float4(albedo * lighting, 1.0f);
+    float3 shaded = albedo * lighting;
+
+    float3 finalColor = shaded;
+    if (g_FogParams.w > 0.5f)
+    {
+        float3 toPoint = PSIn.WorldPos - g_CameraPos.xyz;
+        float  dist    = length(toPoint);
+        float  start   = g_FogParams.x;
+        float  endDist = max(start + 1e-3f, g_FogParams.y);
+        float  t       = saturate((dist - start) / (endDist - start));
+        float  heightFalloff = max(0.0f, g_FogParams.z);
+        float  heightTerm    = exp(-heightFalloff * max(0.0f, PSIn.WorldPos.y - g_CameraPos.y));
+        float  density       = max(0.0f, g_FogColorDensity.w) * heightTerm;
+        float  fogFactor     = saturate(1.0f - exp(-density * t));
+        finalColor = lerp(shaded, g_FogColorDensity.rgb, fogFactor);
+    }
+
+    PSOut.Color = float4(finalColor, 1.0f);
     
 #ifdef CONVERT_PS_OUTPUT_TO_GAMMA
     // Use fast approximation for gamma correction

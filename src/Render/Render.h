@@ -28,6 +28,7 @@
 #pragma once
 
 #include <atomic>
+#include <memory>
 #include <vector>
 #include <thread>
 #include <mutex>
@@ -43,6 +44,7 @@
 // GLTF loader & renderer
 #include "DiligentTools/AssetLoader/interface/GLTFLoader.hpp"
 #include "DiligentFX/PBR/interface/GLTF_PBR_Renderer.hpp"
+#include "DiligentFX/Components/interface/EnvMapRenderer.hpp"
 // Project system
 #include "Project/Project.h"
 
@@ -137,6 +139,14 @@ namespace Diligent
         // ECS accessors for external object creation
         class ECS::World* GetWorld() { return m_World.get(); }
         void EnsureWorld();
+        struct GroundPlaneInfo
+        {
+            bool   Present = false;
+            float3 Center  = float3{0, 0, 0};
+            float2 Extents = float2{0, 0};
+            float4x4 World = float4x4::Identity();
+        };
+        GroundPlaneInfo ComputeGroundPlaneInfo() const;
         // Render a glTF asset with explicit world transform (used by RenderSystem)
         void RenderGLTFWithWorld(const std::string& AssetId, const float4x4& World, const float4x4& CameraViewProj,
                                  RESOURCE_STATE_TRANSITION_MODE TransitionMode);
@@ -144,6 +154,11 @@ namespace Diligent
     void RenderGLTFShadowWithWorld(const std::string& AssetId, const float4x4& World, const float4x4& LightViewProj,
                        RESOURCE_STATE_TRANSITION_MODE TransitionMode);
     private:
+    void RenderEnvironment(IDeviceContext* pContext);
+    void EnsureEnvMapRenderer();
+    void LoadEnvironmentMap(const std::string& Path);
+    void LoadDefaultEnvironmentMap();
+    void UpdatePBRFrameAttribs(const float4x4& CameraViewProj);
     void CreateCubePSO();
     void CreatePlanePSO();
     void CreatePlaneMeshBuffers();
@@ -309,6 +324,19 @@ namespace Diligent
         // Ensure a BLAS exists for a given glTF asset (lazy-built)
         void EnsureGLTFBLAS(const std::string& AssetId);
 
+    std::unique_ptr<EnvMapRenderer> m_EnvMapRenderer;
+    RefCntAutoPtr<ITexture>         m_EnvironmentMapTexture;
+    RefCntAutoPtr<ITextureView>     m_EnvironmentMapSRV;
+    std::string                     m_CurrentEnvironmentPath;
+    float                           m_EnvironmentIntensity   = 1.0f;
+    float                           m_EnvironmentExposure    = 1.0f;
+    float                           m_EnvironmentRotationDeg = 0.0f;
+    bool                            m_EnvironmentShowBackground = true;
+    float                           m_EnvironmentAverageLogLum = 0.3f;
+    float                           m_EnvironmentMiddleGray    = 0.18f;
+    float                           m_EnvironmentWhitePoint    = 3.0f;
+    float                           m_EnvironmentMipLevel      = 0.0f;
+
     float4x4       m_CubeWorldMatrix;
     float4x4       m_SecondCubeWorldMatrix;
     float4x4       m_CameraViewProjMatrix;
@@ -327,6 +355,7 @@ namespace Diligent
         RefCntAutoPtr<ITextureView> m_pFramebufferSRV;
         RefCntAutoPtr<ITexture> m_pFramebufferDepth;
         RefCntAutoPtr<ITextureView> m_pFramebufferDSV;
+        RefCntAutoPtr<ITextureView> m_pFramebufferDepthSRV;
         Uint32 m_FramebufferWidth = 800;
         Uint32 m_FramebufferHeight = 600;
         ImTextureID m_ViewportTextureID = 0;
@@ -375,6 +404,15 @@ namespace Diligent
         struct SpotLightData  { float3 position; float range; float3 color; float intensity; float3 direction; float spotCos; };
         std::vector<PointLightData> m_FramePointLights;
         std::vector<SpotLightData>  m_FrameSpotLights;
+        float3 m_FrameAmbientColor = float3{0, 0, 0};
+    bool   m_FrameEnvironmentActive = false;
+        float3 m_FrameFogColor = float3{0, 0, 0};
+        float  m_FrameFogDensity = 0.0f;
+        float  m_FrameFogStart = 0.0f;
+        float  m_FrameFogEnd = 0.0f;
+        float  m_FrameFogHeightFalloff = 0.0f;
+        bool   m_FrameFogEnabled = false;
+        double m_LastFrameElapsedTime = 0.0;
     };
 
 } // namespace Diligent

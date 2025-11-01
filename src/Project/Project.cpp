@@ -272,6 +272,27 @@ namespace {
         pos = end;
         return true;
     }
+    static bool TryReadBool(const string& s, size_t& pos, bool& out)
+    {
+        size_t start = pos;
+        while (start < s.size() && isspace(static_cast<unsigned char>(s[start])))
+            ++start;
+        if (start >= s.size())
+            return false;
+        if (s.compare(start, 4, "true") == 0)
+        {
+            out = true;
+            pos = start + 4;
+            return true;
+        }
+        if (s.compare(start, 5, "false") == 0)
+        {
+            out = false;
+            pos = start + 5;
+            return true;
+        }
+        return false;
+    }
 }
 
 // Concrete adapter around ECS::World to satisfy ECSWorldLike
@@ -346,6 +367,39 @@ public:
         cam.farZ        = data.farZ;
         reg.emplace_or_replace<ECS::Camera>(e, cam);
     }
+    void SetSky(void* handle, const SkyData& data) override {
+        auto e = static_cast<entt::entity>(reinterpret_cast<uintptr_t>(handle));
+        auto& reg = W.Registry();
+        ECS::Sky sky;
+        sky.enabled         = data.enabled;
+        sky.environmentPath = data.environmentPath;
+        sky.intensity       = data.intensity;
+        sky.exposure        = data.exposure;
+        sky.rotationDegrees = data.rotationDegrees;
+        sky.showBackground  = data.showBackground;
+        reg.emplace_or_replace<ECS::Sky>(e, sky);
+    }
+    void SetFog(void* handle, const FogData& data) override {
+        auto e = static_cast<entt::entity>(reinterpret_cast<uintptr_t>(handle));
+        auto& reg = W.Registry();
+        ECS::Fog fog;
+        fog.enabled       = data.enabled;
+        fog.color         = float3{data.color[0], data.color[1], data.color[2]};
+        fog.density       = data.density;
+        fog.startDistance = data.startDistance;
+        fog.maxDistance   = data.maxDistance;
+        fog.heightFalloff = data.heightFalloff;
+        reg.emplace_or_replace<ECS::Fog>(e, fog);
+    }
+    void SetSkyLight(void* handle, const SkyLightData& data) override {
+        auto e = static_cast<entt::entity>(reinterpret_cast<uintptr_t>(handle));
+        auto& reg = W.Registry();
+        ECS::SkyLight skyLight;
+        skyLight.enabled   = data.enabled;
+        skyLight.color     = float3{data.color[0], data.color[1], data.color[2]};
+        skyLight.intensity = data.intensity;
+        reg.emplace_or_replace<ECS::SkyLight>(e, skyLight);
+    }
     vector<ObjectViewItem> EnumerateObjects() const override {
         vector<ObjectViewItem> out;
         auto& reg = W.Registry();
@@ -408,6 +462,37 @@ public:
                 it.camera.fovYRadians = cam.fovYRadians;
                 it.camera.nearZ       = cam.nearZ;
                 it.camera.farZ        = cam.farZ;
+            }
+            it.hasSky = reg.any_of<ECS::Sky>(e);
+            if (it.hasSky) {
+                const auto& sky = reg.get<ECS::Sky>(e);
+                it.sky.enabled          = sky.enabled;
+                it.sky.environmentPath  = sky.environmentPath;
+                it.sky.intensity        = sky.intensity;
+                it.sky.exposure         = sky.exposure;
+                it.sky.rotationDegrees  = sky.rotationDegrees;
+                it.sky.showBackground   = sky.showBackground;
+            }
+            it.hasFog = reg.any_of<ECS::Fog>(e);
+            if (it.hasFog) {
+                const auto& fog = reg.get<ECS::Fog>(e);
+                it.fog.enabled        = fog.enabled;
+                it.fog.color[0]       = fog.color.x;
+                it.fog.color[1]       = fog.color.y;
+                it.fog.color[2]       = fog.color.z;
+                it.fog.density        = fog.density;
+                it.fog.startDistance  = fog.startDistance;
+                it.fog.maxDistance    = fog.maxDistance;
+                it.fog.heightFalloff  = fog.heightFalloff;
+            }
+            it.hasSkyLight = reg.any_of<ECS::SkyLight>(e);
+            if (it.hasSkyLight) {
+                const auto& skyLight = reg.get<ECS::SkyLight>(e);
+                it.skyLight.enabled   = skyLight.enabled;
+                it.skyLight.color[0]  = skyLight.color.x;
+                it.skyLight.color[1]  = skyLight.color.y;
+                it.skyLight.color[2]  = skyLight.color.z;
+                it.skyLight.intensity = skyLight.intensity;
             }
             out.push_back(std::move(it));
         }
@@ -490,6 +575,39 @@ bool WorldIO::Save(const fs::path& path, ECSWorldLike& world)
             camProp << "        }";
             props.push_back(camProp.str());
         }
+        if (it.hasSky) {
+            std::ostringstream skyProp;
+            skyProp << "        \"sky\": {\n";
+            skyProp << "          \"enabled\": " << (it.sky.enabled ? "true" : "false") << ",\n";
+            skyProp << "          \"environmentPath\": \"" << JsonEscape(it.sky.environmentPath) << "\",\n";
+            skyProp << "          \"intensity\": " << it.sky.intensity << ",\n";
+            skyProp << "          \"exposure\": " << it.sky.exposure << ",\n";
+            skyProp << "          \"rotationDegrees\": " << it.sky.rotationDegrees << ",\n";
+            skyProp << "          \"showBackground\": " << (it.sky.showBackground ? "true" : "false") << "\n";
+            skyProp << "        }";
+            props.push_back(skyProp.str());
+        }
+        if (it.hasFog) {
+            std::ostringstream fogProp;
+            fogProp << "        \"fog\": {\n";
+            fogProp << "          \"enabled\": " << (it.fog.enabled ? "true" : "false") << ",\n";
+            fogProp << "          \"color\": [" << it.fog.color[0] << ", " << it.fog.color[1] << ", " << it.fog.color[2] << "],\n";
+            fogProp << "          \"density\": " << it.fog.density << ",\n";
+            fogProp << "          \"startDistance\": " << it.fog.startDistance << ",\n";
+            fogProp << "          \"maxDistance\": " << it.fog.maxDistance << ",\n";
+            fogProp << "          \"heightFalloff\": " << it.fog.heightFalloff << "\n";
+            fogProp << "        }";
+            props.push_back(fogProp.str());
+        }
+        if (it.hasSkyLight) {
+            std::ostringstream skyLightProp;
+            skyLightProp << "        \"skyLight\": {\n";
+            skyLightProp << "          \"enabled\": " << (it.skyLight.enabled ? "true" : "false") << ",\n";
+            skyLightProp << "          \"color\": [" << it.skyLight.color[0] << ", " << it.skyLight.color[1] << ", " << it.skyLight.color[2] << "],\n";
+            skyLightProp << "          \"intensity\": " << it.skyLight.intensity << "\n";
+            skyLightProp << "        }";
+            props.push_back(skyLightProp.str());
+        }
 
         for (size_t p = 0; p < props.size(); ++p) {
             o << props[p];
@@ -548,6 +666,9 @@ bool WorldIO::Load(const fs::path& path, ECSWorldLike& world)
     ECSWorldLike::PointLightData pointLight{}; bool hasPointLight = false;
     ECSWorldLike::SpotLightData spotLight{}; bool hasSpotLight = false;
     ECSWorldLike::CameraData camera{}; bool hasCamera = false;
+    ECSWorldLike::SkyData sky{}; bool hasSky = false;
+    ECSWorldLike::FogData fog{}; bool hasFog = false;
+    ECSWorldLike::SkyLightData skyLight{}; bool hasSkyLight = false;
 
         // name
         size_t p2 = 0;
@@ -658,6 +779,84 @@ bool WorldIO::Load(const fs::path& path, ECSWorldLike& world)
             hasCamera = true;
         }
 
+        size_t psky = objStr.find("\"sky\"");
+        if (psky != string::npos) {
+            size_t p = psky;
+            if (TryFindNext(objStr, p, "\"enabled\"")) {
+                TryFindNext(objStr, p, ":");
+                TryReadBool(objStr, p, sky.enabled);
+            }
+            if (TryFindNext(objStr, p, "\"exposure\"")) {
+                TryFindNext(objStr, p, ":");
+                TryReadFloat(objStr, p, sky.exposure);
+            }
+            if (TryFindNext(objStr, p, "\"environmentPath\"")) {
+                TryFindNext(objStr, p, ":");
+                TryReadQuotedString(objStr, p, sky.environmentPath);
+            }
+            if (TryFindNext(objStr, p, "\"intensity\"")) {
+                TryFindNext(objStr, p, ":");
+                TryReadFloat(objStr, p, sky.intensity);
+            }
+            if (TryFindNext(objStr, p, "\"rotationDegrees\"")) {
+                TryFindNext(objStr, p, ":");
+                TryReadFloat(objStr, p, sky.rotationDegrees);
+            }
+            if (TryFindNext(objStr, p, "\"showBackground\"")) {
+                TryFindNext(objStr, p, ":");
+                TryReadBool(objStr, p, sky.showBackground);
+            }
+            hasSky = true;
+        }
+
+        size_t pfog = objStr.find("\"fog\"");
+        if (pfog != string::npos) {
+            size_t p = pfog;
+            if (TryFindNext(objStr, p, "\"enabled\"")) {
+                TryFindNext(objStr, p, ":");
+                TryReadBool(objStr, p, fog.enabled);
+            }
+            if (TryFindNext(objStr, p, "\"color\"")) {
+                TryFindNext(objStr, p, ":");
+                TryReadFloatArray3(objStr, p, fog.color);
+            }
+            if (TryFindNext(objStr, p, "\"density\"")) {
+                TryFindNext(objStr, p, ":");
+                TryReadFloat(objStr, p, fog.density);
+            }
+            if (TryFindNext(objStr, p, "\"startDistance\"")) {
+                TryFindNext(objStr, p, ":");
+                TryReadFloat(objStr, p, fog.startDistance);
+            }
+            if (TryFindNext(objStr, p, "\"maxDistance\"")) {
+                TryFindNext(objStr, p, ":");
+                TryReadFloat(objStr, p, fog.maxDistance);
+            }
+            if (TryFindNext(objStr, p, "\"heightFalloff\"")) {
+                TryFindNext(objStr, p, ":");
+                TryReadFloat(objStr, p, fog.heightFalloff);
+            }
+            hasFog = true;
+        }
+
+        size_t pslight = objStr.find("\"skyLight\"");
+        if (pslight != string::npos) {
+            size_t p = pslight;
+            if (TryFindNext(objStr, p, "\"enabled\"")) {
+                TryFindNext(objStr, p, ":");
+                TryReadBool(objStr, p, skyLight.enabled);
+            }
+            if (TryFindNext(objStr, p, "\"color\"")) {
+                TryFindNext(objStr, p, ":");
+                TryReadFloatArray3(objStr, p, skyLight.color);
+            }
+            if (TryFindNext(objStr, p, "\"intensity\"")) {
+                TryFindNext(objStr, p, ":");
+                TryReadFloat(objStr, p, skyLight.intensity);
+            }
+            hasSkyLight = true;
+        }
+
         // Create entity
         void* h = world.CreateObject(name.empty()? string("Object"):name);
         if (hasTr) world.SetTransform(h, t);
@@ -666,6 +865,9 @@ bool WorldIO::Load(const fs::path& path, ECSWorldLike& world)
         if (hasPointLight) world.SetPointLight(h, pointLight);
         if (hasSpotLight) world.SetSpotLight(h, spotLight);
         if (hasCamera) world.SetCamera(h, camera);
+        if (hasSky) world.SetSky(h, sky);
+        if (hasFog) world.SetFog(h, fog);
+        if (hasSkyLight) world.SetSkyLight(h, skyLight);
 
         // skip trailing commas and whitespace
         while (pos < s.size() && isspace(static_cast<unsigned char>(s[pos])))

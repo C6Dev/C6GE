@@ -1,4 +1,5 @@
 #include "RenderCommon.hpp"
+#include <cmath>
 
 namespace Diligent
 
@@ -7,6 +8,47 @@ namespace Diligent
     void C6GERender::SetHostWindow(GLFWwindow* window)
     {
         m_HostWindow = window;
+    }
+
+    C6GERender::GroundPlaneInfo C6GERender::ComputeGroundPlaneInfo() const
+    {
+        GroundPlaneInfo info;
+        if (!m_World)
+            return info;
+
+        auto& reg = m_World->Registry();
+        auto assign = [&](const ECS::Transform& tr) {
+            info.Present = true;
+            info.World   = tr.WorldMatrix();
+            info.Center  = float3{info.World.m30, info.World.m31, info.World.m32};
+            info.Extents = float2{
+                std::max(std::abs(tr.scale.x), 0.01f),
+                std::max(std::abs(tr.scale.z), 0.01f)};
+        };
+
+        auto viewStatic = reg.view<ECS::Transform, ECS::StaticMesh>();
+        for (auto entity : viewStatic)
+        {
+            const auto& sm = viewStatic.get<ECS::StaticMesh>(entity);
+            if (sm.type == ECS::StaticMesh::MeshType::Plane)
+            {
+                assign(viewStatic.get<ECS::Transform>(entity));
+                return info;
+            }
+        }
+
+        auto viewMesh = reg.view<ECS::Transform, ECS::Mesh>();
+        for (auto entity : viewMesh)
+        {
+            const auto& mesh = viewMesh.get<ECS::Mesh>(entity);
+            if (mesh.kind == ECS::Mesh::Kind::Static && mesh.staticType == ECS::Mesh::StaticType::Plane)
+            {
+                assign(viewMesh.get<ECS::Transform>(entity));
+                return info;
+            }
+        }
+
+        return info;
     }
 
     using RenderInternals::Constants;
@@ -35,14 +77,87 @@ namespace Diligent
 
         float4x4 WorldToLightViewSpaceMatr = float4x4::ViewFromBasis(f3LightSpaceX, f3LightSpaceY, f3LightSpaceZ);
 
-    float3 f3SceneCenter = float3(0,0,0);
-    // Increase scene radius to include the plane (plane extends to +/-5.0 in X/Z and is at Y=-2)
-    float SceneRadius = 6.0f;
-    float3 f3MinXYZ = f3SceneCenter - float3(SceneRadius, SceneRadius, SceneRadius);
-    // Previously Z extent was scaled by 5 which skewed the light projection
-    // and produced badly scaled shadows. Use symmetric extents here.
-    float3 f3MaxXYZ = f3SceneCenter + float3(SceneRadius, SceneRadius, SceneRadius);
+    BoundBox SceneBounds = BoundBox::Invalid();
+    auto accumulateBounds = [&](const BoundBox& localBounds, const float4x4& world) {
+        BoundBox transformed = localBounds.Transform(world);
+        if (!SceneBounds.IsValid())
+            SceneBounds = transformed;
+        else
+            SceneBounds = SceneBounds.Combine(transformed);
+    };
+
+    if (m_World)
+    {
+        auto& reg = m_World->Registry();
+        const BoundBox CubeLocal{float3{-1.f, -1.f, -1.f}, float3{1.f, 1.f, 1.f}};
+        const BoundBox PlaneLocalBase{float3{-1.f, -0.01f, -1.f}, float3{1.f, 0.01f, 1.f}};
+
+        auto viewStatic = reg.view<ECS::Transform, ECS::StaticMesh>();
+        for (auto entity : viewStatic)
+        {
+            const auto& sm = viewStatic.get<ECS::StaticMesh>(entity);
+            const auto& tr = viewStatic.get<ECS::Transform>(entity);
+            if (sm.type == ECS::StaticMesh::MeshType::Cube)
+            {
+                accumulateBounds(CubeLocal, tr.WorldMatrix());
+            }
+            else if (sm.type == ECS::StaticMesh::MeshType::Plane)
+            {
+                accumulateBounds(PlaneLocalBase, tr.WorldMatrix());
+            }
+        }
+
+        auto viewMesh = reg.view<ECS::Transform, ECS::Mesh>();
+        for (auto entity : viewMesh)
+        {
+            const auto& mesh = viewMesh.get<ECS::Mesh>(entity);
+            const auto& tr   = viewMesh.get<ECS::Transform>(entity);
+            if (mesh.kind == ECS::Mesh::Kind::Static)
+            {
+                if (mesh.staticType == ECS::Mesh::StaticType::Cube)
+                    accumulateBounds(CubeLocal, tr.WorldMatrix());
+                else if (mesh.staticType == ECS::Mesh::StaticType::Plane)
+                    accumulateBounds(PlaneLocalBase, tr.WorldMatrix());
+            }
+            else if (mesh.kind == ECS::Mesh::Kind::Dynamic && !mesh.assetId.empty())
+            {
+                std::string assetKey = mesh.assetId;
+                auto        itAsset  = m_GltfAssets.find(assetKey);
+                if (itAsset == m_GltfAssets.end())
+                {
+                    assetKey = LoadGLTFAsset(assetKey);
+                    itAsset  = m_GltfAssets.find(assetKey);
+                }
+                if (itAsset != m_GltfAssets.end())
+                {
+                    const auto& assetBounds = itAsset->second.Bounds;
+                    if (assetBounds.IsValid())
+                        accumulateBounds(assetBounds, tr.WorldMatrix());
+                }
+            }
+        }
+    }
+
+    float3 f3MinXYZ;
+    float3 f3MaxXYZ;
+    if (SceneBounds.IsValid())
+    {
+        const float  margin    = 2.0f;
+        const float3 marginVec = float3{margin, margin, margin};
+        f3MinXYZ = SceneBounds.Min - marginVec;
+        f3MaxXYZ = SceneBounds.Max + marginVec;
+    }
+    else
+    {
+        float3 f3SceneCenter = float3(0, 0, 0);
+        float  SceneRadius   = 6.0f;
+        f3MinXYZ = f3SceneCenter - float3(SceneRadius, SceneRadius, SceneRadius);
+        f3MaxXYZ = f3SceneCenter + float3(SceneRadius, SceneRadius, SceneRadius);
+    }
     float3 f3SceneExtent = f3MaxXYZ - f3MinXYZ;
+    f3SceneExtent.x = std::max(f3SceneExtent.x, 0.5f);
+    f3SceneExtent.y = std::max(f3SceneExtent.y, 0.5f);
+    f3SceneExtent.z = std::max(f3SceneExtent.z, 0.5f);
 
         const RenderDeviceInfo& DevInfo = m_pDevice->GetDeviceInfo();
         const bool IsGL = DevInfo.IsGLDevice();
@@ -86,7 +201,12 @@ namespace Diligent
             float4x4 NormalMatrix = m_CubeWorldMatrix.RemoveTranslation().Inverse().Transpose();
             CBConstants->g_NormalTranform = NormalMatrix;
             CBConstants->g_DirLight = float4{m_LightDirection.x, m_LightDirection.y, m_LightDirection.z, m_HasDirectionalLight ? m_DirLightIntensity : 0.0f};
-            CBConstants->g_Ambient  = float4{0,0,0,0};
+            const float3 ambient = m_FrameAmbientColor;
+            CBConstants->g_Ambient  = float4{ambient.x, ambient.y, ambient.z, 0.0f};
+            const float3 camPos = m_Camera.GetPos();
+            CBConstants->g_CameraPos = float4{camPos.x, camPos.y, camPos.z, 1.0f};
+            CBConstants->g_FogColorDensity = float4{m_FrameFogColor.x, m_FrameFogColor.y, m_FrameFogColor.z, m_FrameFogDensity};
+            CBConstants->g_FogParams = float4{m_FrameFogStart, m_FrameFogEnd, m_FrameFogHeightFalloff, m_FrameFogEnabled ? 1.0f : 0.0f};
             const Uint32 pcnt = std::min<Uint32>(static_cast<Uint32>(m_FramePointLights.size()), MAX_POINT_LIGHTS);
             const Uint32 scnt = std::min<Uint32>(static_cast<Uint32>(m_FrameSpotLights.size()),  MAX_SPOT_LIGHTS);
             CBConstants->g_NumPointLights = pcnt;
@@ -150,7 +270,12 @@ namespace Diligent
             float4x4 NormalMatrix        = World.RemoveTranslation().Inverse().Transpose();
             CBConstants->g_NormalTranform = NormalMatrix;
             CBConstants->g_DirLight = float4{m_LightDirection.x, m_LightDirection.y, m_LightDirection.z, m_HasDirectionalLight ? m_DirLightIntensity : 0.0f};
-            CBConstants->g_Ambient  = float4{0,0,0,0};
+            const float3 ambient = m_FrameAmbientColor;
+            CBConstants->g_Ambient  = float4{ambient.x, ambient.y, ambient.z, 0.0f};
+            const float3 camPos = m_Camera.GetPos();
+            CBConstants->g_CameraPos = float4{camPos.x, camPos.y, camPos.z, 1.0f};
+            CBConstants->g_FogColorDensity = float4{m_FrameFogColor.x, m_FrameFogColor.y, m_FrameFogColor.z, m_FrameFogDensity};
+            CBConstants->g_FogParams = float4{m_FrameFogStart, m_FrameFogEnd, m_FrameFogHeightFalloff, m_FrameFogEnabled ? 1.0f : 0.0f};
             const Uint32 pcnt = std::min<Uint32>(static_cast<Uint32>(m_FramePointLights.size()), MAX_POINT_LIGHTS);
             const Uint32 scnt = std::min<Uint32>(static_cast<Uint32>(m_FrameSpotLights.size()),  MAX_SPOT_LIGHTS);
             CBConstants->g_NumPointLights = pcnt;
@@ -208,7 +333,12 @@ namespace Diligent
             CBConstants->g_WorldViewProj = (World * CameraViewProj);
             CBConstants->g_NormalTranform = World.RemoveTranslation().Inverse().Transpose();
             CBConstants->g_DirLight = float4{m_LightDirection.x, m_LightDirection.y, m_LightDirection.z, m_HasDirectionalLight ? m_DirLightIntensity : 0.0f};
-            CBConstants->g_Ambient  = float4{0,0,0,0};
+            const float3 ambient = m_FrameAmbientColor;
+            CBConstants->g_Ambient  = float4{ambient.x, ambient.y, ambient.z, 0.0f};
+            const float3 camPos = m_Camera.GetPos();
+            CBConstants->g_CameraPos = float4{camPos.x, camPos.y, camPos.z, 1.0f};
+            CBConstants->g_FogColorDensity = float4{m_FrameFogColor.x, m_FrameFogColor.y, m_FrameFogColor.z, m_FrameFogDensity};
+            CBConstants->g_FogParams = float4{m_FrameFogStart, m_FrameFogEnd, m_FrameFogHeightFalloff, m_FrameFogEnabled ? 1.0f : 0.0f};
             const Uint32 pcnt = std::min<Uint32>(static_cast<Uint32>(m_FramePointLights.size()), MAX_POINT_LIGHTS);
             const Uint32 scnt = std::min<Uint32>(static_cast<Uint32>(m_FrameSpotLights.size()),  MAX_SPOT_LIGHTS);
             CBConstants->g_NumPointLights = pcnt;
@@ -367,6 +497,108 @@ namespace Diligent
         m_pImmediateContext->Draw(DrawAttrs);
     }
 
+    void C6GERender::RenderEnvironment(IDeviceContext* pContext)
+    {
+        if (pContext == nullptr)
+            return;
+
+        if (!m_FrameEnvironmentActive)
+            return;
+
+        EnsureEnvMapRenderer();
+        if (!m_EnvMapRenderer || !m_EnvironmentMapSRV)
+            return;
+
+        if (!m_EnvironmentShowBackground)
+            return;
+
+        HLSL::ToneMappingAttribs TMAttribs{};
+        TMAttribs.iToneMappingMode     = TONE_MAPPING_MODE_UNCHARTED2;
+        TMAttribs.bAutoExposure        = FALSE;
+        TMAttribs.fMiddleGray          = m_EnvironmentMiddleGray;
+        TMAttribs.bLightAdaptation     = FALSE;
+        TMAttribs.fWhitePoint          = m_EnvironmentWhitePoint;
+        TMAttribs.fLuminanceSaturation = 1.0f;
+
+        const float envScale = std::max(0.0f, m_EnvironmentIntensity) * std::max(0.0f, m_EnvironmentExposure);
+
+        EnvMapRenderer::RenderAttribs EnvAttribs{};
+        EnvAttribs.pEnvMap       = m_EnvironmentMapSRV;
+        EnvAttribs.AverageLogLum = m_EnvironmentAverageLogLum;
+        EnvAttribs.MipLevel      = m_EnvironmentMipLevel;
+        EnvAttribs.Alpha         = 1.0f;
+        EnvAttribs.Scale         = float3{envScale, envScale, envScale};
+        if (m_ConvertPSOutputToGamma)
+            EnvAttribs.Options |= EnvMapRenderer::OPTION_FLAG_CONVERT_OUTPUT_TO_SRGB;
+        if (m_EnableTAA)
+            EnvAttribs.Options |= EnvMapRenderer::OPTION_FLAG_COMPUTE_MOTION_VECTORS;
+
+        m_EnvMapRenderer->Prepare(pContext, EnvAttribs, TMAttribs);
+        m_EnvMapRenderer->Render(pContext);
+    }
+
+    void C6GERender::UpdatePBRFrameAttribs(const float4x4& CameraViewProj)
+    {
+        EnsureGLTFRenderer();
+        if (!m_GLTFRenderer || !m_GLTFFrameAttribsCB)
+            return;
+
+        MapHelper<HLSL::PBRFrameAttribs> Frame{m_pImmediateContext, m_GLTFFrameAttribsCB, MAP_WRITE, MAP_FLAG_DISCARD};
+        std::memset(static_cast<void*>(Frame), 0, m_GLTFRenderer->GetPRBFrameAttribsSize());
+
+        auto& Cam = Frame->Camera;
+        Cam.f4ViewportSize = float4{static_cast<float>(m_FramebufferWidth), static_cast<float>(m_FramebufferHeight),
+                                     m_FramebufferWidth > 0 ? 1.0f / static_cast<float>(m_FramebufferWidth) : 0.0f,
+                                     m_FramebufferHeight > 0 ? 1.0f / static_cast<float>(m_FramebufferHeight) : 0.0f};
+
+        const auto& ProjAttribs = m_Camera.GetProjAttribs();
+        Cam.fNearPlaneZ     = ProjAttribs.NearClipPlane;
+        Cam.fFarPlaneZ      = ProjAttribs.FarClipPlane;
+        Cam.fNearPlaneDepth = 0.0f;
+        Cam.fFarPlaneDepth  = 1.0f;
+        Cam.fHandness       = 1.0f;
+
+        const float4x4 View = m_Camera.GetViewMatrix();
+        const float4x4 Proj = m_Camera.GetProjMatrix();
+        Cam.mView      = View;
+        Cam.mProj      = Proj;
+        Cam.mViewProj  = CameraViewProj;
+        Cam.mViewInv   = View.Inverse();
+        Cam.mProjInv   = Proj.Inverse();
+        Cam.mViewProjInv = CameraViewProj.Inverse();
+
+        const float3 camPos = m_Camera.GetPos();
+        Cam.f4Position = float4{camPos.x, camPos.y, camPos.z, 1.0f};
+
+        Frame->PrevCamera = Frame->Camera;
+
+        auto& RendererParams = Frame->Renderer;
+        m_GLTFRenderer->SetInternalShaderParameters(RendererParams);
+        RendererParams.OcclusionStrength = 1.0f;
+        RendererParams.EmissionScale     = 1.0f;
+        RendererParams.AverageLogLum     = m_EnvironmentAverageLogLum;
+        RendererParams.MiddleGray        = m_EnvironmentMiddleGray;
+        RendererParams.WhitePoint        = m_EnvironmentWhitePoint;
+        const float envScale             = std::max(0.0f, m_EnvironmentIntensity) * std::max(0.0f, m_EnvironmentExposure);
+        RendererParams.IBLScale          = m_FrameEnvironmentActive ? float4{envScale} : float4{0.0f};
+        RendererParams.PointSize         = 1.0f;
+        RendererParams.MipBias           = 0.0f;
+        RendererParams.LightCount        = 0;
+        RendererParams.DebugView         = 0;
+
+        HLSL::PBRLightAttribs* Lights = reinterpret_cast<HLSL::PBRLightAttribs*>(Frame + 1);
+        if (m_HasDirectionalLight)
+        {
+            float3 Dir = normalize(m_LightDirection);
+            GLTF::Light DirLight;
+            DirLight.Type      = GLTF::Light::TYPE::DIRECTIONAL;
+            DirLight.Color     = float3{1.0f, 1.0f, 1.0f};
+            DirLight.Intensity = std::max(0.0f, m_DirLightIntensity);
+            GLTF_PBR_Renderer::WritePBRLightShaderAttribs({&DirLight, nullptr, &Dir, 1.0f}, Lights);
+            RendererParams.LightCount = 1;
+        }
+    }
+
     // Shadow-map visualization removed; no RenderShadowMapVis implementation.
 
     // Render a frame
@@ -390,23 +622,74 @@ namespace Diligent
             return;
         }
 
-        // Optional hybrid rendering path: update TLAS and prepare RT contributions
-        if (m_EnableRayTracing && m_RayTracingSupported && m_RayTracingInitialized)
-        {
-            UpdateTLAS();
-            RenderRayTracingPath();
-        }
-
         // Update light(s) from ECS: gather dir/point/spot; no defaults
         m_HasDirectionalLight = false;
         m_LightDirection = float3{0,0,0};
         m_DirLightIntensity = 0.0f;
         m_FramePointLights.clear();
         m_FrameSpotLights.clear();
+        m_FrameAmbientColor      = float3{0, 0, 0};
+        m_FrameEnvironmentActive = false;
+        m_FrameFogColor          = float3{0, 0, 0};
+        m_FrameFogDensity        = 0.0f;
+        m_FrameFogStart          = 0.0f;
+        m_FrameFogEnd            = 0.0f;
+        m_FrameFogHeightFalloff  = 0.0f;
+        m_FrameFogEnabled        = false;
+
+        // Reset environment parameters; ECS sky component will override when present.
+        m_EnvironmentIntensity      = 1.0f;
+        m_EnvironmentExposure       = 1.0f;
+        m_EnvironmentRotationDeg    = 0.0f;
+        m_EnvironmentShowBackground = true;
         if (m_World)
         {
             auto& reg = m_World->Registry();
-            // Directional
+
+            // Sky parameters (take the first enabled sky component)
+            {
+                auto viewSky = reg.view<ECS::Sky>();
+                viewSky.each([&](const entt::entity, const ECS::Sky& sky) {
+                    if (m_FrameEnvironmentActive || !sky.enabled)
+                        return;
+
+                    EnsureEnvMapRenderer();
+                    LoadEnvironmentMap(sky.environmentPath);
+
+                    m_EnvironmentIntensity      = sky.intensity;
+                    m_EnvironmentExposure       = sky.exposure;
+                    m_EnvironmentRotationDeg    = sky.rotationDegrees;
+                    m_EnvironmentShowBackground = sky.showBackground;
+                    m_FrameEnvironmentActive    = (m_EnvironmentMapSRV != nullptr);
+                });
+            }
+
+            // Global fog (first enabled component wins for now)
+            {
+                auto viewFog = reg.view<ECS::Fog>();
+                viewFog.each([&](const entt::entity e, const ECS::Fog& fog) {
+                    if (m_FrameFogEnabled || !fog.enabled)
+                        return;
+                    m_FrameFogEnabled       = true;
+                    m_FrameFogColor         = fog.color;
+                    m_FrameFogDensity       = fog.density;
+                    m_FrameFogStart         = fog.startDistance;
+                    m_FrameFogEnd           = fog.maxDistance;
+                    m_FrameFogHeightFalloff = fog.heightFalloff;
+                });
+            }
+
+            // Sky light accumulation (sum contributions)
+            {
+                auto viewSkyLight = reg.view<ECS::SkyLight>();
+                viewSkyLight.each([&](const entt::entity e, const ECS::SkyLight& skyLight) {
+                    if (!skyLight.enabled)
+                        return;
+                    m_FrameAmbientColor += skyLight.color * skyLight.intensity;
+                });
+            }
+
+            // Explicit directional light components take precedence when available
             {
                 auto viewDir = reg.view<ECS::DirectionalLight>();
                 viewDir.each([&](const entt::entity e, const ECS::DirectionalLight& dl) {
@@ -453,6 +736,15 @@ namespace Diligent
             }
         }
 
+        // Optional hybrid rendering path: update TLAS and prepare RT contributions once ECS data is gathered
+        if (m_EnableRayTracing && m_RayTracingSupported && m_RayTracingInitialized)
+        {
+            UpdateTLAS();
+            RenderRayTracingPath();
+        }
+
+        UpdatePBRFrameAttribs(m_CameraViewProjMatrix);
+
         // 1) Render shadow map (only when we have a directional light)
         if (RenderShadows && m_ShadowMapDSV && m_HasDirectionalLight)
         {
@@ -491,6 +783,8 @@ namespace Diligent
                 
                 m_pImmediateContext->BeginRenderPass(RPBeginInfo);
 
+                RenderEnvironment(m_pImmediateContext);
+
                 // Render entities via ECS (inside render pass, use VERIFY)
                 if (m_RenderSystem && m_World)
                     m_RenderSystem->RenderScene(*m_World, m_CameraViewProjMatrix, RESOURCE_STATE_TRANSITION_MODE_VERIFY);
@@ -526,6 +820,8 @@ namespace Diligent
                 m_pImmediateContext->ClearRenderTarget(pRTV, ClearColor.Data(), RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
                 m_pImmediateContext->ClearDepthStencil(pDSV, CLEAR_DEPTH_FLAG, 1.f, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
+                RenderEnvironment(m_pImmediateContext);
+
                 if (m_RenderSystem && m_World)
                     m_RenderSystem->RenderScene(*m_World, m_CameraViewProjMatrix, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
@@ -556,6 +852,8 @@ namespace Diligent
             m_pImmediateContext->SetRenderTargets(1, &pRTV, pDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
             m_pImmediateContext->ClearRenderTarget(pRTV, ClearColor.Data(), RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
             m_pImmediateContext->ClearDepthStencil(pDSV, CLEAR_DEPTH_FLAG, 1.f, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+            RenderEnvironment(m_pImmediateContext);
 
             if (m_RenderSystem && m_World)
                 m_RenderSystem->RenderScene(*m_World, m_CameraViewProjMatrix, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
@@ -718,7 +1016,142 @@ namespace Diligent
         }
     }
 
-    // Resolve a model asset id: supports raw .gltf/.glb or .c6m wrappers generated by the Project system
+        void C6GERender::EnsureEnvMapRenderer()
+        {
+            if (m_EnvMapRenderer || !m_pDevice)
+                return;
+
+            EnsureGLTFRenderer();
+            if (!m_GLTFFrameAttribsCB)
+                return;
+
+            EnvMapRenderer::CreateInfo CI;
+            CI.pDevice            = m_pDevice;
+            CI.pCameraAttribsCB   = m_GLTFFrameAttribsCB;
+            CI.PackMatrixRowMajor = true;
+
+            TEXTURE_FORMAT colorFmt = TEX_FORMAT_RGBA16_FLOAT;
+            TEXTURE_FORMAT depthFmt = TEX_FORMAT_D32_FLOAT;
+
+            if (m_pFramebufferRTV)
+            {
+                colorFmt = m_pFramebufferRTV->GetDesc().Format;
+            }
+            else if (m_pSwapChain)
+            {
+                colorFmt = m_pSwapChain->GetDesc().ColorBufferFormat;
+            }
+
+            if (m_pFramebufferDSV)
+            {
+                depthFmt = m_pFramebufferDSV->GetDesc().Format;
+            }
+            else if (m_pSwapChain)
+            {
+                depthFmt = m_pSwapChain->GetDesc().DepthBufferFormat;
+            }
+
+            CI.NumRenderTargets = 1;
+            CI.RTVFormats[0]    = colorFmt;
+            CI.DSVFormat        = depthFmt;
+
+            try
+            {
+                m_EnvMapRenderer = std::make_unique<EnvMapRenderer>(CI);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "[C6GE] Failed to create environment map renderer: " << e.what() << std::endl;
+                m_EnvMapRenderer.reset();
+            }
+        }
+
+        void C6GERender::LoadEnvironmentMap(const std::string& Path)
+        {
+            if (!m_pDevice)
+                return;
+
+            std::string resolved = Path;
+            namespace fs = std::filesystem;
+            if (!resolved.empty())
+            {
+                fs::path p = resolved;
+                if (p.is_relative())
+                {
+                    if (m_Project)
+                    {
+                        const auto& cfg = m_Project->GetConfig();
+                        if (!cfg.rootDir.empty())
+                            p = cfg.rootDir / p;
+                        else
+                            p = fs::current_path() / p;
+                    }
+                    else
+                    {
+                        p = fs::current_path() / p;
+                    }
+                }
+                resolved = p.u8string();
+            }
+
+            if (resolved.empty())
+            {
+                m_EnvironmentMapTexture.Release();
+                m_EnvironmentMapSRV.Release();
+                m_CurrentEnvironmentPath.clear();
+                return;
+            }
+
+            if (!m_CurrentEnvironmentPath.empty() && m_CurrentEnvironmentPath == resolved && m_EnvironmentMapSRV)
+                return;
+
+            EnsureGLTFRenderer();
+            if (!m_GLTFRenderer)
+                return;
+
+            RefCntAutoPtr<ITexture> pEnvironmentTexture;
+            TextureLoadInfo          LoadInfo{"Environment map"};
+            LoadInfo.IsSRGB  = false;
+            LoadInfo.FlipVertically = false;
+
+            try
+            {
+                CreateTextureFromFile(resolved.c_str(), LoadInfo, m_pDevice, &pEnvironmentTexture);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "[C6GE] Failed to load environment map '" << resolved << "': " << e.what() << std::endl;
+                return;
+            }
+
+            if (!pEnvironmentTexture)
+            {
+                std::cerr << "[C6GE] Environment map texture is null for path '" << resolved << "'" << std::endl;
+                return;
+            }
+
+            StateTransitionDesc Barrier[]{
+                {pEnvironmentTexture, RESOURCE_STATE_UNKNOWN, RESOURCE_STATE_SHADER_RESOURCE, STATE_TRANSITION_FLAG_UPDATE_STATE},
+            };
+            m_pImmediateContext->TransitionResourceStates(_countof(Barrier), Barrier);
+
+            m_GLTFRenderer->PrecomputeCubemaps(m_pImmediateContext, pEnvironmentTexture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE));
+
+            m_EnvironmentMapTexture = pEnvironmentTexture;
+            m_EnvironmentMapSRV     = pEnvironmentTexture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+            m_CurrentEnvironmentPath = resolved;
+        }
+
+        void C6GERender::LoadDefaultEnvironmentMap()
+        {
+            if (m_EnvironmentMapSRV)
+                return;
+
+            const std::string DefaultPath = "assets/papermill.ktx";
+            LoadEnvironmentMap(DefaultPath);
+        }
+
+        // Resolve a model asset id: supports raw .gltf/.glb or .c6m wrappers generated by the Project system
     std::string C6GERender::ResolveModelAsset(const std::string& Id)
     {
         // Check cache
@@ -947,53 +1380,6 @@ namespace Diligent
         EnsureGLTFRenderer();
         if (!m_GLTFRenderer || !m_GLTFFrameAttribsCB)
             return;
-
-        // Update frame camera attribs minimally
-        {
-            MapHelper<HLSL::PBRFrameAttribs> Frame{m_pImmediateContext, m_GLTFFrameAttribsCB, MAP_WRITE, MAP_FLAG_DISCARD};
-            // Zero initialize
-            memset(static_cast<void*>(Frame), 0, m_GLTFRenderer->GetPRBFrameAttribsSize());
-            // Fill camera basics
-            auto& Cam = Frame->Camera;
-            Cam.f4ViewportSize = float4{static_cast<float>(m_FramebufferWidth), static_cast<float>(m_FramebufferHeight),
-                                        m_FramebufferWidth > 0 ? 1.0f / static_cast<float>(m_FramebufferWidth) : 0.0f,
-                                        m_FramebufferHeight > 0 ? 1.0f / static_cast<float>(m_FramebufferHeight) : 0.0f};
-            Cam.fNearPlaneZ    = 0.1f;
-            Cam.fFarPlaneZ     = 100.0f;
-            Cam.fNearPlaneDepth = 0.0f;
-            Cam.fFarPlaneDepth  = 1.0f;
-            Cam.fHandness      = 1.0f; // right-handed
-            Cam.mViewProj      = CameraViewProj;
-            Cam.mView          = float4x4::Identity(); // not strictly needed by PBR if ViewProj is set
-            Cam.mProj          = float4x4::Identity();
-            Cam.mViewInv       = Cam.mView.Inverse();
-            Cam.mProjInv       = Cam.mProj.Inverse();
-            Cam.mViewProjInv   = Cam.mViewProj.Inverse();
-
-            // Renderer parameters defaults
-            auto& RendererParams = Frame->Renderer;
-            m_GLTFRenderer->SetInternalShaderParameters(RendererParams);
-            RendererParams.OcclusionStrength = 1.0f;
-            RendererParams.EmissionScale     = 1.0f;
-            RendererParams.AverageLogLum     = 0.3f;
-            RendererParams.MiddleGray        = 0.18f;
-            RendererParams.WhitePoint        = 3.0f;
-            // Only provide a directional light to PBR renderer if ECS has one; otherwise keep dark
-            {
-                HLSL::PBRLightAttribs* Lights = reinterpret_cast<HLSL::PBRLightAttribs*>(Frame + 1);
-                RendererParams.LightCount = 0;
-                if (m_HasDirectionalLight)
-                {
-                    float3 Dir = normalize(m_LightDirection);
-                    GLTF::Light DirLight;
-                    DirLight.Type      = GLTF::Light::TYPE::DIRECTIONAL;
-                    DirLight.Color     = float3{1, 1, 1};
-                    DirLight.Intensity = std::max(0.0f, m_DirLightIntensity);
-                    GLTF_PBR_Renderer::WritePBRLightShaderAttribs({&DirLight, nullptr, &Dir, /*DistanceScale*/ 1.0f}, Lights);
-                    RendererParams.LightCount = 1;
-                }
-            }
-        }
 
         m_GLTFRenderer->Begin(m_pImmediateContext);
 

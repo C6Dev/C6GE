@@ -40,8 +40,45 @@
 #include "ColorConversion.h"
 #include "TextureUtilities.h"
 
+#ifdef _BASIC_STRUCTURES_FXH_
+#    undef _BASIC_STRUCTURES_FXH_
+#endif
+#ifdef _PBR_STRUCTURES_FXH_
+#    undef _PBR_STRUCTURES_FXH_
+#endif
+#ifdef _RENDER_PBR_STRUCTURES_FXH_
+#    undef _RENDER_PBR_STRUCTURES_FXH_
+#endif
+#ifdef _TONE_MAPPING_STRUCTURES_FXH_
+#    undef _TONE_MAPPING_STRUCTURES_FXH_
+#endif
+
 #include "PostFXContext.hpp"
 #include "TemporalAntiAliasing.hpp"
+
+namespace Diligent
+{
+namespace HLSL
+{
+#include "DiligentFX/Shaders/Common/public/BasicStructures.fxh"
+#include "DiligentFX/Shaders/PBR/public/PBR_Structures.fxh"
+#include "DiligentFX/Shaders/PBR/private/RenderPBR_Structures.fxh"
+#include "DiligentFX/Shaders/PostProcess/ToneMapping/public/ToneMappingStructures.fxh"
+} // namespace HLSL
+} // namespace Diligent
+
+#ifdef _BASIC_STRUCTURES_FXH_
+#    undef _BASIC_STRUCTURES_FXH_
+#endif
+#ifdef _PBR_STRUCTURES_FXH_
+#    undef _PBR_STRUCTURES_FXH_
+#endif
+#ifdef _RENDER_PBR_STRUCTURES_FXH_
+#    undef _RENDER_PBR_STRUCTURES_FXH_
+#endif
+#ifdef _TONE_MAPPING_STRUCTURES_FXH_
+#    undef _TONE_MAPPING_STRUCTURES_FXH_
+#endif
 
 #include "Runtime/ECS/World.h"
 #include "Runtime/ECS/Components.h"
@@ -60,15 +97,6 @@
 #include <string>
 #include <vector>
 
-namespace Diligent
-{
-    namespace HLSL
-    {
-#include "DiligentFX/Shaders/Common/public/BasicStructures.fxh"
-#include "DiligentFX/Shaders/PBR/public/PBR_Structures.fxh"
-#include "DiligentFX/Shaders/PBR/private/RenderPBR_Structures.fxh"
-    } // namespace HLSL
-} // namespace Diligent
 
 using TAASettings = Diligent::HLSL::TemporalAntiAliasingAttribs;
 

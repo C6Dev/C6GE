@@ -102,12 +102,85 @@ bool OpenFileDialogGLTF(std::string& outPath)
     return !outPath.empty();
 }
 
+bool OpenFileDialogEnvironmentMap(std::string& outPath)
+{
+    outPath.clear();
+
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    bool needUninit = SUCCEEDED(hr);
+
+    IFileOpenDialog* pFileOpen = nullptr;
+    HRESULT h = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pFileOpen));
+    if (FAILED(h) || pFileOpen == nullptr)
+    {
+        if (needUninit) CoUninitialize();
+        return false;
+    }
+
+    COMDLG_FILTERSPEC fileTypes[] = {
+        {L"Environment Maps (*.ktx; *.ktx2; *.hdr; *.dds; *.exr)", L"*.ktx;*.ktx2;*.hdr;*.dds;*.exr"},
+        {L"KTX (*.ktx; *.ktx2)", L"*.ktx;*.ktx2"},
+        {L"Radiance HDR (*.hdr)", L"*.hdr"},
+        {L"DirectDraw Surface (*.dds)", L"*.dds"},
+        {L"OpenEXR (*.exr)", L"*.exr"},
+        {L"All Files (*.*)", L"*.*"}
+    };
+    pFileOpen->SetFileTypes(static_cast<UINT>(std::size(fileTypes)), fileTypes);
+    pFileOpen->SetFileTypeIndex(1);
+
+    DWORD dwFlags = 0;
+    if (SUCCEEDED(pFileOpen->GetOptions(&dwFlags)))
+    {
+        pFileOpen->SetOptions(dwFlags | FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST);
+    }
+
+    h = pFileOpen->Show(nullptr);
+    if (FAILED(h))
+    {
+        pFileOpen->Release();
+        if (needUninit) CoUninitialize();
+        return false;
+    }
+
+    IShellItem* pItem = nullptr;
+    h = pFileOpen->GetResult(&pItem);
+    if (FAILED(h) || pItem == nullptr)
+    {
+        pFileOpen->Release();
+        if (needUninit) CoUninitialize();
+        return false;
+    }
+
+    PWSTR pszFilePath = nullptr;
+    h = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
+    if (SUCCEEDED(h) && pszFilePath)
+    {
+        std::wstring pathW(pszFilePath);
+        CoTaskMemFree(pszFilePath);
+        outPath = ToUTF8(pathW);
+    }
+    if (pItem)
+        pItem->Release();
+    if (pFileOpen)
+        pFileOpen->Release();
+
+    if (needUninit) CoUninitialize();
+
+    return !outPath.empty();
+}
+
 #else
 
 bool OpenFileDialogGLTF(std::string& outPath)
 {
     (void)outPath;
     return false; // Not implemented on this platform yet
+}
+
+bool OpenFileDialogEnvironmentMap(std::string& outPath)
+{
+    (void)outPath;
+    return false;
 }
 
 #endif

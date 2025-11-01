@@ -1,5 +1,7 @@
 #include "RenderCommon.hpp"
 #include <cfloat>
+#include <cstring>
+#include <system_error>
 
 #ifndef GLFW_INCLUDE_NONE
 #    define GLFW_INCLUDE_NONE
@@ -123,6 +125,9 @@ void C6GERender::UpdateUI()
                         void SetPointLight(void*, const PointLightData&) override {}
                         void SetSpotLight(void*, const SpotLightData&) override {}
                         void SetCamera(void*, const CameraData&) override {}
+                        void SetSky(void*, const SkyData&) override {}
+                        void SetFog(void*, const FogData&) override {}
+                        void SetSkyLight(void*, const SkyLightData&) override {}
                         std::vector<ObjectViewItem> EnumerateObjects() const override
                         {
                             std::vector<ObjectViewItem> out;
@@ -202,6 +207,40 @@ void C6GERender::UpdateUI()
                                     it.camera.fovYRadians = cam.fovYRadians;
                                     it.camera.nearZ       = cam.nearZ;
                                     it.camera.farZ        = cam.farZ;
+                                }
+                                it.hasSky = reg.any_of<ECS::Sky>(e);
+                                if (it.hasSky)
+                                {
+                                    const auto& sky = reg.get<ECS::Sky>(e);
+                                    it.sky.enabled         = sky.enabled;
+                                    it.sky.environmentPath = sky.environmentPath;
+                                    it.sky.intensity       = sky.intensity;
+                                    it.sky.exposure        = sky.exposure;
+                                    it.sky.rotationDegrees = sky.rotationDegrees;
+                                    it.sky.showBackground  = sky.showBackground;
+                                }
+                                it.hasFog = reg.any_of<ECS::Fog>(e);
+                                if (it.hasFog)
+                                {
+                                    const auto& fog = reg.get<ECS::Fog>(e);
+                                    it.fog.enabled        = fog.enabled;
+                                    it.fog.color[0]       = fog.color.x;
+                                    it.fog.color[1]       = fog.color.y;
+                                    it.fog.color[2]       = fog.color.z;
+                                    it.fog.density        = fog.density;
+                                    it.fog.startDistance  = fog.startDistance;
+                                    it.fog.maxDistance    = fog.maxDistance;
+                                    it.fog.heightFalloff  = fog.heightFalloff;
+                                }
+                                it.hasSkyLight = reg.any_of<ECS::SkyLight>(e);
+                                if (it.hasSkyLight)
+                                {
+                                    const auto& skyLight = reg.get<ECS::SkyLight>(e);
+                                    it.skyLight.enabled   = skyLight.enabled;
+                                    it.skyLight.color[0]  = skyLight.color.x;
+                                    it.skyLight.color[1]  = skyLight.color.y;
+                                    it.skyLight.color[2]  = skyLight.color.z;
+                                    it.skyLight.intensity = skyLight.intensity;
                                 }
                                 out.push_back(std::move(it));
                             }
@@ -308,6 +347,42 @@ void C6GERender::UpdateUI()
                                     cam.farZ        = data.farZ;
                                     reg.emplace_or_replace<ECS::Camera>(e, cam);
                                 }
+                                void SetSky(void* h, const SkyData& data) override
+                                {
+                                    auto  e   = static_cast<entt::entity>(reinterpret_cast<uintptr_t>(h));
+                                    auto& reg = W.Registry();
+                                    ECS::Sky sky;
+                                    sky.enabled         = data.enabled;
+                                    sky.environmentPath = data.environmentPath;
+                                    sky.intensity       = data.intensity;
+                                    sky.exposure        = data.exposure;
+                                    sky.rotationDegrees = data.rotationDegrees;
+                                    sky.showBackground  = data.showBackground;
+                                    reg.emplace_or_replace<ECS::Sky>(e, sky);
+                                }
+                                void SetFog(void* h, const FogData& data) override
+                                {
+                                    auto  e   = static_cast<entt::entity>(reinterpret_cast<uintptr_t>(h));
+                                    auto& reg = W.Registry();
+                                    ECS::Fog fog;
+                                    fog.enabled       = data.enabled;
+                                    fog.color         = float3{data.color[0], data.color[1], data.color[2]};
+                                    fog.density       = data.density;
+                                    fog.startDistance = data.startDistance;
+                                    fog.maxDistance   = data.maxDistance;
+                                    fog.heightFalloff = data.heightFalloff;
+                                    reg.emplace_or_replace<ECS::Fog>(e, fog);
+                                }
+                                void SetSkyLight(void* h, const SkyLightData& data) override
+                                {
+                                    auto  e   = static_cast<entt::entity>(reinterpret_cast<uintptr_t>(h));
+                                    auto& reg = W.Registry();
+                                    ECS::SkyLight skyLight;
+                                    skyLight.enabled   = data.enabled;
+                                    skyLight.color     = float3{data.color[0], data.color[1], data.color[2]};
+                                    skyLight.intensity = data.intensity;
+                                    reg.emplace_or_replace<ECS::SkyLight>(e, skyLight);
+                                }
                                 std::vector<ProjectSystem::ECSWorldLike::ObjectViewItem> EnumerateObjects() const override { return {}; }
                             } adapter(*m_World);
                             ProjectSystem::WorldIO::Load(w, adapter);
@@ -335,6 +410,9 @@ void C6GERender::UpdateUI()
                             void SetPointLight(void*, const PointLightData&) override {}
                             void SetSpotLight(void*, const SpotLightData&) override {}
                             void SetCamera(void*, const CameraData&) override {}
+                            void SetSky(void*, const SkyData&) override {}
+                            void SetFog(void*, const FogData&) override {}
+                            void SetSkyLight(void*, const SkyLightData&) override {}
                             std::vector<ObjectViewItem> EnumerateObjects() const override { return {}; }
                         } adapter(*m_World);
                         ProjectSystem::WorldIO::Save(path, adapter);
@@ -1655,6 +1733,40 @@ void C6GERender::UpdateViewportUI()
                             ImGui::CloseCurrentPopup();
                         }
                     }
+                    if (!reg.any_of<ECS::Camera>(m_SelectedEntity))
+                    {
+                        if (ImGui::MenuItem("Camera"))
+                        {
+                            reg.emplace<ECS::Camera>(m_SelectedEntity, ECS::Camera{});
+                            if (!reg.any_of<ECS::Transform>(m_SelectedEntity))
+                                reg.emplace<ECS::Transform>(m_SelectedEntity, ECS::Transform{});
+                            ImGui::CloseCurrentPopup();
+                        }
+                    }
+                    if (!reg.any_of<ECS::Sky>(m_SelectedEntity))
+                    {
+                        if (ImGui::MenuItem("Sky"))
+                        {
+                            reg.emplace<ECS::Sky>(m_SelectedEntity, ECS::Sky{});
+                            ImGui::CloseCurrentPopup();
+                        }
+                    }
+                    if (!reg.any_of<ECS::Fog>(m_SelectedEntity))
+                    {
+                        if (ImGui::MenuItem("Fog"))
+                        {
+                            reg.emplace<ECS::Fog>(m_SelectedEntity, ECS::Fog{});
+                            ImGui::CloseCurrentPopup();
+                        }
+                    }
+                    if (!reg.any_of<ECS::SkyLight>(m_SelectedEntity))
+                    {
+                        if (ImGui::MenuItem("Sky Light"))
+                        {
+                            reg.emplace<ECS::SkyLight>(m_SelectedEntity, ECS::SkyLight{});
+                            ImGui::CloseCurrentPopup();
+                        }
+                    }
                     ImGui::EndPopup();
                 }
 
@@ -1742,6 +1854,142 @@ void C6GERender::UpdateViewportUI()
                         ImGui::DragFloat("Intensity", &sl.intensity, 0.01f, 0.0f, 100.0f);
                         ImGui::SliderFloat("Angle (deg)", &sl.angleDegrees, 1.0f, 90.0f);
                         ImGui::DragFloat("Range", &sl.range, 0.1f, 0.0f, 1000.0f);
+                    }
+                }
+
+                if (reg.any_of<ECS::Camera>(m_SelectedEntity))
+                {
+                    if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen))
+                    {
+                        auto& cam = reg.get<ECS::Camera>(m_SelectedEntity);
+                        float  fovDeg = cam.fovYRadians * 180.0f / PI_F;
+                        if (ImGui::SliderFloat("FOV (deg)", &fovDeg, 10.0f, 150.0f))
+                        {
+                            cam.fovYRadians = fovDeg * PI_F / 180.0f;
+                        }
+                        float  nearMax = std::max(cam.nearZ + 0.001f, cam.farZ - 0.01f);
+                        nearMax        = std::max(nearMax, 0.01f);
+                        if (ImGui::DragFloat("Near Clip", &cam.nearZ, 0.01f, 0.001f, nearMax))
+                        {
+                            cam.nearZ = std::clamp(cam.nearZ, 0.001f, cam.farZ - 0.01f);
+                        }
+                        float farMin = cam.nearZ + 0.01f;
+                        if (ImGui::DragFloat("Far Clip", &cam.farZ, 1.0f, farMin, 20000.0f))
+                        {
+                            cam.farZ = std::max(farMin, cam.farZ);
+                        }
+                    }
+                }
+
+                if (reg.any_of<ECS::Sky>(m_SelectedEntity))
+                {
+                    if (ImGui::CollapsingHeader("Sky", ImGuiTreeNodeFlags_DefaultOpen))
+                    {
+                        auto& sky  = reg.get<ECS::Sky>(m_SelectedEntity);
+                        bool   enabled = sky.enabled;
+                        if (ImGui::Checkbox("Enabled##Sky", &enabled))
+                            sky.enabled = enabled;
+
+                        char envBuf[512];
+                        std::strncpy(envBuf, sky.environmentPath.c_str(), sizeof(envBuf));
+                        envBuf[sizeof(envBuf) - 1] = '\0';
+                        if (ImGui::InputText("Environment Map", envBuf, sizeof(envBuf)))
+                            sky.environmentPath = envBuf;
+
+                        ImGui::SameLine();
+                        if (ImGui::Button("Browse##SkyEnv"))
+                        {
+                            std::string picked;
+                            if (Platform::OpenFileDialogEnvironmentMap(picked))
+                            {
+                                std::string finalPath = picked;
+                                try
+                                {
+                                    namespace fs = std::filesystem;
+                                    fs::path absPath = fs::absolute(fs::path{picked});
+                                    finalPath        = absPath.u8string();
+                                    if (m_Project)
+                                    {
+                                        const auto& cfg = m_Project->GetConfig();
+                                        if (!cfg.rootDir.empty())
+                                        {
+                                            std::error_code ec;
+                                            fs::path rootAbs = fs::absolute(cfg.rootDir);
+                                            fs::path rel     = fs::relative(absPath, rootAbs, ec);
+                                            if (!ec)
+                                                finalPath = rel.generic_string();
+                                        }
+                                    }
+                                }
+                                catch (...)
+                                {
+                                    // fall back to picked path on failure
+                                }
+                                sky.environmentPath = finalPath;
+                                if (!sky.environmentPath.empty())
+                                    LoadEnvironmentMap(sky.environmentPath);
+                            }
+                        }
+
+                        ImGui::SameLine();
+                        if (ImGui::Button("Clear Path"))
+                        {
+                            sky.environmentPath.clear();
+                            LoadEnvironmentMap("");
+                        }
+
+                        ImGui::DragFloat("Intensity", &sky.intensity, 0.01f, 0.0f, 50.0f);
+                        ImGui::DragFloat("Exposure", &sky.exposure, 0.01f, 0.0f, 10.0f);
+                        ImGui::SliderFloat("Rotation (deg)", &sky.rotationDegrees, -180.0f, 180.0f);
+
+                        bool showBackground = sky.showBackground;
+                        if (ImGui::Checkbox("Show Background", &showBackground))
+                            sky.showBackground = showBackground;
+                    }
+                }
+
+                if (reg.any_of<ECS::SkyLight>(m_SelectedEntity))
+                {
+                    if (ImGui::CollapsingHeader("Sky Light", ImGuiTreeNodeFlags_DefaultOpen))
+                    {
+                        auto& skyLight = reg.get<ECS::SkyLight>(m_SelectedEntity);
+                        bool  enabled  = skyLight.enabled;
+                        if (ImGui::Checkbox("Enabled##SkyLight", &enabled))
+                            skyLight.enabled = enabled;
+
+                        float color[3] = {skyLight.color.x, skyLight.color.y, skyLight.color.z};
+                        if (ImGui::ColorEdit3("Color", color))
+                            skyLight.color = float3{color[0], color[1], color[2]};
+
+                        ImGui::DragFloat("Intensity", &skyLight.intensity, 0.01f, 0.0f, 50.0f);
+                    }
+                }
+
+                if (reg.any_of<ECS::Fog>(m_SelectedEntity))
+                {
+                    if (ImGui::CollapsingHeader("Fog", ImGuiTreeNodeFlags_DefaultOpen))
+                    {
+                        auto& fog = reg.get<ECS::Fog>(m_SelectedEntity);
+                        bool  enabled = fog.enabled;
+                        if (ImGui::Checkbox("Enabled##Fog", &enabled))
+                            fog.enabled = enabled;
+
+                        float color[3] = {fog.color.x, fog.color.y, fog.color.z};
+                        if (ImGui::ColorEdit3("Color", color))
+                            fog.color = float3{color[0], color[1], color[2]};
+
+                        ImGui::DragFloat("Density", &fog.density, 0.001f, 0.0f, 1.0f, "%.4f");
+                        float maxStart = std::max(0.0f, fog.maxDistance - 1.0f);
+                        if (ImGui::DragFloat("Start Distance", &fog.startDistance, 0.5f, 0.0f, maxStart))
+                        {
+                            fog.startDistance = std::clamp(fog.startDistance, 0.0f, fog.maxDistance - 1.0f);
+                        }
+                        float minMax = fog.startDistance + 1.0f;
+                        if (ImGui::DragFloat("Max Distance", &fog.maxDistance, 0.5f, minMax, 10000.0f))
+                        {
+                            fog.maxDistance = std::max(minMax, fog.maxDistance);
+                        }
+                        ImGui::DragFloat("Height Falloff", &fog.heightFalloff, 0.001f, 0.0f, 1.0f, "%.4f");
                     }
                 }
 

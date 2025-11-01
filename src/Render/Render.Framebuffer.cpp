@@ -172,12 +172,16 @@ void C6GERender::CreateFramebuffer()
     DepthTexDesc.Height     = std::max(1u, m_FramebufferHeight);
     DepthTexDesc.Format     = m_pSwapChain->GetDesc().DepthBufferFormat;
     DepthTexDesc.Usage      = USAGE_DEFAULT;
-    DepthTexDesc.BindFlags  = BIND_DEPTH_STENCIL;
+    DepthTexDesc.BindFlags  = BIND_DEPTH_STENCIL | BIND_SHADER_RESOURCE;
     DepthTexDesc.MipLevels  = 1;
     DepthTexDesc.SampleCount = 1;
     DepthTexDesc.ArraySize  = 1;
 
     m_pDevice->CreateTexture(DepthTexDesc, nullptr, &m_pFramebufferDepth);
+    if (m_pFramebufferDepth)
+        m_pFramebufferDepthSRV = m_pFramebufferDepth->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+    else
+        m_pFramebufferDepthSRV.Release();
 
     TextureViewDesc DSVDesc;
     DSVDesc.ViewType = TEXTURE_VIEW_DEPTH_STENCIL;
@@ -210,6 +214,7 @@ void C6GERender::ResizeFramebuffer(Uint32 Width, Uint32 Height)
     m_pFramebufferSRV.Release();
     m_pFramebufferDepth.Release();
     m_pFramebufferDSV.Release();
+    m_pFramebufferDepthSRV.Release();
 
     m_pMSColorRTV.Release();
     m_pMSDepthDSV.Release();
