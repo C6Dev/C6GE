@@ -1,0 +1,3 @@
+[submodule "C6Runtime/third_party/GLFW"]
+	path = C6Runtime/third_party/GLFW
+	url = https://github.com/glfw/glfw.git

@@ -23,7 +23,14 @@ add_custom_command(TARGET C6Runtime POST_BUILD
 	COMMAND ${CMAKE_COMMAND} -E copy_if_different
 		"$<TARGET_FILE:C6Runtime>"
 		"${MAIN_OUTPUT_DIR}/C6Runtime.exe"
-	COMMAND ${CMAKE_COMMAND} -E copy_if_different
-		"${MAIN_OUTPUT_DIR}/Debug/C6GE.dll"
-		"${MAIN_OUTPUT_DIR}/C6Runtime/C6GE.dll"
-)
+	)
+
+	# GLFW setup
+	set(GLFW_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/glfw")
+	add_subdirectory(${GLFW_DIR})
+
+	# Link GLFW to C6Runtime
+	target_link_libraries(C6Runtime PRIVATE glfw)
+
+	# Include GLFW headers
+	target_include_directories(C6Runtime PRIVATE "${GLFW_DIR}/include")
