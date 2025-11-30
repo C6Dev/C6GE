@@ -22,7 +22,7 @@ set(MAIN_OUTPUT_DIR "${CMAKE_BINARY_DIR}/bin")
 add_custom_command(TARGET C6Runtime POST_BUILD
 	COMMAND ${CMAKE_COMMAND} -E copy_if_different
 		"$<TARGET_FILE:C6Runtime>"
-		"${MAIN_OUTPUT_DIR}/C6Runtime.exe"
+		"${MAIN_OUTPUT_DIR}/$<TARGET_FILE_NAME:C6Runtime>"
 	)
 
 	# GLFW setup

@@ -20,15 +20,27 @@ set(C6GE_DLL "${CMAKE_BINARY_DIR}/C6GE/bin/C6GE.dll")
 
 # Add C6Editor (C#)
 add_subdirectory(C6Editor)
-set(C6EDITOR_PUBLISH_DIR "${CMAKE_SOURCE_DIR}/C6Editor/bin/Debug/net9.0/win-x64/publish")
-set(C6EDITOR_OUTPUT_DIR "${MAIN_OUTPUT_DIR}/C6Editor")
+# Choose .NET runtime identifier (RID) for host platform to find publish outputs
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")
+	set(DOTNET_RID "win-x64")
+elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
+	set(DOTNET_RID "linux-x64")
+elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
+	set(DOTNET_RID "osx-x64")
+else()
+	set(DOTNET_RID "win-x64")
+endif()
 
-# Add C6ProjectManager (C#)
-add_subdirectory(C6ProjectManager)
-set(C6PROJECTMANAGER_PUBLISH_DIR "${CMAKE_SOURCE_DIR}/C6ProjectManager/bin/Debug/net9.0/win-x64/publish")
-set(C6PROJECTMANAGER_OUTPUT_DIR "${MAIN_OUTPUT_DIR}/C6ProjectManager")
+set(C6EDITOR_PUBLISH_DIR "${CMAKE_SOURCE_DIR}/C6Editor/bin/Debug/net9.0/${DOTNET_RID}/publish")
+set(C6EDITOR_OUTPUT_DIR "${MAIN_OUTPUT_DIR}/C6Editor")
 
 # Add C6Runtime (C++)
 add_subdirectory(C6Runtime)
-set(C6RUNTIME_EXE "${CMAKE_BINARY_DIR}/C6Runtime/bin/C6Runtime.exe")
+# Use the target file of C6Runtime so CMake picks the correct extension on each OS
+set(C6RUNTIME_EXE "$<TARGET_FILE:C6Runtime>")
+
+# Add C6ProjectManager (C#)
+add_subdirectory(C6ProjectManager)
+set(C6PROJECTMANAGER_PUBLISH_DIR "${CMAKE_SOURCE_DIR}/C6ProjectManager/bin/Debug/net9.0/${DOTNET_RID}/publish")
+set(C6PROJECTMANAGER_OUTPUT_DIR "${MAIN_OUTPUT_DIR}/C6ProjectManager")
 

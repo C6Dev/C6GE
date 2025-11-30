@@ -21,9 +21,20 @@ endfunction()
 
 check_dotnet()
 
+# Choose a sensible .NET runtime identifier (RID) for the host platform
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")
+    set(DOTNET_RID "win-x64")
+elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
+    set(DOTNET_RID "linux-x64")
+elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
+    set(DOTNET_RID "osx-x64")
+else()
+    set(DOTNET_RID "win-x64")
+endif()
+
 # Unique target name for C6ProjectManager
 add_custom_target(dotnet_build_projectmanager ALL
-    COMMAND dotnet publish -c Debug -r win-x64 --self-contained false
+    COMMAND dotnet publish -c Debug -r ${DOTNET_RID} --self-contained false
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Publishing Avalonia app with dotnet publish"
 )
@@ -33,7 +44,7 @@ add_dependencies(dotnet_build_projectmanager C6GE)
 set(MAIN_OUTPUT_DIR "${CMAKE_BINARY_DIR}/bin")
 add_custom_command(TARGET dotnet_build_projectmanager POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_CURRENT_SOURCE_DIR}/bin/Debug/net9.0/win-x64/publish"
+        "${CMAKE_CURRENT_SOURCE_DIR}/bin/Debug/net9.0/${DOTNET_RID}/publish"
         "${MAIN_OUTPUT_DIR}/C6ProjectManager"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${MAIN_OUTPUT_DIR}/C6GE.dll"
