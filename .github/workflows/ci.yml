@@ -18,9 +18,9 @@ jobs:
       with:
         submodules: true
 
-    - name: Install Wayland and X11 dependencies (Linux only)
+    - name: Install Wayland, X11, and OpenGL dependencies (Linux only)
       if: runner.os == 'Linux'
-      run: sudo apt-get update && sudo apt-get install -y wayland-protocols libwayland-dev libxkbcommon-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+      run: sudo apt-get update && sudo apt-get install -y wayland-protocols libwayland-dev libxkbcommon-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev
 
     - name: Update submodules
       run: git submodule update --init --recursive
