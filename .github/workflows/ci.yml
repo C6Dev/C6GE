@@ -18,9 +18,9 @@ jobs:
       with:
         submodules: true
 
-      - name: Install Wayland dependencies (Linux only)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y wayland-protocols libwayland-dev
+    - name: Install Wayland dependencies (Linux only)
+      if: runner.os == 'Linux'
+      run: sudo apt-get update && sudo apt-get install -y wayland-protocols libwayland-dev
 
     - name: Update submodules
       run: git submodule update --init --recursive
