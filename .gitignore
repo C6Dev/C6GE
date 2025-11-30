@@ -39,3 +39,41 @@
 
 # debug information files
 *.dwo
+
+# build folder
+/build/
+
+# .NET build results
+bin/
+obj/
+
+# User-specific files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# VS Code settings
+.vscode/
+
+# NuGet packages
+*.nupkg
+*.snupkg
+packages/
+.nuget/
+
+# Visual Studio Test results
+TestResults/
+*.trx
+*.coverage
+*.coveragexml
+
+# ASP.NET temporary files
+*.dbmdl
+*.bak
+
+# Entity Framework files
+Migrations/
+
+# Publish output
+publish/
