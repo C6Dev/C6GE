@@ -26,7 +26,7 @@ add_custom_command(TARGET C6Runtime POST_BUILD
 	)
 
 	# GLFW setup
-	set(GLFW_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/glfw")
+	set(GLFW_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/GLFW")
 	add_subdirectory(${GLFW_DIR})
 
 	# Link GLFW to C6Runtime
