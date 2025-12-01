@@ -1,13 +1,22 @@
 #pragma once
 
-#ifdef C6GE_EXPORTS
 #if defined(_WIN32) || defined(_WIN64)
-#define C6GE_API __declspec(dllexport)
+
+#  ifdef C6GE_EXPORTS
+#    define C6GE_API __declspec(dllexport)
+#  else
+#    define C6GE_API __declspec(dllimport)
+#  endif
+
 #else
-#define C6GE_API
-#endif
-#else
-#define C6GE_API __declspec(dllimport)
+
+// On non-Windows platforms, fall back to GCC/Clang visibility attributes
+#  if __GNUC__ >= 4
+#    define C6GE_API __attribute__((visibility("default")))
+#  else
+#    define C6GE_API
+#  endif
+
 #endif
 
 C6GE_API void EngineInit();
