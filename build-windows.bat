@@ -66,6 +66,16 @@ if defined missing (
     exit /b 1
 )
 
+call :check_vulkan
+if errorlevel 1 (
+    call :ensure_vulkan
+    call :check_vulkan
+    if errorlevel 1 (
+        echo [C6GE] Vulkan SDK is still missing. Please install it manually from https://vulkan.lunarg.com/sdk/home and re-run this script.
+        exit /b 1
+    )
+)
+
 echo [C6GE] Configuring project (cmake)...
 cmake -S . -B build
 if errorlevel 1 (
@@ -97,4 +107,38 @@ if errorlevel 1 (
 :end
 echo [C6GE] Build finished.
 endlocal
+exit /b 0
+
+:check_vulkan
+where vulkaninfo >nul 2>&1
+if not errorlevel 1 (
+    echo [C6GE] Vulkan SDK detected via PATH.
+    exit /b 0
+)
+
+if defined VULKAN_SDK (
+    if exist "%VULKAN_SDK%\Bin\vulkaninfo.exe" (
+        echo [C6GE] Vulkan SDK detected via VULKAN_SDK.
+        exit /b 0
+    )
+)
+
+exit /b 1
+
+:ensure_vulkan
+echo [C6GE] Vulkan SDK not detected. Checking for winget...
+where winget >nul 2>&1
+if errorlevel 1 (
+    echo [C6GE] winget not available; install Vulkan SDK manually from https://vulkan.lunarg.com/sdk/home
+    exit /b 1
+)
+
+echo [C6GE] Attempting Vulkan SDK installation via winget (LunarG.VulkanSDK)...
+winget install --id LunarG.VulkanSDK --exact --source winget --silent --accept-package-agreements --accept-source-agreements
+if errorlevel 1 (
+    echo [C6GE] Automatic installation failed. Please download the installer from https://vulkan.lunarg.com/sdk/home
+    exit /b 1
+)
+
+echo [C6GE] Vulkan SDK installation requested via winget. You may need to accept license prompts in the pop-up window.
 exit /b 0

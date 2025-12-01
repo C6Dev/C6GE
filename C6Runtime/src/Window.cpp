@@ -1,6 +1,8 @@
 #include "Window.h"
 
+#include <iostream>
 #include <stdexcept>
+#include <vector>
 
 GLFWwindow* Window::CreateWindow(int width, int height, const char* title) {
     if(!glfwInit()) {
@@ -27,4 +29,10 @@ void Window::DestroyWindow(GLFWwindow* window) {
         glfwDestroyWindow(window);
         glfwTerminate();
     }
+}
+
+std::vector<const char*> Window::GetPlatformRequiredInstanceExtensions() {
+    uint32_t glfwExtensionCount = 0;
+    const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+    return std::vector<const char*>(glfwExtensions, glfwExtensions + glfwExtensionCount);
 }

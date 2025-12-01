@@ -28,6 +28,11 @@ deps_pacman=(wayland-protocols wayland libxkbcommon libx11 libxrandr libxinerama
 deps_dnf=(wayland-protocols-devel wayland-devel libxkbcommon-devel libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel mesa-libGL-devel cmake git)
 deps_zypper=(wayland-protocols-devel libwayland-devel libxkbcommon-devel libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel Mesa-devel cmake git)
 
+vulkan_deps_apt=(vulkan-tools libvulkan-dev vulkan-validationlayers-dev)
+vulkan_deps_pacman=(vulkan-tools vulkan-headers vulkan-validation-layers)
+vulkan_deps_dnf=(vulkan-tools vulkan-validation-layers vulkan-loader-devel)
+vulkan_deps_zypper=(vulkan-tools vulkan-validationlayers libvulkan1)
+
 install_with_apt(){
   sudo apt-get update
   sudo apt-get install -y "${deps_apt[@]}"
@@ -43,6 +48,36 @@ install_with_dnf(){
 
 install_with_zypper(){
   sudo zypper install -y "${deps_zypper[@]}" || true
+}
+
+install_vulkan_with_apt(){
+  sudo apt-get install -y "${vulkan_deps_apt[@]}" || true
+}
+
+install_vulkan_with_pacman(){
+  sudo pacman -Sy --noconfirm "${vulkan_deps_pacman[@]}" || true
+}
+
+install_vulkan_with_dnf(){
+  sudo dnf install -y "${vulkan_deps_dnf[@]}" || true
+}
+
+install_vulkan_with_zypper(){
+  sudo zypper install -y "${vulkan_deps_zypper[@]}" || true
+}
+
+ensure_vulkan(){
+  if command -v vulkaninfo >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if [ -n "${VULKAN_SDK:-}" ]; then
+    if [ -x "${VULKAN_SDK}/bin/vulkaninfo" ] || [ -x "${VULKAN_SDK}/Bin/vulkaninfo" ]; then
+      return 0
+    fi
+  fi
+
+  return 1
 }
 
 case "$PM" in
@@ -66,6 +101,35 @@ case "$PM" in
     echo "[C6GE] Unknown package manager. Please install the following packages manually: ${deps_apt[*]}"
     ;;
 esac
+
+if ensure_vulkan; then
+  echo "[C6GE] Vulkan SDK detected."
+else
+  echo "[C6GE] Vulkan SDK not detected. Attempting installation..."
+  case "$PM" in
+    apt)
+      install_vulkan_with_apt
+      ;;
+    pacman)
+      install_vulkan_with_pacman
+      ;;
+    dnf)
+      install_vulkan_with_dnf
+      ;;
+    zypper)
+      install_vulkan_with_zypper
+      ;;
+    *)
+      echo "[C6GE] Please install the Vulkan SDK manually: https://vulkan.lunarg.com/sdk/home"
+      ;;
+  esac
+
+  if ensure_vulkan; then
+    echo "[C6GE] Vulkan SDK installed successfully."
+  else
+    echo "[C6GE] Vulkan SDK still missing. Please install it manually: https://vulkan.lunarg.com/sdk/home"
+  fi
+fi
 
 echo "[C6GE] Ensuring .NET SDK and CMake are present..."
 if ! command -v dotnet >/dev/null 2>&1; then

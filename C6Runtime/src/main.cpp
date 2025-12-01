@@ -1,5 +1,6 @@
 #include "Window.h"
 #include "Render/RenderPicker.h"
+#include "Render/RenderPipeline.h"
 
 #include <iostream>
 
@@ -17,12 +18,19 @@ int main() {
         std::cout << "Render Type: Unknown" << std::endl;
     }
 
+    RenderPipeline renderPipeline;
+
     auto window = windowManager.CreateWindow(800, 600, "C6 Runtime Window");
+
+    auto extensions = windowManager.GetPlatformRequiredInstanceExtensions();
+
+    renderPipeline.CreateInstance(RenderType, extensions);
 
     while(windowManager.WhileOpen(window)) {
         windowManager.PollEvents();
     }
 
+    renderPipeline.CleanupRenderer(RenderType);
     windowManager.DestroyWindow(window);
     return 0;
 }

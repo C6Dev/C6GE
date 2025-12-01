@@ -18,6 +18,13 @@ add_executable(C6Runtime ${SRC_FILES} ${HEADER_FILES})
 target_include_directories(C6Runtime PRIVATE ${INCLUDE_DIR})
 target_include_directories(C6Runtime PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../C6GE/include")
 
+if (WIN32)
+	# Add Vulkan SDK include directory on Windows (assumes default VULKAN_SDK env var)
+	if (DEFINED ENV{VULKAN_SDK})
+		target_include_directories(C6Runtime PRIVATE "$ENV{VULKAN_SDK}/Include")
+	endif()
+endif()
+
 # Link against the C6GE engine library
 target_link_libraries(C6Runtime PRIVATE C6GE)
 

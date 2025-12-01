@@ -1,12 +1,13 @@
+#pragma once
+
 #include "main.h"
 
 class C6GE_API RenderPicker {
-    public:
+public:
+    enum class RenderType {
+        Vulkan,
+        Metal
+    };
 
-        enum class RenderType {
-            Vulkan,
-            Metal
-        };
-
-        static RenderType GetRenderType();
+    static RenderType GetRenderType();
 };

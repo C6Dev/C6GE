@@ -1,6 +1,7 @@
 #pragma once
 
 #include <GLFW/glfw3.h>
+#include <vector>
 
 class Window {
     public:
@@ -11,4 +12,6 @@ class Window {
         void PollEvents() { glfwPollEvents(); }
 
         void DestroyWindow(GLFWwindow* window);
+
+        std::vector<const char*> GetPlatformRequiredInstanceExtensions();
 };

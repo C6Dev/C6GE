@@ -18,6 +18,15 @@ target_include_directories(C6GE PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 
+if (NOT APPLE)
+	# Add Vulkan SDK include directory on Windows (assumes default VULKAN_SDK env var)
+	if (DEFINED ENV{VULKAN_SDK})
+		target_include_directories(C6GE PRIVATE "$ENV{VULKAN_SDK}/Include")
+        target_link_directories(C6GE PRIVATE "$ENV{VULKAN_SDK}/Lib")
+        target_link_libraries(C6GE PRIVATE vulkan-1)
+	endif()
+endif()
+
 # Set output directory for DLL
 set_target_properties(C6GE PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
