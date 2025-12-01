@@ -16,18 +16,17 @@ Then In The Root Of The Project In Your Terminal Simple Run
 
 Windows
 ```bash
-./scripts/build-windows.ps1
+./build-windows,bat
 ```
-Warning Windows May Say Scirpts Are Disabled to fix go to: https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.security/set-executionpolicy?view=powershell-7.5
 
 Linux
 ```bash
-./scripts/build-linux.sh
+./build-linux.sh
 ```
 
 MacOS
 ```bash
-./scripts/build-macos.sh
+./build-macos.sh
 ```
 
 The Build Files Should Be In
