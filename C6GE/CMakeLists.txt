@@ -19,12 +19,8 @@ target_include_directories(C6GE PRIVATE
 )
 
 if (NOT APPLE)
-	# Add Vulkan SDK include directory on Windows (assumes default VULKAN_SDK env var)
-	if (DEFINED ENV{VULKAN_SDK})
-		target_include_directories(C6GE PRIVATE "$ENV{VULKAN_SDK}/Include")
-        target_link_directories(C6GE PRIVATE "$ENV{VULKAN_SDK}/Lib")
-        target_link_libraries(C6GE PRIVATE vulkan-1)
-	endif()
+    find_package(Vulkan REQUIRED)
+    target_link_libraries(C6GE PRIVATE Vulkan::Vulkan)
 endif()
 
 # Set output directory for DLL
