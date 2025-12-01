@@ -16,21 +16,25 @@ add_executable(C6Runtime ${SRC_FILES} ${HEADER_FILES})
 
 # Include directories
 target_include_directories(C6Runtime PRIVATE ${INCLUDE_DIR})
+target_include_directories(C6Runtime PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../C6GE/include")
 
-# Copy C6Runtime.exe and C6GE.dll after build
+# Link against the C6GE engine library
+target_link_libraries(C6Runtime PRIVATE C6GE)
+
+# Copy C6Runtime.exe (C6GE.dll is already copied by the C6GE target)
 set(MAIN_OUTPUT_DIR "${CMAKE_BINARY_DIR}/bin")
 add_custom_command(TARGET C6Runtime POST_BUILD
 	COMMAND ${CMAKE_COMMAND} -E copy_if_different
 		"$<TARGET_FILE:C6Runtime>"
 		"${MAIN_OUTPUT_DIR}/$<TARGET_FILE_NAME:C6Runtime>"
-	)
+)
 
-	# GLFW setup
-	set(GLFW_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/GLFW")
-	add_subdirectory(${GLFW_DIR})
+# GLFW setup
+set(GLFW_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/GLFW")
+add_subdirectory(${GLFW_DIR})
 
-	# Link GLFW to C6Runtime
-	target_link_libraries(C6Runtime PRIVATE glfw)
+# Link GLFW to C6Runtime
+target_link_libraries(C6Runtime PRIVATE glfw)
 
-	# Include GLFW headers
-	target_include_directories(C6Runtime PRIVATE "${GLFW_DIR}/include")
+# Include GLFW headers
+target_include_directories(C6Runtime PRIVATE "${GLFW_DIR}/include")
