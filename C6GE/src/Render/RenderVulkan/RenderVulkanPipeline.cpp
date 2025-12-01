@@ -1,5 +1,7 @@
 #include "../../../include/Render/RenderVulkan/RenderVulkanPipeline.h"
 
+#if !defined(__APPLE__)
+
 #include <iostream>
 #include <stdexcept>
 
@@ -39,3 +41,5 @@ C6GE_API void RenderVulkan::CreateInstance(const std::vector<const char*>& exten
 C6GE_API void RenderVulkan::CleanupVulkanRenderer() {
     vkDestroyInstance(instance, nullptr);
 }
+
+#endif
