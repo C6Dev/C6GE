@@ -23,12 +23,12 @@ fi
 
 echo "[C6GE] Detected package manager: $PM"
 
-deps_apt=(wayland-protocols libwayland-dev libxkbcommon-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev cmake git)
-deps_pacman=(wayland-protocols wayland libxkbcommon libx11 libxrandr libxinerama libxcursor libxi mesa cmake git)
-deps_dnf=(wayland-protocols-devel wayland-devel libxkbcommon-devel libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel mesa-libGL-devel cmake git)
-deps_zypper=(wayland-protocols-devel libwayland-devel libxkbcommon-devel libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel Mesa-devel cmake git)
+deps_apt=(wayland-protocols libwayland-dev libxkbcommon-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev cmake git pkg-config)
+deps_pacman=(wayland-protocols wayland libxkbcommon libx11 libxrandr libxinerama libxcursor libxi mesa cmake git pkgconf)
+deps_dnf=(wayland-protocols-devel wayland-devel libxkbcommon-devel libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel mesa-libGL-devel cmake git pkgconf)
+deps_zypper=(wayland-protocols-devel libwayland-devel libxkbcommon-devel libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel Mesa-devel cmake git pkgconf)
 
-vulkan_deps_apt=(vulkan-tools libvulkan-dev vulkan-validationlayers-dev)
+vulkan_deps_apt_base=(vulkan-tools libvulkan-dev)
 vulkan_deps_pacman=(vulkan-tools vulkan-headers vulkan-validation-layers)
 vulkan_deps_dnf=(vulkan-tools vulkan-validation-layers vulkan-loader-devel)
 vulkan_deps_zypper=(vulkan-tools vulkan-validationlayers libvulkan1)
@@ -51,7 +51,14 @@ install_with_zypper(){
 }
 
 install_vulkan_with_apt(){
-  sudo apt-get install -y "${vulkan_deps_apt[@]}" || true
+  sudo apt-get install -y "${vulkan_deps_apt_base[@]}"
+  if ! sudo apt-get install -y vulkan-headers; then
+    echo "[C6GE] vulkan-headers unavailable; continuing with headers from libvulkan-dev."
+  fi
+  if ! sudo apt-get install -y vulkan-validationlayers-dev; then
+    echo "[C6GE] vulkan-validationlayers-dev unavailable; trying vulkan-utility-libraries-dev..."
+    sudo apt-get install -y vulkan-utility-libraries-dev || echo "[C6GE] Could not install Vulkan validation layers automatically."
+  fi
 }
 
 install_vulkan_with_pacman(){
@@ -67,12 +74,15 @@ install_vulkan_with_zypper(){
 }
 
 ensure_vulkan(){
-  if command -v vulkaninfo >/dev/null 2>&1; then
+  if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists vulkan >/dev/null 2>&1; then
     return 0
   fi
 
   if [ -n "${VULKAN_SDK:-}" ]; then
-    if [ -x "${VULKAN_SDK}/bin/vulkaninfo" ] || [ -x "${VULKAN_SDK}/Bin/vulkaninfo" ]; then
+    local sdk_include="${VULKAN_SDK}/include/vulkan/vulkan.h"
+    local sdk_lib_linux="${VULKAN_SDK}/lib/libvulkan.so"
+    local sdk_lib_linux64="${VULKAN_SDK}/lib64/libvulkan.so"
+    if [ -f "$sdk_include" ] && { [ -f "$sdk_lib_linux" ] || [ -f "$sdk_lib_linux64" ]; }; then
       return 0
     fi
   fi
