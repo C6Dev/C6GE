@@ -20,6 +20,22 @@ public:
         throw std::runtime_error(reason);
     }
 
+    void setupDebugMessenger() {
+        throw std::runtime_error(reason);
+    }
+
+    void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo) {
+        throw std::runtime_error(reason);
+    }
+
+    VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkDebugUtilsMessengerEXT* pDebugMessenger) {
+        throw std::runtime_error(reason);
+    }
+
+    void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT debugMessenger, const VkAllocationCallbacks* pAllocator) {
+        throw std::runtime_error(reason);
+    }
+
     void CleanupVulkanRenderer() {
         throw std::runtime_error(reason);
     }
