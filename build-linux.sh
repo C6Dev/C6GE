@@ -28,7 +28,7 @@ deps_pacman=(wayland-protocols wayland libxkbcommon libx11 libxrandr libxinerama
 deps_dnf=(wayland-protocols-devel wayland-devel libxkbcommon-devel libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel mesa-libGL-devel cmake git pkgconf)
 deps_zypper=(wayland-protocols-devel libwayland-devel libxkbcommon-devel libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel Mesa-devel cmake git pkgconf)
 
-vulkan_deps_apt_base=(vulkan-tools libvulkan-dev)
+vulkan_deps_apt_base=(vulkan-tools libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers)
 vulkan_deps_pacman=(vulkan-tools vulkan-headers vulkan-validation-layers)
 vulkan_deps_dnf=(vulkan-tools vulkan-validation-layers vulkan-loader-devel)
 vulkan_deps_zypper=(vulkan-tools vulkan-validationlayers libvulkan1)
@@ -71,6 +71,45 @@ install_vulkan_with_dnf(){
 
 install_vulkan_with_zypper(){
   sudo zypper install -y "${vulkan_deps_zypper[@]}" || true
+}
+
+install_validation_layers_with_apt(){
+  local candidates=(vulkan-validationlayers vulkan-validationlayers-dev vulkan-utility-libraries vulkan-utility-libraries-dev)
+  for pkg in "${candidates[@]}"; do
+    if sudo apt-get install -y "$pkg"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+install_validation_layers_with_pacman(){
+  sudo pacman -Sy --noconfirm vulkan-validation-layers || true
+}
+
+install_validation_layers_with_dnf(){
+  sudo dnf install -y vulkan-validation-layers || true
+}
+
+install_validation_layers_with_zypper(){
+  sudo zypper install -y vulkan-validationlayers || true
+}
+
+have_validation_layers(){
+  if command -v vulkaninfo >/dev/null 2>&1; then
+    if vulkaninfo --summary 2>/dev/null | grep -q "VK_LAYER_KHRONOS_validation"; then
+      return 0
+    fi
+  fi
+
+  local manifest_dirs=(/usr/share/vulkan/explicit_layer.d /etc/vulkan/explicit_layer.d)
+  for dir in "${manifest_dirs[@]}"; do
+    if [ -d "$dir" ] && ls "$dir"/VK_LAYER_KHRONOS_validation*.json >/dev/null 2>&1; then
+      return 0
+    fi
+  done
+
+  return 1
 }
 
 ensure_vulkan(){
@@ -138,6 +177,35 @@ else
     echo "[C6GE] Vulkan SDK installed successfully."
   else
     echo "[C6GE] Vulkan SDK still missing. Please install it manually: https://vulkan.lunarg.com/sdk/home"
+  fi
+fi
+
+if have_validation_layers; then
+  echo "[C6GE] Vulkan validation layers detected."
+else
+  echo "[C6GE] Vulkan validation layers not detected. Attempting installation..."
+  case "$PM" in
+    apt)
+      install_validation_layers_with_apt || true
+      ;;
+    pacman)
+      install_validation_layers_with_pacman
+      ;;
+    dnf)
+      install_validation_layers_with_dnf
+      ;;
+    zypper)
+      install_validation_layers_with_zypper
+      ;;
+    *)
+      echo "[C6GE] Please install the Vulkan validation layers manually (VK_LAYER_KHRONOS_validation)."
+      ;;
+  esac
+
+  if have_validation_layers; then
+    echo "[C6GE] Vulkan validation layers installed successfully."
+  else
+    echo "[C6GE] Vulkan validation layers still missing. Install instructions: https://vulkan.lunarg.com/sdk/home"
   fi
 fi
 
