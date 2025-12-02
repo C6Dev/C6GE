@@ -1,11 +1,12 @@
 #include "../../include/Render/RenderPipeline.h"
 
-C6GE_API void RenderPipeline::CreateInstance(RenderPicker::RenderType Type, const std::vector<const char*>& extensions) {
+C6GE_API void RenderPipeline::CreateRender(RenderPicker::RenderType Type) {
     switch (Type) {
         case RenderPicker::RenderType::Vulkan: {
             std::cout << "Creating Vulkan Render Instance" << std::endl;
             RenderVulkan renderVulkan;
-            renderVulkan.CreateInstance(extensions);
+            renderVulkan.CreateInstance();
+            renderVulkan.setupDebugMessenger();
             break;
         }
         case RenderPicker::RenderType::Metal: {

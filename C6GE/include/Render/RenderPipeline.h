@@ -8,6 +8,6 @@
 
 class C6GE_API RenderPipeline {
     public:
-        void CreateInstance(RenderPicker::RenderType Type, const std::vector<const char*>& extensions);
+        void CreateRender(RenderPicker::RenderType Type);
         void CleanupRenderer(RenderPicker::RenderType Type);
 };

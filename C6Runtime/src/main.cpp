@@ -22,9 +22,7 @@ int main() {
 
     auto window = windowManager.CreateWindow(800, 600, "C6 Runtime Window");
 
-    auto extensions = windowManager.GetPlatformRequiredInstanceExtensions();
-
-    renderPipeline.CreateInstance(RenderType, extensions);
+    renderPipeline.CreateRender(RenderType);
 
     while(windowManager.WhileOpen(window)) {
         windowManager.PollEvents();

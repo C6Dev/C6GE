@@ -1,5 +1,6 @@
 #include "Window.h"
 
+#include <cstdint>
 #include <iostream>
 #include <stdexcept>
 #include <vector>
@@ -24,15 +25,17 @@ GLFWwindow* Window::CreateWindow(int width, int height, const char* title) {
     return window;
 }
 
+bool Window::WhileOpen(GLFWwindow* window) {
+    return window && !glfwWindowShouldClose(window);
+}
+
+void Window::PollEvents() {
+    glfwPollEvents();
+}
+
 void Window::DestroyWindow(GLFWwindow* window) {
     if(window) {
         glfwDestroyWindow(window);
         glfwTerminate();
     }
-}
-
-std::vector<const char*> Window::GetPlatformRequiredInstanceExtensions() {
-    uint32_t glfwExtensionCount = 0;
-    const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-    return std::vector<const char*>(glfwExtensions, glfwExtensions + glfwExtensionCount);
 }

@@ -84,7 +84,7 @@ if errorlevel 1 (
 )
 
 echo [C6GE] Building project (Release)...
-cmake --build build --config Release
+cmake --build build
 if errorlevel 1 (
     echo [C6GE] Build failed.
     exit /b 1

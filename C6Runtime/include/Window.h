@@ -1,17 +1,24 @@
 #pragma once
 
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#ifdef CreateWindow
+#undef CreateWindow
+#endif
+#endif
+
 #include <GLFW/glfw3.h>
 #include <vector>
 
+struct GLFWwindow;
+
 class Window {
-    public:
-        GLFWwindow* CreateWindow(int width, int height, const char* title);
-
-        bool WhileOpen(GLFWwindow* window) { while (!glfwWindowShouldClose(window)) { return true; } return false; }
-
-        void PollEvents() { glfwPollEvents(); }
-
-        void DestroyWindow(GLFWwindow* window);
-
-        std::vector<const char*> GetPlatformRequiredInstanceExtensions();
+public:
+    GLFWwindow* CreateWindow(int width, int height, const char* title);
+    bool WhileOpen(GLFWwindow* window);
+    void PollEvents();
+    void DestroyWindow(GLFWwindow* window);
 };

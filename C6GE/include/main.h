@@ -18,6 +18,3 @@
 #  endif
 
 #endif
-
-C6GE_API void EngineInit();
-C6GE_API void EngineShutdown();
