@@ -27,7 +27,11 @@ std::vector<const char*> RenderVulkan::GetRequiredExtensions() {
 #if defined(_WIN32)
     extensions.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
 #elif defined(__linux__)
+#ifdef VK_KHR_XCB_SURFACE_EXTENSION_NAME
     extensions.push_back(VK_KHR_XCB_SURFACE_EXTENSION_NAME);
+#else
+    extensions.push_back("VK_KHR_xcb_surface");
+#endif
 #endif
 
     if (enableValidationLayers) {
