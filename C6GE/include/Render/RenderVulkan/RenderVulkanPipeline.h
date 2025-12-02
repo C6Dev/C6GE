@@ -7,6 +7,16 @@
 
 #if defined(__APPLE__)
 #include <stdexcept>
+#include <cstdint>
+
+// Provide minimal Vulkan type declarations so the macOS stub compiles without the SDK.
+struct VkInstance_T;
+struct VkDebugUtilsMessengerEXT_T;
+struct VkDebugUtilsMessengerCreateInfoEXT;
+struct VkAllocationCallbacks;
+using VkInstance = VkInstance_T*;
+using VkDebugUtilsMessengerEXT = VkDebugUtilsMessengerEXT_T*;
+using VkResult = int32_t;
 
 class C6GE_API RenderVulkan {
     std::string reason = "Vulkan renderer is not supported on macOS";
