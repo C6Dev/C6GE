@@ -1,7 +1,7 @@
 @echo off
 setlocal ENABLEDELAYEDEXPANSION
 
-echo [C6GE] Checking and updating submodules (if necessary)...
+echo [DirectEngine] Checking and updating submodules (if necessary)...
 for /f "usebackq delims=" %%A in (`git submodule status --recursive`) do (
     set "submoduleStatus=%%A"
     goto :check_submodule_done
@@ -14,16 +14,16 @@ if defined submoduleStatus (
     if "!firstChar!"=="-" goto :update_submodules
 )
 
-echo [C6GE] Submodules already up-to-date.
+echo [DirectEngine] Submodules already up-to-date.
 goto :after_submodules
 
 :update_submodules
 git submodule update --init --recursive
 if errorlevel 1 (
-    echo [C6GE] Failed to update submodules.
+    echo [DirectEngine] Failed to update submodules.
     exit /b 1
 )
-echo [C6GE] Submodules initialized/updated.
+echo [DirectEngine] Submodules initialized/updated.
 
 :after_submodules
 
@@ -58,7 +58,7 @@ if errorlevel 1 (
 )
 
 if defined missing (
-    echo [C6GE] Missing dependencies: %missing%
+    echo [DirectEngine] Missing dependencies: %missing%
     echo Please install them manually:
     echo - CMake: https://cmake.org/download/
     echo - .NET SDK 8: https://learn.microsoft.com/dotnet/core/install/windows
@@ -71,54 +71,54 @@ if errorlevel 1 (
     call :ensure_vulkan
     call :check_vulkan
     if errorlevel 1 (
-        echo [C6GE] Vulkan SDK is still missing. Please install it manually from https://vulkan.lunarg.com/sdk/home and re-run this script.
+        echo [DirectEngine] Vulkan SDK is still missing. Please install it manually from https://vulkan.lunarg.com/sdk/home and re-run this script.
         exit /b 1
     )
 )
 
-echo [C6GE] Configuring project (cmake)...
+echo [DirectEngine] Configuring project (cmake)...
 cmake -S . -B build
 if errorlevel 1 (
-    echo [C6GE] CMake configure failed.
+    echo [DirectEngine] CMake configure failed.
     exit /b 1
 )
 
-echo [C6GE] Building project (Release)...
+echo [DirectEngine] Building project (Release)...
 cmake --build build
 if errorlevel 1 (
-    echo [C6GE] Build failed.
+    echo [DirectEngine] Build failed.
     exit /b 1
 )
 
 REM Check for ctest by asking CMake where it is, then falling back to PATH
 where ctest >nul 2>&1
 if errorlevel 1 (
-    echo [C6GE] ctest not found; skipping tests.
+    echo [DirectEngine] ctest not found; skipping tests.
     goto :end
 )
 
-echo [C6GE] Running tests...
+echo [DirectEngine] Running tests...
 ctest --test-dir build --output-on-failure
 if errorlevel 1 (
-    echo [C6GE] Tests failed.
+    echo [DirectEngine] Tests failed.
     exit /b 1
 )
 
 :end
-echo [C6GE] Build finished.
+echo [DirectEngine] Build finished.
 endlocal
 exit /b 0
 
 :check_vulkan
 where vulkaninfo >nul 2>&1
 if not errorlevel 1 (
-    echo [C6GE] Vulkan SDK detected via PATH.
+    echo [DirectEngine] Vulkan SDK detected via PATH.
     exit /b 0
 )
 
 if defined VULKAN_SDK (
     if exist "%VULKAN_SDK%\Bin\vulkaninfo.exe" (
-        echo [C6GE] Vulkan SDK detected via VULKAN_SDK.
+        echo [DirectEngine] Vulkan SDK detected via VULKAN_SDK.
         exit /b 0
     )
 )
@@ -126,19 +126,19 @@ if defined VULKAN_SDK (
 exit /b 1
 
 :ensure_vulkan
-echo [C6GE] Vulkan SDK not detected. Checking for winget...
+echo [DirectEngine] Vulkan SDK not detected. Checking for winget...
 where winget >nul 2>&1
 if errorlevel 1 (
-    echo [C6GE] winget not available; install Vulkan SDK manually from https://vulkan.lunarg.com/sdk/home
+    echo [DirectEngine] winget not available; install Vulkan SDK manually from https://vulkan.lunarg.com/sdk/home
     exit /b 1
 )
 
-echo [C6GE] Attempting Vulkan SDK installation via winget (LunarG.VulkanSDK)...
+echo [DirectEngine] Attempting Vulkan SDK installation via winget (LunarG.VulkanSDK)...
 winget install --id LunarG.VulkanSDK --exact --source winget --silent --accept-package-agreements --accept-source-agreements
 if errorlevel 1 (
-    echo [C6GE] Automatic installation failed. Please download the installer from https://vulkan.lunarg.com/sdk/home
+    echo [DirectEngine] Automatic installation failed. Please download the installer from https://vulkan.lunarg.com/sdk/home
     exit /b 1
 )
 
-echo [C6GE] Vulkan SDK installation requested via winget. You may need to accept license prompts in the pop-up window.
+echo [DirectEngine] Vulkan SDK installation requested via winget. You may need to accept license prompts in the pop-up window.
 exit /b 0
