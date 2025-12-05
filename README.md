@@ -1,7 +1,7 @@
+![default-monochrome-white](https://github.com/user-attachments/assets/e6398076-1353-479b-b8c6-03082c825fdf)
 # DirectEngine
-<img width="400" height="400" alt="image" src="https://github.com/user-attachments/assets/63e885ab-df70-41db-b69b-329d9cd61d3f" />
 
-DirectEngine Century6 Game Engine A Modern C++ Game Engine Using C# For The Editor Project Manager And Scripting
+DirectEngine A Modern C++ Game Engine Using C# For The Editor Project Manager And Scripting
 
 # Get Started
 
