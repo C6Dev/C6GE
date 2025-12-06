@@ -14,6 +14,12 @@ file(GLOB_RECURSE HEADER_FILES "${INCLUDE_DIR}/*.h" "${INCLUDE_DIR}/*.hpp")
 # Add executable
 add_executable(DirectRuntime ${SRC_FILES} ${HEADER_FILES})
 
+set_target_properties(DirectRuntime PROPERTIES
+	CXX_STANDARD 17
+	CXX_STANDARD_REQUIRED YES
+	CXX_EXTENSIONS NO
+)
+
 # Include directories
 target_include_directories(DirectRuntime PRIVATE ${INCLUDE_DIR})
 target_include_directories(DirectRuntime PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../DirectEngine/include")
@@ -35,13 +41,3 @@ add_custom_command(TARGET DirectRuntime POST_BUILD
 		"$<TARGET_FILE:DirectRuntime>"
 		"${MAIN_OUTPUT_DIR}/$<TARGET_FILE_NAME:DirectRuntime>"
 )
-
-# GLFW setup
-set(GLFW_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/GLFW")
-add_subdirectory(${GLFW_DIR})
-
-# Link GLFW to DirectRuntime
-target_link_libraries(DirectRuntime PRIVATE glfw)
-
-# Include GLFW headers
-target_include_directories(DirectRuntime PRIVATE "${GLFW_DIR}/include")

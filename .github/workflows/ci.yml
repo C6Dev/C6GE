@@ -30,11 +30,6 @@ jobs:
     - name: Update submodules
       run: git submodule update --init --recursive
 
-    - name: Set up .NET
-      uses: actions/setup-dotnet@v3
-      with:
-        dotnet-version: '8.0.x'
-
     - name: Install CMake
       uses: jwlawson/actions-setup-cmake@v2
       with:

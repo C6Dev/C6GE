@@ -141,20 +141,7 @@ else
   fi
 fi
 
-echo "[DirectEngine] Ensuring .NET SDK and CMake are present..."
-if ! command -v dotnet >/dev/null 2>&1; then
-  echo "[DirectEngine] .NET not found. Attempting best-effort installation..."
-  if [ "$PM" = "apt" ]; then
-    sudo apt-get install -y dotnet-sdk-8.0 || echo "[DirectEngine] Could not install dotnet-sdk via apt. See: https://learn.microsoft.com/dotnet/core/install/linux"
-  elif [ "$PM" = "pacman" ]; then
-    sudo pacman -Sy --noconfirm dotnet-sdk || echo "[DirectEngine] Please install .NET SDK 8 via your distro or from https://learn.microsoft.com/dotnet/core/install/"
-  elif [ "$PM" = "dnf" ]; then
-    sudo dnf install -y dotnet-sdk-8.0 || echo "[DirectEngine] Please install .NET SDK 8 via your distro or from https://learn.microsoft.com/dotnet/core/install/"
-  else
-    echo "[DirectEngine] Please install .NET SDK 8: https://learn.microsoft.com/dotnet/core/install/linux"
-  fi
-fi
-
+echo "[DirectEngine] Ensuring CMake is present..."
 if ! command -v cmake >/dev/null 2>&1; then
   echo "[DirectEngine] CMake not found. Attempting to install via package manager..."
   case "$PM" in

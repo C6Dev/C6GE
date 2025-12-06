@@ -17,14 +17,6 @@ fi
 echo "[DirectEngine] Updating Homebrew and installing dependencies..."
 brew update || true
 brew install cmake || true
-# Try dotnet SDK via formula first, fall back to cask if needed
-if ! brew list --formula | grep -q '^dotnet-sdk$'; then
-  brew install dotnet-sdk || brew install --cask dotnet || true
-fi
-
-if ! command -v dotnet >/dev/null 2>&1; then
-  echo "[DirectEngine] Could not install .NET SDK automatically. See: https://learn.microsoft.com/dotnet/core/install/macos"
-fi
 
 echo "[DirectEngine] Configuring project (cmake)..."
 cmake -S . -B build

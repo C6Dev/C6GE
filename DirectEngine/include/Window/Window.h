@@ -13,9 +13,11 @@
 #include <GLFW/glfw3.h>
 #include <vector>
 
+#include "../main.h"
+
 struct GLFWwindow;
 
-class Window {
+class DirectEngine_API Window {
 public:
     GLFWwindow* CreateWindow(int width, int height, const char* title);
     bool WhileOpen(GLFWwindow* window);

@@ -4,6 +4,12 @@ project(DirectEngine LANGUAGES CXX)
 # Set output to DLL
 add_library(DirectEngine SHARED)
 
+set_target_properties(DirectEngine PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+)
+
 # Add source files from src/
 file(GLOB_RECURSE SRC_FILES "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c")
 
@@ -13,14 +19,16 @@ file(GLOB_RECURSE HEADER_FILES "${CMAKE_CURRENT_SOURCE_DIR}/include/*.h" "${CMAK
 target_sources(DirectEngine PRIVATE ${SRC_FILES} ${HEADER_FILES})
 
 # Include directories
-target_include_directories(DirectEngine PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/include"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+target_include_directories(DirectEngine
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 
 if (NOT APPLE)
     find_package(Vulkan REQUIRED)
-    target_link_libraries(DirectEngine PRIVATE Vulkan::Vulkan)
+    target_link_libraries(DirectEngine PUBLIC Vulkan::Vulkan)
 endif()
 
 # Set output directory for DLL
@@ -37,3 +45,13 @@ add_custom_command(TARGET DirectEngine POST_BUILD
         "$<TARGET_FILE:DirectEngine>"
         "${MAIN_OUTPUT_DIR}/DirectEngine.dll"
 )
+
+# GLFW setup
+set(GLFW_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/GLFW")
+add_subdirectory(${GLFW_DIR})
+
+# Link GLFW to DirectEngine
+target_link_libraries(DirectEngine PUBLIC glfw)
+
+# Include GLFW headers for dependents that consume DirectEngine headers
+target_include_directories(DirectEngine PUBLIC "${GLFW_DIR}/include")

@@ -39,15 +39,6 @@ if errorlevel 1 (
     )
 )
 
-where dotnet >nul 2>&1
-if errorlevel 1 (
-    if defined missing (
-        set "missing=%missing%, dotnet"
-    ) else (
-        set "missing=dotnet"
-    )
-)
-
 where git >nul 2>&1
 if errorlevel 1 (
     if defined missing (
@@ -61,7 +52,6 @@ if defined missing (
     echo [DirectEngine] Missing dependencies: %missing%
     echo Please install them manually:
     echo - CMake: https://cmake.org/download/
-    echo - .NET SDK 8: https://learn.microsoft.com/dotnet/core/install/windows
     echo - Git: https://git-scm.com/download/win
     exit /b 1
 )
