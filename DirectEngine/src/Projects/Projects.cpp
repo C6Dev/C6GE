@@ -1,6 +1,7 @@
 #include "../../include/Projects/Projects.h"
 
 #include <array>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
