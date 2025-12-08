@@ -15,6 +15,8 @@
 
 #include "../main.h"
 
+#include "Logger.h"
+
 struct GLFWwindow;
 
 class DirectEngine_API Window {

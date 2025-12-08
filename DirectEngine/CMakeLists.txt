@@ -55,3 +55,34 @@ target_link_libraries(DirectEngine PUBLIC glfw)
 
 # Include GLFW headers for dependents that consume DirectEngine headers
 target_include_directories(DirectEngine PUBLIC "${GLFW_DIR}/include")
+
+#vk-bootstrap setup
+set(VK_BOOTSTRAP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/vk-bootstrap")
+add_subdirectory(${VK_BOOTSTRAP_DIR})
+
+# Link vk-bootstrap to DirectEngine
+target_link_libraries(DirectEngine PUBLIC vk-bootstrap)
+
+# VMA setup
+set(VMA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/VMA")
+target_include_directories(DirectEngine PUBLIC "${VMA_DIR}")
+
+# GLM setup
+set(GLM_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/GLM")
+target_include_directories(DirectEngine PUBLIC "${GLM_DIR}")
+
+# DirectLogger setup
+set(DIRECT_LOGGER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/DirectLogger")
+add_subdirectory(${DIRECT_LOGGER_DIR})
+
+# Link DirectLogger to DirectEngine
+target_link_libraries(DirectEngine PUBLIC DirectLoggerLib)
+target_include_directories(DirectEngine PUBLIC "${DIRECT_LOGGER_DIR}/include")
+
+# stb_image setup
+set(STB_IMAGE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb_image")
+target_include_directories(DirectEngine PUBLIC "${STB_IMAGE_DIR}")
+
+# fastgltf setup
+set(FASTGLTF_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fastgltf/include")
+target_include_directories(DirectEngine PUBLIC "${FASTGLTF_DIR}")

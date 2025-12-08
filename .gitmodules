@@ -1,3 +1,21 @@
 [submodule "DirectEngine/third_party/GLFW"]
 	path = DirectEngine/third_party/GLFW
 	url = https://github.com/glfw/glfw.git
+[submodule "DirectEngine/third_party/vk-bootstrap"]
+	path = DirectEngine/third_party/vk-bootstrap
+	url = https://github.com/charles-lunarg/vk-bootstrap
+[submodule "DirectEngine/third_party/VMA"]
+	path = DirectEngine/third_party/VMA
+	url = https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
+[submodule "DirectEngine/third_party/GLM"]
+	path = DirectEngine/third_party/GLM
+	url = https://github.com/g-truc/glm.git
+[submodule "DirectEngine/third_party/DirectLogger"]
+	path = DirectEngine/third_party/DirectLogger
+	url = https://github.com/DirectMesh/DirectLogger
+[submodule "DirectEngine/third_party/stb_image"]
+	path = DirectEngine/third_party/stb_image
+	url = https://github.com/nothings/stb.git
+[submodule "DirectEngine/third_party/fastgltf"]
+	path = DirectEngine/third_party/fastgltf
+	url = https://github.com/spnda/fastgltf.git

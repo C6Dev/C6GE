@@ -6,6 +6,8 @@
 #include <vector>
 #include "RenderVulkan/RenderVulkanPipeline.h"
 
+#include "Logger.h"
+
 class DirectEngine_API RenderPipeline {
     public:
         void CreateRender(RenderPicker::RenderType Type);

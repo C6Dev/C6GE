@@ -1,41 +1,40 @@
 #include "../../include/Render/RenderPipeline.h"
 
+
+using namespace DirectLogger;
+
 // The CreateRender method initializes the rendering pipeline based on the selected RenderType.
 DirectEngine_API void RenderPipeline::CreateRender(RenderPicker::RenderType Type) {
-    // Depending on the RenderType, create the appropriate rendering instance.
-    switch (Type) { // Type is of enum class RenderPicker::RenderType
-        case RenderPicker::RenderType::Vulkan: { // If the RenderType is Vulkan
-            std::cout << "Creating Vulkan Render Instance" << std::endl;
-            RenderVulkan renderVulkan; // Create an instance of RenderVulkan
-            renderVulkan.CreateInstance(); // Call CreateInstance method
-            renderVulkan.setupDebugMessenger(); // Set up debug messenger
+    switch (Type) {
+        case RenderPicker::RenderType::Vulkan: {
+            Log(LogLevel::info, "Creating Vulkan Render Instance", "Render");
             break;
         }
-        case RenderPicker::RenderType::Metal: { // If the RenderType is Metal
-            std::cout << "Creating Metal Render Instance" << std::endl;
+        case RenderPicker::RenderType::Metal: {
+            Log(LogLevel::info, "Creating Metal Render Instance", "Render");
             break;
         }
-        default: { // If the RenderType is unsupported
-            throw std::runtime_error("Unsupported Render Type");
+        default: {
+            Log(LogLevel::critical, "Unsupported Render Type", "Render");
+            throw;
         }
     }
 }
 
 // The CleanupRenderer method cleans up the rendering pipeline based on the selected RenderType.
 DirectEngine_API void RenderPipeline::CleanupRenderer(RenderPicker::RenderType Type) {
-    switch (Type) { // Type is of enum class RenderPicker::RenderType
-        case RenderPicker::RenderType::Vulkan: { // If the RenderType is Vulkan
-            std::cout << "Cleaning up Vulkan Renderer" << std::endl;
-            RenderVulkan renderVulkan; // Create an instance of RenderVulkan
-            renderVulkan.CleanupVulkanRenderer(); // Call CleanupVulkanRenderer method
+    switch (Type) {
+        case RenderPicker::RenderType::Vulkan: {
+            Log(LogLevel::info, "Cleaning up Vulkan Renderer", "Render");
             break;
         }
-        case RenderPicker::RenderType::Metal: { // If the RenderType is Metal
-            std::cout << "Cleaning up Metal Renderer" << std::endl;
+        case RenderPicker::RenderType::Metal: {
+            Log(LogLevel::info, "Cleaning up Metal Renderer", "Render");
             break;
         }
-        default: { // If the RenderType is unsupported
-            throw std::runtime_error("Unsupported Render Type");
+        default: {
+            Log(LogLevel::critical, "Unsupported Render Type for Cleanup", "Render");
+            throw;
         }
     }
 }

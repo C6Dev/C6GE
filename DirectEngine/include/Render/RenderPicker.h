@@ -2,6 +2,8 @@
 
 #include "main.h"
 
+#include "Logger.h"
+
 class DirectEngine_API RenderPicker {
 public:
     enum class RenderType {

@@ -4,6 +4,8 @@
 #include <filesystem>
 #include <fstream>
 
+#include "Logger.h"
+
 class DirectEngine_API Projects
 {
     public:
