@@ -57,6 +57,9 @@ target_link_libraries(DirectEngine PUBLIC glfw)
 target_include_directories(DirectEngine PUBLIC "${GLFW_DIR}/include")
 
 #vk-bootstrap setup
+# Force vk-bootstrap to fetch a recent Vulkan-Headers revision so Linux CI has
+# the newer structs it expects regardless of the system SDK version.
+set(VK_BOOTSTRAP_FORCE_FETCH_CONTENT ON CACHE BOOL "Force vk-bootstrap to fetch Vulkan-Headers" FORCE)
 set(VK_BOOTSTRAP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/vk-bootstrap")
 add_subdirectory(${VK_BOOTSTRAP_DIR})
 
