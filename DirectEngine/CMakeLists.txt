@@ -26,11 +26,6 @@ target_include_directories(DirectEngine
         "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 
-if (NOT APPLE)
-    find_package(Vulkan REQUIRED)
-    target_link_libraries(DirectEngine PUBLIC Vulkan::Vulkan)
-endif()
-
 # Set output directory for DLL
 set_target_properties(DirectEngine PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
@@ -65,6 +60,13 @@ add_subdirectory(${VK_BOOTSTRAP_DIR})
 
 # Link vk-bootstrap to DirectEngine
 target_link_libraries(DirectEngine PUBLIC vk-bootstrap)
+
+if (NOT APPLE)
+    # Defer Vulkan discovery until after vk-bootstrap so it cannot short-circuit
+    # the header fetch by predefining Vulkan::Headers from the system SDK.
+    find_package(Vulkan REQUIRED)
+    target_link_libraries(DirectEngine PUBLIC Vulkan::Vulkan)
+endif()
 
 # VMA setup
 set(VMA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/VMA")
