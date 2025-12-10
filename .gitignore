@@ -1,79 +1,14 @@
-# Prerequisites
-*.d
-
-# Compiled Object files
-*.slo
-*.lo
+# C++
 *.o
 *.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Linker files
-*.ilk
-
-# Debugger Files
-*.pdb
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
 *.exe
 *.out
-*.app
-
-# debug information files
-*.dwo
-
-# build folder
-/build/
-
-# .NET build results
+*.a
+*.so
+*.dll
+*.lib
+*.cpp~
+*.hpp~
+*.gch
+build/
 bin/
-obj/
-
-# User-specific files
-*.user
-*.suo
-*.userosscache
-*.sln.docstates
-
-# VS Code settings
-.vscode/
-
-# NuGet packages
-*.nupkg
-*.snupkg
-packages/
-.nuget/
-
-# Visual Studio Test results
-TestResults/
-*.trx
-*.coverage
-*.coveragexml
-
-# ASP.NET temporary files
-*.dbmdl
-*.bak
-
-# Entity Framework files
-Migrations/
-
-# Publish output
-publish/

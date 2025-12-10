@@ -1,21 +1,25 @@
-[submodule "DirectEngine/third_party/GLFW"]
-	path = DirectEngine/third_party/GLFW
-	url = https://github.com/glfw/glfw.git
-[submodule "DirectEngine/third_party/vk-bootstrap"]
-	path = DirectEngine/third_party/vk-bootstrap
-	url = https://github.com/charles-lunarg/vk-bootstrap
-[submodule "DirectEngine/third_party/VMA"]
-	path = DirectEngine/third_party/VMA
+[submodule "third_party/vk-bootstrap"]
+	path = third_party/vk-bootstrap
+	url = https://github.com/charles-lunarg/vk-bootstrap.git
+[submodule "third_party/VulkanMemoryAllocator"]
+	path = third_party/VulkanMemoryAllocator
 	url = https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
-[submodule "DirectEngine/third_party/GLM"]
-	path = DirectEngine/third_party/GLM
+[submodule "third_party/SDL"]
+	path = third_party/SDL
+	url = https://github.com/libsdl-org/SDL.git
+[submodule "third_party/GLM"]
+	path = third_party/GLM
 	url = https://github.com/g-truc/glm.git
-[submodule "DirectEngine/third_party/DirectLogger"]
-	path = DirectEngine/third_party/DirectLogger
-	url = https://github.com/DirectMesh/DirectLogger
-[submodule "DirectEngine/third_party/stb_image"]
-	path = DirectEngine/third_party/stb_image
+[submodule "third_party/fmt"]
+	path = third_party/fmt
+	url = https://github.com/fmtlib/fmt.git
+[submodule "third_party/stb"]
+	path = third_party/stb
 	url = https://github.com/nothings/stb.git
-[submodule "DirectEngine/third_party/fastgltf"]
-	path = DirectEngine/third_party/fastgltf
+[submodule "third_party/imgui"]
+	path = third_party/imgui
+	url = https://github.com/ocornut/imgui.git
+	branch = docking
+[submodule "third_party/fastgltf"]
+	path = third_party/fastgltf
 	url = https://github.com/spnda/fastgltf.git
