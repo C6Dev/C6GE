@@ -2,10 +2,11 @@
 # Add source to this project's executable.
 add_executable(DirectEngine
     main.cpp
+    vk_initializers.h
+    vk_initializers.cpp
     d_engine.cpp
     d_engine.h
     vk_types.h
-    vk_initializers.h
 )
 
 

@@ -69,6 +69,12 @@ void DirectEngine::Init() {
 
 void DirectEngine::Cleanup() {
     if (_isInitialized) {
+        vkDeviceWaitIdle(_device);
+
+        for (int i = 0; i < FRAME_OVERLAP; i++) {
+            vkDestroyCommandPool(_device, _frames[i]._commandPool, GetVulkanAllocator());
+        }
+        
         DestroySwapchain();
 
         vkDestroySurfaceKHR(_instance, _surface, GetVulkanAllocator());
@@ -169,6 +175,9 @@ void DirectEngine::InitVulkan() {
 
     _device = vkb_device.device;
     _physicalDevice = physicalDevice.physical_device;
+
+    _graphicsQueue = vkb_device.get_queue(vkb::QueueType::graphics).value();
+    _graphicsQueueFamily = vkb_device.get_queue_index(vkb::QueueType::graphics).value();
 }
 
 void DirectEngine::CreateSwapchain(uint32_t width, uint32_t height) {
@@ -223,7 +232,17 @@ void DirectEngine::DestroySwapchain() {
 }
 
 void DirectEngine::InitCommands() {
-    // nothing yet
+	VkCommandPoolCreateInfo commandPoolInfo = vkinit::command_pool_create_info(_graphicsQueueFamily, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+
+	for (int i = 0; i < FRAME_OVERLAP; i++) {
+
+		VK_CHECK(vkCreateCommandPool(_device, &commandPoolInfo, nullptr, &_frames[i]._commandPool));
+
+		// allocate the default command buffer that we will use for rendering
+		VkCommandBufferAllocateInfo cmdAllocInfo = vkinit::command_buffer_allocate_info(_frames[i]._commandPool, VK_COMMAND_BUFFER_LEVEL_PRIMARY, 1);
+
+		VK_CHECK(vkAllocateCommandBuffers(_device, &cmdAllocInfo, &_frames[i]._mainCommandBuffer));
+	}
 }
 
 void DirectEngine::InitSyncStructures() {

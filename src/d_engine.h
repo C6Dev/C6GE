@@ -2,6 +2,13 @@
 
 #include "vk_types.h"
 
+struct FrameData {
+    VkCommandPool _commandPool;
+    VkCommandBuffer _mainCommandBuffer;
+};
+
+constexpr unsigned int FRAME_OVERLAP = 2;
+
 class DirectEngine {
     public:
     bool _isInitialized { false };
@@ -23,6 +30,13 @@ class DirectEngine {
     std::vector<VkImage> _swapchainImages;
     std::vector<VkImageView> _swapchainImageViews;
     VkExtent2D _swapchainExtent;
+
+    FrameData _frames[FRAME_OVERLAP];
+
+    FrameData& GetCurrentFrame() { return _frames[_frameNumber % FRAME_OVERLAP]; };
+
+    VkQueue _graphicsQueue;
+    uint32_t _graphicsQueueFamily;
 
     // Returns the engine registered as current. Prefer passing explicit pointers where possible.
     static DirectEngine& Get();
