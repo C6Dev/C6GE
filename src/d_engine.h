@@ -5,6 +5,9 @@
 struct FrameData {
     VkCommandPool _commandPool;
     VkCommandBuffer _mainCommandBuffer;
+
+    VkSemaphore _swapchainSemaphore;
+	VkFence _renderFence;
 };
 
 constexpr unsigned int FRAME_OVERLAP = 2;
@@ -30,6 +33,8 @@ class DirectEngine {
     std::vector<VkImage> _swapchainImages;
     std::vector<VkImageView> _swapchainImageViews;
     VkExtent2D _swapchainExtent;
+
+    std::vector<VkSemaphore> _swapchainRenderSemaphores;
 
     FrameData _frames[FRAME_OVERLAP];
 

@@ -73,6 +73,10 @@ void DirectEngine::Cleanup() {
 
         for (int i = 0; i < FRAME_OVERLAP; i++) {
             vkDestroyCommandPool(_device, _frames[i]._commandPool, GetVulkanAllocator());
+
+		    //destroy sync objects
+		    vkDestroyFence(_device, _frames[i]._renderFence, GetVulkanAllocator());
+		    vkDestroySemaphore(_device ,_frames[i]._swapchainSemaphore, GetVulkanAllocator());
         }
         
         DestroySwapchain();
@@ -95,7 +99,60 @@ void DirectEngine::Cleanup() {
 }
 
 void DirectEngine::Draw() {
-    // nothing for now
+    VK_CHECK(vkWaitForFences(_device, 1, &GetCurrentFrame()._renderFence, true, 1000000000));
+	VK_CHECK(vkResetFences(_device, 1, &GetCurrentFrame()._renderFence));
+
+    uint32_t swapchainImageIndex;
+    VK_CHECK(vkAcquireNextImageKHR(_device, _swapchain, 1000000000, GetCurrentFrame()._swapchainSemaphore, VK_NULL_HANDLE, &swapchainImageIndex));
+
+	VkSemaphore renderFinishedSemaphore = _swapchainRenderSemaphores[swapchainImageIndex];
+
+	VkCommandBuffer cmd = GetCurrentFrame()._mainCommandBuffer;
+
+	VK_CHECK(vkResetCommandBuffer(cmd, 0));
+
+	VkCommandBufferBeginInfo cmdBeginInfo = vkinit::command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+
+	VK_CHECK(vkBeginCommandBuffer(cmd, &cmdBeginInfo));
+
+	vkutil::transition_image(cmd, _swapchainImages[swapchainImageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+
+	VkClearColorValue clearValue;
+	float flash = std::abs(std::sin(_frameNumber / 120.f));
+	clearValue = { { 0.0f, 0.0f, flash, 1.0f } };
+
+	VkImageSubresourceRange clearRange = vkinit::image_subresource_range(VK_IMAGE_ASPECT_COLOR_BIT);
+
+	vkCmdClearColorImage(cmd, _swapchainImages[swapchainImageIndex], VK_IMAGE_LAYOUT_GENERAL, &clearValue, 1, &clearRange);
+
+	vkutil::transition_image(cmd, _swapchainImages[swapchainImageIndex],VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+
+	VK_CHECK(vkEndCommandBuffer(cmd));
+
+
+	VkCommandBufferSubmitInfo cmdinfo = vkinit::command_buffer_submit_info(cmd);	
+	
+	VkSemaphoreSubmitInfo waitInfo = vkinit::semaphore_submit_info(VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR,GetCurrentFrame()._swapchainSemaphore);
+    VkSemaphoreSubmitInfo signalInfo = vkinit::semaphore_submit_info(VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT, renderFinishedSemaphore);	
+	
+	VkSubmitInfo2 submit = vkinit::submit_info(&cmdinfo,&signalInfo,&waitInfo);	
+
+	VK_CHECK(vkQueueSubmit2(_graphicsQueue, 1, &submit, GetCurrentFrame()._renderFence));
+
+	VkPresentInfoKHR presentInfo = {};
+	presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+	presentInfo.pNext = nullptr;
+	presentInfo.pSwapchains = &_swapchain;
+	presentInfo.swapchainCount = 1;
+
+    presentInfo.pWaitSemaphores = &renderFinishedSemaphore;
+	presentInfo.waitSemaphoreCount = 1;
+
+	presentInfo.pImageIndices = &swapchainImageIndex;
+
+	VK_CHECK(vkQueuePresentKHR(_graphicsQueue, &presentInfo));
+
+	_frameNumber++;
 }
 
 void DirectEngine::Run() {
@@ -224,6 +281,13 @@ void DirectEngine::InitSwapchain() {
 
 
 void DirectEngine::DestroySwapchain() {
+    for (VkSemaphore sem : _swapchainRenderSemaphores) {
+        if (sem != VK_NULL_HANDLE) {
+            vkDestroySemaphore(_device, sem, GetVulkanAllocator());
+        }
+    }
+    _swapchainRenderSemaphores.clear();
+
     for (int i = 0; i < _swapchainImageViews.size(); i++) {
         vkDestroyImageView(_device, _swapchainImageViews[i], GetVulkanAllocator());
     }
@@ -246,5 +310,17 @@ void DirectEngine::InitCommands() {
 }
 
 void DirectEngine::InitSyncStructures() {
-    // nothing yet
+    VkFenceCreateInfo fenceCreateInfo = vkinit::fence_create_info(VK_FENCE_CREATE_SIGNALED_BIT);
+    VkSemaphoreCreateInfo semaphoreCreateInfo = vkinit::semaphore_create_info(0);
+
+	for (int i = 0; i < FRAME_OVERLAP; i++) {
+		VK_CHECK(vkCreateFence(_device, &fenceCreateInfo, GetVulkanAllocator(), &_frames[i]._renderFence));
+
+		VK_CHECK(vkCreateSemaphore(_device, &semaphoreCreateInfo, GetVulkanAllocator(), &_frames[i]._swapchainSemaphore));
+	}
+
+    _swapchainRenderSemaphores.resize(_swapchainImages.size());
+    for (size_t i = 0; i < _swapchainRenderSemaphores.size(); i++) {
+        VK_CHECK(vkCreateSemaphore(_device, &semaphoreCreateInfo, GetVulkanAllocator(), &_swapchainRenderSemaphores[i]));
+    }
 }

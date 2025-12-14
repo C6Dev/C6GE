@@ -4,6 +4,7 @@ add_executable(DirectEngine
     main.cpp
     vk_initializers.h
     vk_initializers.cpp
+    vk_images.cpp
     d_engine.cpp
     d_engine.h
     vk_types.h
